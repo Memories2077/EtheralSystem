@@ -1,0 +1,810 @@
+openapi: 3.0.0
+info:
+  title: JSONPlaceholder API
+  description: Fake REST API for testing and prototyping
+  version: 1.0.0
+  contact:
+    name: JSONPlaceholder
+    url: https://jsonplaceholder.typicode.com
+servers:
+  - url: https://jsonplaceholder.typicode.com
+    description: JSONPlaceholder server
+
+paths:
+  /posts:
+    get:
+      summary: Get all posts
+      description: Retrieve all posts
+      tags:
+        - Posts
+      parameters:
+        - name: _limit
+          in: query
+          description: Limit number of results
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: _page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Post'
+    post:
+      summary: Create a new post
+      description: Create a new post (will not be actually created)
+      tags:
+        - Posts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostInput'
+      responses:
+        '201':
+          description: Post created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+
+  /posts/{id}:
+    get:
+      summary: Get a post by ID
+      description: Retrieve a specific post by ID
+      tags:
+        - Posts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Post ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '404':
+          description: Post not found
+    put:
+      summary: Update a post
+      description: Update an existing post (will not be actually updated)
+      tags:
+        - Posts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Post ID
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostInput'
+      responses:
+        '200':
+          description: Post updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+    patch:
+      summary: Partially update a post
+      description: Partially update an existing post (will not be actually updated)
+      tags:
+        - Posts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Post ID
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostInputPartial'
+      responses:
+        '200':
+          description: Post updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+    delete:
+      summary: Delete a post
+      description: Delete a post (will not be actually deleted)
+      tags:
+        - Posts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Post ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Post deleted successfully
+
+  /users:
+    get:
+      summary: Get all users
+      description: Retrieve all users
+      tags:
+        - Users
+      parameters:
+        - name: _limit
+          in: query
+          description: Limit number of results
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: _page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    post:
+      summary: Create a new user
+      description: Create a new user (will not be actually created)
+      tags:
+        - Users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /users/{id}:
+    get:
+      summary: Get a user by ID
+      description: Retrieve a specific user by ID
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    put:
+      summary: Update a user
+      description: Update an existing user (will not be actually updated)
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+    delete:
+      summary: Delete a user
+      description: Delete a user (will not be actually deleted)
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: User deleted successfully
+
+  /comments:
+    get:
+      summary: Get all comments
+      description: Retrieve all comments
+      tags:
+        - Comments
+      parameters:
+        - name: postId
+          in: query
+          description: Filter comments by post ID
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: _limit
+          in: query
+          description: Limit number of results
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Comment'
+    post:
+      summary: Create a new comment
+      description: Create a new comment (will not be actually created)
+      tags:
+        - Comments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      responses:
+        '201':
+          description: Comment created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+
+  /comments/{id}:
+    get:
+      summary: Get a comment by ID
+      description: Retrieve a specific comment by ID
+      tags:
+        - Comments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Comment ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '404':
+          description: Comment not found
+
+  /posts/{id}/comments:
+    get:
+      summary: Get comments for a post
+      description: Retrieve all comments for a specific post
+      tags:
+        - Comments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Post ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Comment'
+
+  /albums:
+    get:
+      summary: Get all albums
+      description: Retrieve all albums
+      tags:
+        - Albums
+      parameters:
+        - name: userId
+          in: query
+          description: Filter albums by user ID
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: _limit
+          in: query
+          description: Limit number of results
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Album'
+
+  /albums/{id}:
+    get:
+      summary: Get an album by ID
+      description: Retrieve a specific album by ID
+      tags:
+        - Albums
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Album ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Album'
+        '404':
+          description: Album not found
+
+  /photos:
+    get:
+      summary: Get all photos
+      description: Retrieve all photos
+      tags:
+        - Photos
+      parameters:
+        - name: albumId
+          in: query
+          description: Filter photos by album ID
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: _limit
+          in: query
+          description: Limit number of results
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Photo'
+
+  /photos/{id}:
+    get:
+      summary: Get a photo by ID
+      description: Retrieve a specific photo by ID
+      tags:
+        - Photos
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Photo ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Photo'
+        '404':
+          description: Photo not found
+
+  /todos:
+    get:
+      summary: Get all todos
+      description: Retrieve all todos
+      tags:
+        - Todos
+      parameters:
+        - name: userId
+          in: query
+          description: Filter todos by user ID
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: completed
+          in: query
+          description: Filter todos by completion status
+          required: false
+          schema:
+            type: boolean
+        - name: _limit
+          in: query
+          description: Limit number of results
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Todo'
+
+  /todos/{id}:
+    get:
+      summary: Get a todo by ID
+      description: Retrieve a specific todo by ID
+      tags:
+        - Todos
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Todo ID
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Todo'
+        '404':
+          description: Todo not found
+
+components:
+  schemas:
+    Post:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        userId:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "sunt aut facere repellat provident occaecati excepturi optio reprehenderit"
+        body:
+          type: string
+          example: "quia et suscipit\\nsuscipit recusandae consequuntur expedita et cum\\nreprehenderit molestiae ut ut quas totam\\nnostrum rerum est autem sunt rem eveniet architecto"
+      required:
+        - id
+        - userId
+        - title
+        - body
+
+    PostInput:
+      type: object
+      properties:
+        userId:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "New Post Title"
+        body:
+          type: string
+          example: "New post content"
+      required:
+        - userId
+        - title
+        - body
+
+    PostInputPartial:
+      type: object
+      properties:
+        userId:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Leanne Graham"
+        username:
+          type: string
+          example: "Bret"
+        email:
+          type: string
+          format: email
+          example: "Sincere@april.biz"
+        address:
+          $ref: '#/components/schemas/Address'
+        phone:
+          type: string
+          example: "1-770-736-8031 x56442"
+        website:
+          type: string
+          example: "hildegard.org"
+        company:
+          $ref: '#/components/schemas/Company'
+      required:
+        - id
+        - name
+        - username
+        - email
+
+    UserInput:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "John Doe"
+        username:
+          type: string
+          example: "john_doe"
+        email:
+          type: string
+          format: email
+          example: "john@example.com"
+        phone:
+          type: string
+          example: "123-456-7890"
+        website:
+          type: string
+          example: "john.example.com"
+      required:
+        - name
+        - username
+        - email
+
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+          example: "Kulas Light"
+        suite:
+          type: string
+          example: "Apt. 556"
+        city:
+          type: string
+          example: "Gwenborough"
+        zipcode:
+          type: string
+          example: "92998-3874"
+        geo:
+          $ref: '#/components/schemas/Geo'
+
+    Geo:
+      type: object
+      properties:
+        lat:
+          type: string
+          example: "-37.3159"
+        lng:
+          type: string
+          example: "81.1496"
+
+    Company:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Romaguera-Crona"
+        catchPhrase:
+          type: string
+          example: "Multi-layered client-server neural-net"
+        bs:
+          type: string
+          example: "harness real-time e-markets"
+
+    Comment:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        postId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "id labore ex et quam laborum"
+        email:
+          type: string
+          format: email
+          example: "Eliseo@gardner.biz"
+        body:
+          type: string
+          example: "laudantium enim quasi est quidem magnam voluptate ipsam eos\\ntempora quo necessitatibus\\ndolor quam autem quasi\\nreiciendis et nam sapiente accusantium"
+      required:
+        - id
+        - postId
+        - name
+        - email
+        - body
+
+    CommentInput:
+      type: object
+      properties:
+        postId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Comment title"
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        body:
+          type: string
+          example: "Comment content"
+      required:
+        - postId
+        - name
+        - email
+        - body
+
+    Album:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        userId:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "quidem molestiae enim"
+      required:
+        - id
+        - userId
+        - title
+
+    Photo:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        albumId:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "accusamus beatae ad facilis cum similique qui sunt"
+        url:
+          type: string
+          format: uri
+          example: "https://via.placeholder.com/600/92c952"
+        thumbnailUrl:
+          type: string
+          format: uri
+          example: "https://via.placeholder.com/150/92c952"
+      required:
+        - id
+        - albumId
+        - title
+        - url
+        - thumbnailUrl
+
+    Todo:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        userId:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "delectus aut autem"
+        completed:
+          type: boolean
+          example: false
+      required:
+        - id
+        - userId
+        - title
+        - completed
+
+tags:
+  - name: Posts
+    description: Operations about posts
+  - name: Users
+    description: Operations about users
+  - name: Comments
+    description: Operations about comments
+  - name: Albums
+    description: Operations about albums
+  - name: Photos
+    description: Operations about photos
+  - name: Todos
+    description: Operations about todos

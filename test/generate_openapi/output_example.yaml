@@ -1,0 +1,154 @@
+openapi: 3.0.3
+info:
+  title: HTTPBin (Limited)
+  description: A simple HTTP Request & Response Service - Limited endpoints
+  version: 1.0.0
+  contact:
+    name: HTTPBin
+    url: https://httpbin.org
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://httpbin.org
+    description: HTTPBin production server
+paths:
+  /get:
+    get:
+      summary: Test GET request
+      description: Returns GET request data including headers, args, origin, and url
+      operationId: testGet
+      parameters:
+        - name: param
+          in: query
+          description: Query parameter
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetResponse'
+  /post:
+    post:
+      summary: Test POST request
+      description: Returns POST request data including headers, form data, json, origin, and url
+      operationId: testPost
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostResponse'
+  /headers:
+    get:
+      summary: Xem headers
+      description: Returns the request headers sent by the client
+      operationId: getHeaders
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeadersResponse'
+  /ip:
+    get:
+      summary: Lấy IP address
+      description: Returns the client's IP address
+      operationId: getIp
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IpResponse'
+components:
+  schemas:
+    GetResponse:
+      type: object
+      properties:
+        args:
+          type: object
+          additionalProperties:
+            type: string
+          description: Query parameters
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Request headers
+        origin:
+          type: string
+          description: Client IP address
+        url:
+          type: string
+          description: Request URL
+    PostResponse:
+      type: object
+      properties:
+        args:
+          type: object
+          additionalProperties:
+            type: string
+          description: Query parameters
+        data:
+          type: string
+          description: Raw request body
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          description: Uploaded files
+        form:
+          type: object
+          additionalProperties:
+            type: string
+          description: Form data
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Request headers
+        json:
+          type: object
+          description: JSON data
+        origin:
+          type: string
+          description: Client IP address
+        url:
+          type: string
+          description: Request URL
+    HeadersResponse:
+      type: object
+      properties:
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Request headers
+    IpResponse:
+      type: object
+      properties:
+        origin:
+          type: string
+          description: Client IP address

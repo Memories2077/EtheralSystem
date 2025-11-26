@@ -1,0 +1,59 @@
+{
+  "name": "hiagi-mcp-gen",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "npx tsx src/launcher.ts",
+    "server": "npx tsx src/server.ts",
+    "build": "npx tsx test/test-generation.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/amqplib": "^0.10.6",
+    "@types/cors": "^2.8.19",
+    "@types/dockerode": "^3.3.42",
+    "@types/express": "^5.0.3",
+    "@types/http-proxy-middleware": "^0.19.3",
+    "@types/js-yaml": "^4.0.9",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.1.0",
+    "@types/tar-fs": "^2.0.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@google/genai": "^1.9.0",
+    "@modelcontextprotocol/sdk": "^1.16.0",
+    "@redocly/cli": "^1.34.5",
+    "@types/commander": "^2.12.0",
+    "@types/dotenv": "^6.1.1",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node-fetch": "^2.6.12",
+    "amqplib": "^0.10.9",
+    "axios": "^1.10.0",
+    "commander": "^14.0.0",
+    "cors": "^2.8.5",
+    "dockerode": "^4.0.7",
+    "dotenv": "^17.0.1",
+    "express": "^5.1.0",
+    "fs-extra": "^11.3.0",
+    "groq-sdk": "^0.26.0",
+    "http-proxy-middleware": "^3.0.5",
+    "jsonwebtoken": "^9.0.2",
+    "mcp-proxy": "^5.5.1",
+    "mongodb": "^6.18.0",
+    "node-fetch": "^3.3.2",
+    "swagger-cli": "^4.0.4",
+    "tar-stream": "^3.1.7",
+    "undici": "^7.15.0",
+    "zod": "^3.25.73"
+  }
+}

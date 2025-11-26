@@ -1,0 +1,16 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm install -g npm@latest
+RUN npm install
+
+# Vá lại các lỗi/lỗ hổng package nếu có
+RUN npm audit fix
+
+COPY . .
+
+# Start the manager server
+CMD ["npx", "tsx", "./src/mcp-server-manager.ts"]
