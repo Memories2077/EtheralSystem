@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langchain-application"
+version = "0.1.0"
+description = "LangGraph application"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "tung" }]
+dependencies = ["langgraph", "langchain", "ipython", "langchain-google-genai"]
