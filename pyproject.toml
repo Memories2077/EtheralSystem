@@ -10,4 +10,11 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "tung" }]
-dependencies = ["langgraph", "langchain", "ipython", "langchain-google-genai"]
+dependencies = [
+    "langgraph",
+    "langchain",
+    "ipython",
+    "langchain-google-genai",
+    "deepagents",
+    "python-dotenv",
+]
