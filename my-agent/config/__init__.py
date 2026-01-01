@@ -28,28 +28,39 @@ AGENT_CONFIG = {
     "supervisor": {
         "name": "Supervisor Agent",
         "prompt_file": "supervisor_prompt.txt",
-        "model": "gemini-2.0-flash-exp",
+        "model": "deepseek-r1:14b",
         "temperature": 0.7,
     },
     "research_agent": {
         "name": "Research Agent",
         "prompt_file": "research_agent_prompt.txt",
-        "model": "gemini-2.0-flash-exp",
+        "model": "deepseek-r1:14b",
         "temperature": 0.5,
     },
     "analysis_agent": {
         "name": "Analysis Agent",
         "prompt_file": "analysis_agent_prompt.txt",
-        "model": "gemini-2.0-flash-exp",
+        "model": "deepseek-r1:14b",
         "temperature": 0.3,
     },
     "execution_agent": {
         "name": "Execution Agent",
         "prompt_file": "execution_agent_prompt.txt",
-        "model": "gemini-2.0-flash-exp",
+        "model": "deepseek-r1:14b",
         "temperature": 0.2,
-    }
-}
+    },
+    "weather_agent": {
+        "name": "Weather Agent",
+        "prompt_file": "weather_agent_prompt.txt",
+        "model": "deepseek-r1:14b",
+        "temperature": 0.3,
+    },
+    "social_agent": {
+        "name": "Social Agent",
+        "prompt_file": "social_agent_prompt.txt",
+        "model": "deepseek-r1:14b",
+        "temperature": 0.3,
+    }}
 
 
 # API Configuration
@@ -58,4 +69,5 @@ API_CONFIG = {
     "tavily_api_key": get_env_var("TAVILY_API_KEY"),
     "mcp_base_url": get_env_var("MCP_BASE_URL", "http://localhost:8000"),
     "mcp_api_key": get_env_var("MCP_API_KEY"),
+    "ollama_base_url": get_env_var("OLLAMA_BASE_URL", "https://ollama.timnguyen.id.vn/")
 }

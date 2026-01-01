@@ -1,19 +1,16 @@
-"""
-Research Agent - Specialized in information gathering
-"""
 from langchain_ollama import ChatOllama
 from deepagents import create_deep_agent
 from typing import Dict, Any, Optional
 
 from config import load_prompt, AGENT_CONFIG
-from tools.research_tools import RESEARCH_TOOLS
+from tools.research_tools import weather_research
 
 
-class ResearchAgent:
-    """Research Agent for information gathering"""
+class WeatherAgent:
+    """Weather Agent for weather information gathering"""
     
     def __init__(self):
-        config = AGENT_CONFIG["research_agent"]
+        config = AGENT_CONFIG["weather_agent"]
         self.name = config["name"]
         self.prompt = load_prompt(config["prompt_file"])
         
@@ -23,11 +20,11 @@ class ResearchAgent:
             temperature=config["temperature"]
         )
         
-        # Create agent with research tools
+        # Create agent with weather research tool
         self.agent = create_deep_agent(
             model=self.model,
             system_prompt=self.prompt,
-            tools=RESEARCH_TOOLS
+            tools=[weather_research]
         )
     
     def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

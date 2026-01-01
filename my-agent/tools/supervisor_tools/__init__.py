@@ -5,7 +5,7 @@ from typing import Dict, Any, Literal, Optional
 
 
 def delegate_to_agent(
-    agent_name: Literal["research_agent", "analysis_agent", "execution_agent"],
+    agent_name: Literal["research_agent", "analysis_agent", "execution_agent", "weather_agent", "social_agent"],
     task_description: str,
     context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:

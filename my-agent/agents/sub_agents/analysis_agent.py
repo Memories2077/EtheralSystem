@@ -1,7 +1,7 @@
 """
 Analysis Agent - Specialized in data analysis
 """
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from deepagents import create_deep_agent
 from typing import Dict, Any, Optional
 
@@ -18,7 +18,7 @@ class AnalysisAgent:
         self.prompt = load_prompt(config["prompt_file"])
         
         # Initialize model
-        self.model = ChatGoogleGenerativeAI(
+        self.model = ChatOllama(
             model=config["model"],
             temperature=config["temperature"]
         )

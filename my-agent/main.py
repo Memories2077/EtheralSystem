@@ -13,7 +13,7 @@ load_dotenv()
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from agents import SupervisorAgent, ResearchAgent, AnalysisAgent, ExecutionAgent
+from agents import SupervisorAgent, ResearchAgent, AnalysisAgent, ExecutionAgent, WeatherAgent, SocialAgent
 
 
 class MultiAgentSystem:
@@ -27,11 +27,15 @@ class MultiAgentSystem:
         self.research_agent = ResearchAgent()
         self.analysis_agent = AnalysisAgent()
         self.execution_agent = ExecutionAgent()
+        self.weather_agent = WeatherAgent()
+        self.social_agent = SocialAgent()
         
         print(f"✓ {self.supervisor}")
         print(f"✓ {self.research_agent}")
         print(f"✓ {self.analysis_agent}")
         print(f"✓ {self.execution_agent}")
+        print(f"✓ {self.weather_agent}")
+        print(f"✓ {self.social_agent}")
         print("\nMulti-Agent System Ready!\n")
     
     def run(self, query: str, agent_type: str = "supervisor") -> str:
@@ -53,9 +57,8 @@ class MultiAgentSystem:
         # Select agent
         agent_map = {
             "supervisor": self.supervisor,
-            "research": self.research_agent,
-            "analysis": self.analysis_agent,
-            "execution": self.execution_agent
+            "weather": self.weather_agent,
+            "social": self.social_agent
         }
         
         agent = agent_map.get(agent_type.lower(), self.supervisor)
@@ -102,6 +105,8 @@ class MultiAgentSystem:
         print("  - Use 'research: <query>' for Research Agent")
         print("  - Use 'analysis: <query>' for Analysis Agent")
         print("  - Use 'execution: <query>' for Execution Agent")
+        print("  - Use 'weather: <query>' for Weather Agent")
+        print("  - Use 'social: <query>' for Social Agent")
         print("  - Type 'exit' or 'quit' to exit")
         print("="*60 + "\n")
         
@@ -117,7 +122,7 @@ class MultiAgentSystem:
                     break
                 
                 # Parse agent type and query
-                if ':' in user_input and user_input.split(':')[0].lower() in ['research', 'analysis', 'execution']:
+                if ':' in user_input and user_input.split(':')[0].lower() in ['research', 'analysis', 'execution', 'weather', 'social']:
                     agent_type, query = user_input.split(':', 1)
                     agent_type = agent_type.strip().lower()
                     query = query.strip()
@@ -140,20 +145,14 @@ def main():
     # Initialize system
     system = MultiAgentSystem()
     
-    # Example queries (comment out for interactive mode only)
-    example_queries = [
-        ("supervisor", "I need to research the latest AI trends and create a summary report"),
-        ("research", "Find information about LangGraph and multi-agent systems"),
-        ("analysis", "Analyze the following data: [10, 20, 30, 40, 50, 60, 70]"),
-        ("execution", "List all available resources from the MCP server"),
-    ]
+    # Test query for supervisor delegation
+    test_query = ("supervisor", "Check the weather in Hanoi and post about it on social media")
     
-    print("Running example queries...\n")
-    for agent_type, query in example_queries:
-        try:
-            system.run(query, agent_type)
-        except Exception as e:
-            print(f"Error: {e}\n")
+    print("Running test query for supervisor delegation...\n")
+    try:
+        system.run(test_query[1], test_query[0])
+    except Exception as e:
+        print(f"Error: {e}\n")
     
     # Uncomment the line below to enable interactive mode
     # system.interactive_mode()

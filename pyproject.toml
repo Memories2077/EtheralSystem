@@ -17,4 +17,5 @@ dependencies = [
     "langchain-google-genai",
     "deepagents",
     "python-dotenv",
+    "requests",
 ]
