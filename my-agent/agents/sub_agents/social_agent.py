@@ -1,6 +1,3 @@
-"""
-Research Agent - Specialized in information gathering
-"""
 from langchain_ollama import ChatOllama
 from deepagents import create_deep_agent
 from typing import Dict, Any, Optional
@@ -9,11 +6,11 @@ from config import load_prompt, AGENT_CONFIG
 from tools.research_tools import RESEARCH_TOOLS
 
 
-class ResearchAgent:
-    """Research Agent for information gathering"""
+class SocialAgent:
+    """Social Agent for social information gathering"""
     
     def __init__(self):
-        config = AGENT_CONFIG["research_agent"]
+        config = AGENT_CONFIG["social_agent"]
         self.name = config["name"]
         self.prompt = load_prompt(config["prompt_file"])
         
@@ -32,14 +29,14 @@ class ResearchAgent:
     
     def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Invoke the research agent
+        Invoke the social agent
         
         Args:
-            query: Research query
+            query: Social query
             context: Additional context
             
         Returns:
-            Research results
+            Social results
         """
         messages = [{"role": "user", "content": query}]
         if context:
