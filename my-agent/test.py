@@ -11,15 +11,16 @@ from typing import TypedDict, Annotated, Sequence, Literal
 import operator
 from dotenv import load_dotenv
 import json
-from tools.research_tools import weather_research
 
 load_dotenv()
+
+from tools.research_tools import weather_research
 
 # Initialize LLM
 llm = ChatOllama(
     model="qwen2.5:7b",
     temperature=0.5,
-    base_url="https://ollama.timnguyen.id.vn"
+    base_url="https://ollama.tung196.id.vn"
 )
 
 # ============================================================================
