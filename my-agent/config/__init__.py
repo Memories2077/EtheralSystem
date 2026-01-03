@@ -28,37 +28,37 @@ AGENT_CONFIG = {
     "supervisor": {
         "name": "Supervisor Agent",
         "prompt_file": "supervisor_prompt.txt",
-        "model": "deepseek-r1:14b",
-        "temperature": 0.7,
+        "model": "qwen2.5:7b",
+        "temperature": 0.5,
     },
     "research_agent": {
         "name": "Research Agent",
         "prompt_file": "research_agent_prompt.txt",
-        "model": "deepseek-r1:14b",
+        "model": "qwen2.5:7b",
         "temperature": 0.5,
     },
     "analysis_agent": {
         "name": "Analysis Agent",
         "prompt_file": "analysis_agent_prompt.txt",
-        "model": "deepseek-r1:14b",
+        "model": "qwen2.5:7b",
         "temperature": 0.3,
     },
     "execution_agent": {
         "name": "Execution Agent",
         "prompt_file": "execution_agent_prompt.txt",
-        "model": "deepseek-r1:14b",
+        "model": "qwen2.5:7b",
         "temperature": 0.2,
     },
     "weather_agent": {
         "name": "Weather Agent",
         "prompt_file": "weather_agent_prompt.txt",
-        "model": "deepseek-r1:14b",
+        "model": "qwen2.5:7b",
         "temperature": 0.3,
     },
     "social_agent": {
         "name": "Social Agent",
         "prompt_file": "social_agent_prompt.txt",
-        "model": "deepseek-r1:14b",
+        "model": "qwen2.5:7b",
         "temperature": 0.3,
     }}
 

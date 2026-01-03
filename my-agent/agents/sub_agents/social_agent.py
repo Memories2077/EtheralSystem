@@ -2,9 +2,14 @@ from langchain_ollama import ChatOllama
 from deepagents import create_deep_agent
 from typing import Dict, Any, Optional
 
-from config import load_prompt, AGENT_CONFIG
+from config import load_prompt, AGENT_CONFIG, API_CONFIG
 from tools.research_tools import RESEARCH_TOOLS
+import httpx
 
+custom_client = httpx.Client(
+    timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+    limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+)
 
 class SocialAgent:
     """Social Agent for social information gathering"""
@@ -17,7 +22,8 @@ class SocialAgent:
         # Initialize model
         self.model = ChatOllama(
             model=config["model"],
-            temperature=config["temperature"]
+            temperature=config["temperature"],
+            base_url=API_CONFIG["ollama_base_url"]
         )
         
         # Create agent with research tools
