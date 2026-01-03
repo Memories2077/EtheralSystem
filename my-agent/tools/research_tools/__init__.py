@@ -143,19 +143,25 @@ def weather_research(query: str) -> Dict[str, Any]:
         city_name = geo_data[0]['name']
         country = geo_data[0].get('country', '')
         
-        # Step 2: Get weather data
-        weather_url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude=minutely,hourly,daily,alerts&appid={api_key}&units=metric"
+        # Step 2: Get weather data (using API 2.5 with metric units)
+        weather_url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric"
         weather_response = requests.get(weather_url)
         weather_response.raise_for_status()
         weather_data = weather_response.json()
         
-        current = weather_data['current']
-        temp = current['temp']
-        feels_like = current['feels_like']
-        humidity = current['humidity']
-        wind_speed = current['wind_speed']
-        weather_desc = current['weather'][0]['description']
-        weather_main = current['weather'][0]['main']
+        # Extract data from API 2.5 response structure
+        main_data = weather_data['main']
+        temp = main_data['temp']
+        feels_like = main_data['feels_like']
+        humidity = main_data['humidity']
+        pressure = main_data.get('pressure', 0)
+        
+        wind_data = weather_data.get('wind', {})
+        wind_speed = wind_data.get('speed', 0)
+        
+        weather_list = weather_data.get('weather', [])
+        weather_desc = weather_list[0]['description'] if weather_list else 'N/A'
+        weather_main = weather_list[0]['main'] if weather_list else 'N/A'
         
         return {
             "location": f"{city_name}, {country}",
@@ -163,6 +169,7 @@ def weather_research(query: str) -> Dict[str, Any]:
             "temperature": temp,
             "feels_like": feels_like,
             "humidity": humidity,
+            "pressure": pressure,
             "wind_speed": wind_speed,
             "description": weather_desc,
             "main": weather_main,

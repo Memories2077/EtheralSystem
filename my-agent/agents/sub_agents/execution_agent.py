@@ -5,7 +5,7 @@ from langchain_ollama import ChatOllama
 from deepagents import create_deep_agent
 from typing import Dict, Any, Optional
 
-from config import load_prompt, AGENT_CONFIG
+from config import load_prompt, AGENT_CONFIG, API_CONFIG
 from tools.execution_tools import EXECUTION_TOOLS
 
 
@@ -20,7 +20,8 @@ class ExecutionAgent:
         # Initialize model
         self.model = ChatOllama(
             model=config["model"],
-            temperature=config["temperature"]
+            temperature=config["temperature"],
+            base_url=API_CONFIG["ollama_base_url"]
         )
         
         # Create agent with execution tools
