@@ -1,5 +1,11 @@
-import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
-import { genaiConfig } from "./config.js"; // Assuming this file exports { apiKey: string, model: string }
+import { ChatOllama } from "@langchain/ollama";
+import {
+  HumanMessage,
+  AIMessage,
+  SystemMessage,
+  BaseMessage,
+} from "@langchain/core/messages";
+import { ollamaConfig } from "./config.js";
 
 export interface GenAIChatMessage {
   role: "user" | "model";
@@ -12,29 +18,48 @@ export interface GenAICompletionParams {
   temperature?: number;
 }
 
-const genAI = new GoogleGenAI({ apiKey: genaiConfig.apiKey });
+// Initialize ChatOllama with configuration
+const llm = new ChatOllama({
+  model: ollamaConfig.model,
+  temperature: ollamaConfig.temperature,
+  baseUrl: ollamaConfig.baseUrl,
+});
+
+// Convert GenAIChatMessage to LangChain message format
+function convertToLangChainMessages(
+  messages: GenAIChatMessage[]
+): BaseMessage[] {
+  return messages.map((m) => {
+    if (m.role === "user") {
+      return new HumanMessage(m.content);
+    } else {
+      // "model" role maps to AIMessage
+      return new AIMessage(m.content);
+    }
+  });
+}
 
 // --- Original function for single API calls ---
 export async function genaiCompletion({
   messages,
 }: GenAICompletionParams): Promise<string> {
   try {
-    // Now call generateContent on the 'model' instance
-    const result = await genAI.models.generateContent({
-      model: genaiConfig.model,
-      contents: messages.map((m) => ({
-        role: m.role,
-        parts: [{ text: m.content }],
-      })),
-    });
+    // Convert messages to LangChain format
+    const langChainMessages = convertToLangChainMessages(messages);
 
-    return result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    // Call Ollama via LangChain
+    const result = await llm.invoke(langChainMessages);
+
+    // Extract content from response
+    return typeof result.content === "string"
+      ? result.content
+      : String(result.content);
   } catch (error: any) {
-    console.error("Error calling GenAI API:", error);
+    console.error("Error calling Ollama API:", error);
     if (error.message) {
-      return `Error from GenAI service: ${error.message}`;
+      return `Error from Ollama service: ${error.message}`;
     } else {
-      return "An unknown error occurred while contacting the GenAI service.";
+      return "An unknown error occurred while contacting the Ollama service.";
     }
   }
 }
