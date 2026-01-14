@@ -4,44 +4,95 @@ This project focuses on building an AI-driven system that automatically translat
 
 ## ⚡ Quick Start
 
-1. Clone this project.
-2. Create an environment file by referencing our env_example.txt (you need to embed your API_KEY)
+### Prerequisites
+
+- Docker & Docker Compose installed
+- Access to Ollama server (https://ollama.timnguyen.id.vn)
+- Node.js 20+ (for local development)
+
+### Installation Steps
+
+1. Clone this project:
+
+   ```bash
+   git clone <your-repo>
+   cd mcp-gen
+   ```
+
+2. Create an environment file:
+
    ```bash
    cp env_example.txt .env
    ```
-3. Build an image for MCP servers:
+
+   Configure the following variables:
+
+   ```bash
+   # Ollama Configuration (required)
+   OLLAMA_BASE_URL=https://ollama.timnguyen.id.vn
+   OLLAMA_MODEL=qwen2.5:7b
+   OLLAMA_TEMPERATURE=0.5
+   OLLAMA_TIMEOUT_MS=60000
+
+   # MongoDB & RabbitMQ (optional, defaults provided in docker-compose)
+   MONGO_URI=mongodb://mongodb:27017
+   RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+
+   # Public URL for MCP server access
+   PUBLIC_URL=https://your-domain.com
    ```
-   docker build -t hiagi-mcp-gen .
+
+3. Build Docker images:
+
+   ```bash
+   docker-compose build
    ```
-4. Run docker-compose up services:
+
+4. Start all services:
 
    ```bash
    docker-compose up -d
    ```
 
-5. Use Postman to create your MCP servers (below is an example):
-```bash
-{
-  "request": "Reddit:\nReddit API Usage Guide\n\nStep 1: Get Access Token\n\ncurl -X POST \\\n  -H \"User-Agent: script:your_app_name:v1.0 (by /u/your_username)\" \\\n  -H \"Content-Type: application/x-www-form-urlencoded\" \\\n  -d 'grant_type=password&username=your_username&password=your_password' \\\n  --user 'your_client_id:your_client_secret' \\\n  https://www.reddit.com/api/v1/access_token\n\nResponse:\n{\n  \"access_token\": \"your_access_token_here\",\n  \"token_type\": \"bearer\",\n  \"expires_in\": 3600,\n  \"scope\": \"*\"\n}\n\nStep 2: Use Access Token for API Calls\n\ncurl -H \"Authorization: bearer your_access_token\" \\\n     -A \"your_app_name/1.0 by your_username\" \\\n     https://oauth.reddit.com/api/v1/me\n\nResponse:\n{\n  \"comment_karma\": 0,\n  \"created\": 1389649907.0,\n  \"created_utc\": 1389649907.0,\n  \"has_mail\": false,\n  \"has_mod_mail\": false,\n  \"has_verified_email\": null,\n  \"id\": \"1\",\n  \"is_gold\": false,\n  \"is_mod\": true,\n  \"link_karma\": 1,\n  \"name\": \"reddit_bot\",\n  \"over_18\": true\n}\n\nOther Endpoints:\nGET:\n- /api/v1/me\n- /api/v1/me/karma\n- /api/v1/me/prefs\n- /api/v1/me/trophies\n- /api/announcements/v1\n\nPOST:\n- /api/announcements/v1/read_all",
-  "dockerImage": "hiagi-mcp-gen",
-  "userId": "user123",
-  "email": "user@example.com"
-}
-```
+   Services will start on:
 
+   - API Manager: `http://localhost:8080`
+   - Proxy: `http://localhost:8081`
+   - MongoDB: `localhost:27017`
+   - RabbitMQ: `localhost:5672` (management UI: `http://localhost:15672`)
 
-6. Access the Claude config, which is returned:
+5. Create an MCP server from an API specification using cURL:
+
    ```bash
+   curl -X POST http://localhost:8080/api/generate-mcp \
+     -H "Content-Type: application/json" \
+     -d '{
+       "request": "Your API documentation or specification here...\n\nExample:\nGET /api/users - Get list of users\nPOST /api/users - Create new user\nGET /api/users/{id} - Get user by ID",
+       "userId": "user123",
+       "email": "user@example.com",
+       "name": "my-api-mcp"
+     }'
+   ```
+
+   **Response example:**
+
+   ```json
    {
-    "mcpServers": {
-        "mcp-server": {
-            "command": "npx",
-            "args": [
-                "mcp-remote",
-                "http://{localhost/IP/Domain_Name}:{port}/mcp/{server_id}?token={jwt}",
-                "--allow-http"
-            ]
-        }
-      }
+     "status": "success",
+     "serverId": "mcp-server-abc123",
+     "config": {
+       "mcpServers": {
+         "my-api-mcp": {
+           "command": "npx",
+           "args": [
+             "mcp-remote",
+             "http://your-domain.com:8080/mcp/mcp-server-abc123?token=jwt_token_here",
+             "--allow-http"
+           ]
+         }
+       }
+     }
    }
    ```
+
+6. The generated MCP server is now ready to use with Claude or other LLM platforms. Copy the configuration to your Claude settings.

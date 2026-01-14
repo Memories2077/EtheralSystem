@@ -1,1 +1,5 @@
-GEMINI_API_KEY=
+# Ollama Configuration
+OLLAMA_BASE_URL=https://ollama.timnguyen.id.vn
+OLLAMA_MODEL=qwen2.5:7b
+OLLAMA_TEMPERATURE=0.5
+OLLAMA_TIMEOUT_MS=60000
