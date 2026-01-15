@@ -6,6 +6,7 @@ import {
   BaseMessage,
 } from "@langchain/core/messages";
 import { ollamaConfig } from "./config.js";
+import { estimateTokens, formatTokenCount } from "./token-counter.js";
 
 export interface GenAIChatMessage {
   role: "user" | "model";
@@ -44,6 +45,13 @@ export async function genaiCompletion({
   messages,
 }: GenAICompletionParams): Promise<string> {
   try {
+    // Log context usage
+    const totalTokens = messages.reduce(
+      (sum, msg) => sum + estimateTokens(msg.content),
+      0
+    );
+    console.log(`🤖 Sending request to LLM: ${formatTokenCount(totalTokens)}`);
+
     // Convert messages to LangChain format
     const langChainMessages = convertToLangChainMessages(messages);
 
@@ -51,9 +59,16 @@ export async function genaiCompletion({
     const result = await llm.invoke(langChainMessages);
 
     // Extract content from response
-    return typeof result.content === "string"
-      ? result.content
-      : String(result.content);
+    const response =
+      typeof result.content === "string"
+        ? result.content
+        : String(result.content);
+
+    console.log(
+      `✅ Received response: ${formatTokenCount(estimateTokens(response))}`
+    );
+
+    return response;
   } catch (error: any) {
     console.error("Error calling Ollama API:", error);
     if (error.message) {
