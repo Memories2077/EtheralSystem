@@ -61,7 +61,25 @@ export async function generateOpenAPISpec(
     });
 
     console.log("🔧 Stitching code together...");
-    const fullCode = aiCode;
+    // Strip markdown code blocks if present (```yaml ... ``` or ```...```)
+    let fullCode = aiCode.trim();
+
+    // Remove opening code fence
+    if (fullCode.startsWith("```")) {
+      const firstNewline = fullCode.indexOf("\n");
+      if (firstNewline !== -1) {
+        fullCode = fullCode.substring(firstNewline + 1);
+      }
+    }
+
+    // Remove closing code fence
+    if (fullCode.endsWith("```")) {
+      fullCode = fullCode.substring(0, fullCode.lastIndexOf("```")).trim();
+    }
+
+    console.log(
+      `📝 Cleaned YAML (first 100 chars): ${fullCode.substring(0, 100)}...`
+    );
 
     console.log("🗑️ Cleaning up existing .yaml files...");
     // Delete the specific YAML file if it exists
@@ -73,7 +91,7 @@ export async function generateOpenAPISpec(
 
     console.log("💾 Writing to file...");
 
-     // Delete existing YAML file if it exists (in case the randomUUID duplicates)
+    // Delete existing YAML file if it exists (in case the randomUUID duplicates)
     if (await exists(outputPath)) {
       console.log("🗑️ Removing existing YAML file...");
       await remove(outputPath);
@@ -132,7 +150,28 @@ export async function generateMCP(
     });
 
     console.log("🔧 Stitching code together...");
-    const fullCode = aiCode; // Fix: wrap trong array
+    // Strip markdown code blocks if present (```typescript ... ``` or ```...```)
+    let fullCode = aiCode.trim();
+
+    // Remove opening code fence
+    if (fullCode.startsWith("```")) {
+      const firstNewline = fullCode.indexOf("\n");
+      if (firstNewline !== -1) {
+        fullCode = fullCode.substring(firstNewline + 1);
+      }
+    }
+
+    // Remove closing code fence
+    if (fullCode.endsWith("```")) {
+      fullCode = fullCode.substring(0, fullCode.lastIndexOf("```")).trim();
+    }
+
+    console.log(
+      `📝 Cleaned TypeScript (first 100 chars): ${fullCode.substring(
+        0,
+        100
+      )}...`
+    );
 
     console.log("🗑️ Cleaning up existing .ts files...");
     // Delete the specific TS file if it exists

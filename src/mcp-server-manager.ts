@@ -683,7 +683,8 @@ class MCPServerManager {
         const serverConfig: ServerLogEntry = {
           serverId: serverId,
           //serverName: name,
-          dockerImage: dockerImage || `mcp-server-${serverId}`,
+          dockerImage:
+            dockerImage || process.env.DEFAULT_MCP_IMAGE || "mcp-gen",
           containerPort: 3000, // Port mặc định trong container
           hostPort: hostPort,
           status: "created",
@@ -733,7 +734,7 @@ class MCPServerManager {
           default:
             fileName = `api-input-${serverId}.txt`;
         }
-        
+
         const defaultOutputDir = path.join(__dirname, "..", "input");
         const outputPath = path.join(defaultOutputDir, fileName);
 
@@ -767,18 +768,22 @@ class MCPServerManager {
             fs.mkdirSync(openapi_dir, { recursive: true });
           }
           fs.copyFileSync(outputPath, openapi_filepath);
-          console.log(`✅ Copied YAML input to OpenAPI spec: ${openapi_filepath}`);
+          console.log(
+            `✅ Copied YAML input to OpenAPI spec: ${openapi_filepath}`
+          );
         } else if (inputType === "json") {
-            console.log("🔄 Converting JSON to YAML...");
-            const jsonContent = fs.readFileSync(outputPath, "utf8");
-            const jsonObj = JSON.parse(jsonContent);
-            const yamlContent = yaml.dump(jsonObj);
-            const openapi_dir = path.dirname(openapi_filepath);
-            if (!fs.existsSync(openapi_dir)) {
-                fs.mkdirSync(openapi_dir, { recursive: true });
-            }
-            fs.writeFileSync(openapi_filepath, yamlContent);
-            console.log(`✅ Converted JSON to YAML and saved to: ${openapi_filepath}`);
+          console.log("🔄 Converting JSON to YAML...");
+          const jsonContent = fs.readFileSync(outputPath, "utf8");
+          const jsonObj = JSON.parse(jsonContent);
+          const yamlContent = yaml.dump(jsonObj);
+          const openapi_dir = path.dirname(openapi_filepath);
+          if (!fs.existsSync(openapi_dir)) {
+            fs.mkdirSync(openapi_dir, { recursive: true });
+          }
+          fs.writeFileSync(openapi_filepath, yamlContent);
+          console.log(
+            `✅ Converted JSON to YAML and saved to: ${openapi_filepath}`
+          );
         } else if (inputType === "text") {
           console.log("🤖 Calling Gemini to generate OpenAPI spec...");
           await generateOpenAPISpec(outputPath, serverId);
@@ -787,16 +792,16 @@ class MCPServerManager {
         console.log("📍 Using OpenAPI spec:", openapi_filepath);
 
         let checking = await confirm(openapi_filepath);
-        if (inputType !== 'json') {
-            let retryCount = 0;
-            const maxRetries = 5;
+        if (inputType !== "json") {
+          let retryCount = 0;
+          const maxRetries = 5;
 
-            while (!checking && retryCount < maxRetries) {
-              retryCount++;
-              console.log(`Retry attempt ${retryCount} of ${maxRetries}`);
-              await generateOpenAPISpec(outputPath, serverId);
-              checking = await confirm(openapi_filepath);
-            }
+          while (!checking && retryCount < maxRetries) {
+            retryCount++;
+            console.log(`Retry attempt ${retryCount} of ${maxRetries}`);
+            await generateOpenAPISpec(outputPath, serverId);
+            checking = await confirm(openapi_filepath);
+          }
         }
 
         if (!checking) {

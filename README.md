@@ -40,15 +40,26 @@ This project focuses on building an AI-driven system that automatically translat
 
    # Public URL for MCP server access
    PUBLIC_URL=https://your-domain.com
+
+   # Default Docker Image for MCP Servers (recommended: pre-build this image)
+   DEFAULT_MCP_IMAGE=mcp-gen
    ```
 
-3. Build Docker images:
+3. **Build the base MCP server image (Important!):**
+
+   ```bash
+   docker build -t mcp-gen .
+   ```
+
+   This creates a reusable image that all MCP server containers will use. Building this once saves time (~20-30s per request) and disk space.
+
+4. Build Docker Compose services:
 
    ```bash
    docker-compose build
    ```
 
-4. Start all services:
+5. Start all services:
 
    ```bash
    docker-compose up -d
@@ -61,18 +72,28 @@ This project focuses on building an AI-driven system that automatically translat
    - MongoDB: `localhost:27017`
    - RabbitMQ: `localhost:5672` (management UI: `http://localhost:15672`)
 
-5. Create an MCP server from an API specification using cURL:
+6. Create an MCP server from an API specification using cURL:
 
    ```bash
-   curl -X POST http://localhost:8080/api/generate-mcp \
+   curl -X POST http://localhost:8080/api/mcp/create \
      -H "Content-Type: application/json" \
      -d '{
        "request": "Your API documentation or specification here...\n\nExample:\nGET /api/users - Get list of users\nPOST /api/users - Create new user\nGET /api/users/{id} - Get user by ID",
        "userId": "user123",
-       "email": "user@example.com",
-       "name": "my-api-mcp"
+       "email": "user@example.com"
      }'
    ```
+
+   **Required fields:**
+
+   - `request`: API documentation/specification
+   - `userId`: Unique user identifier
+   - `email`: User email address
+   - `name`: Name for the MCP server (optional)
+
+   **Optional fields:**
+
+   - `dockerImage`: Custom Docker image name (defaults to `mcp-gen` from env variable `DEFAULT_MCP_IMAGE`)
 
    **Response example:**
 
@@ -95,4 +116,4 @@ This project focuses on building an AI-driven system that automatically translat
    }
    ```
 
-6. The generated MCP server is now ready to use with Claude or other LLM platforms. Copy the configuration to your Claude settings.
+7. The generated MCP server is now ready to use with Claude or other LLM platforms. Copy the configuration to your Claude settings.

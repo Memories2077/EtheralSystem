@@ -1,4 +1,10 @@
 // src/generator/prompt.ts - Improved version for MCP Server Generation
+import {
+  calculateMessageTokens,
+  truncateMessages,
+  formatTokenCount,
+  getContextWarningLevel,
+} from "../utils/token-counter.ts";
 
 interface ChatMessage {
   role: "user" | "model";
@@ -665,7 +671,7 @@ export function buildPromptWithExamples(
   inputExample: string,
   outputExample: string
 ): ChatMessage[] {
-  return [
+  const messages: ChatMessage[] = [
     {
       role: "model",
       content: SYSTEM_INSTRUCTION_For_Generating_MCPServer.trim(),
@@ -701,6 +707,23 @@ ${openApiSpec}
 - EVERY REQUEST BODY PROPERTY = SEPARATE ZOD PARAMETER`,
     },
   ];
+
+  // Check token count and truncate if needed
+  const stats = calculateMessageTokens(messages);
+  const warningLevel = getContextWarningLevel(stats.totalTokens);
+
+  console.log(
+    `📊 Context size: ${formatTokenCount(stats.totalTokens)} (${warningLevel})`
+  );
+
+  if (warningLevel === "danger" || warningLevel === "critical") {
+    console.warn(
+      `⚠️ Large context detected, applying truncation to fit within limits...`
+    );
+    return truncateMessages(messages, 120000);
+  }
+
+  return messages;
 }
 
 export function buildOpenAPIPromptWithExamples(
@@ -708,7 +731,7 @@ export function buildOpenAPIPromptWithExamples(
   inputExample: string,
   outputExample: string
 ): ChatMessage[] {
-  return [
+  const messages: ChatMessage[] = [
     {
       role: "model",
       content: SYSTEM_INSTRUCTION_For_Generating_OPENAPISpec.trim(),
@@ -741,4 +764,21 @@ CRITICAL OUTPUT REQUIREMENTS:
 Follow the exact same patterns, structure, and documentation style as shown in the examples.`,
     },
   ];
+
+  // Check token count and truncate if needed
+  const stats = calculateMessageTokens(messages);
+  const warningLevel = getContextWarningLevel(stats.totalTokens);
+
+  console.log(
+    `📊 Context size: ${formatTokenCount(stats.totalTokens)} (${warningLevel})`
+  );
+
+  if (warningLevel === "danger" || warningLevel === "critical") {
+    console.warn(
+      `⚠️ Large context detected, applying truncation to fit within limits...`
+    );
+    return truncateMessages(messages, 120000);
+  }
+
+  return messages;
 }
