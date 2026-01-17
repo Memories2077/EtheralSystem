@@ -62,7 +62,7 @@ services:
       - shared_mcpserver_ts:/app/src-generated-ts
     environment:
       - USE_DOCKER_PING=false
-      - PUBLIC_URL=https://mcp.hi-mcp.xyz
+      - PUBLIC_URL=http://localhost:8081
       - MONGO_URI=mongodb://mongodb:27017
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - NODE_ENV=production
