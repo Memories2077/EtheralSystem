@@ -1,8 +1,9 @@
-# Ollama Configuration
-OLLAMA_BASE_URL=https://ollama.timnguyen.id.vn
-OLLAMA_MODEL=qwen2.5:7b
-OLLAMA_TEMPERATURE=0.5
-OLLAMA_TIMEOUT_MS=60000
+# OpenAI API Configuration
+OPENAI_BASE_URL=https://llmapi.iec-uit.com/v1
+OPENAI_API_KEY=<API_KEY>
+OPENAI_MODEL=iec-model
+OPENAI_TEMPERATURE=0.5
+OPENAI_TIMEOUT_MS=60000
 
 # Default Docker Image for MCP Servers
 DEFAULT_MCP_IMAGE=mcp-gen
