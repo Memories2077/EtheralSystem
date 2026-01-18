@@ -1,6 +1,6 @@
 # Multi-Agent System
 
-Hệ thống đa agent với kiến trúc Supervisor-SubAgent, được xây dựng bằng LangChain và DeepAgents.
+Hệ thống đa agent với kiến trúc Supervisor-SubAgent, được xây dựng bằng LangChain và LangGraph.
 
 ## 🏗️ Cấu trúc
 
@@ -197,5 +197,5 @@ system.run(
 ## 📚 Tài liệu
 
 - LangChain: https://python.langchain.com/
-- DeepAgents: https://github.com/deepset-ai/haystack
+- LangGraph: https://langchain-ai.github.io/langgraph/
 - Tavily API: https://tavily.com/
