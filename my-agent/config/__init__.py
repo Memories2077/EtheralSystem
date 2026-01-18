@@ -27,41 +27,22 @@ def get_env_var(key: str, default: str = "") -> str:
 AGENT_CONFIG = {
     "supervisor": {
         "name": "Supervisor Agent",
-        "prompt_file": "supervisor_prompt.txt",
-        "model": "qwen2.5:7b",
+        "prompt_file": "supervisor.py",
+        "model": "iec-model",
         "temperature": 0.5,
-    },
-    "research_agent": {
-        "name": "Research Agent",
-        "prompt_file": "research_agent_prompt.txt",
-        "model": "qwen2.5:7b",
-        "temperature": 0.5,
-    },
-    "analysis_agent": {
-        "name": "Analysis Agent",
-        "prompt_file": "analysis_agent_prompt.txt",
-        "model": "qwen2.5:7b",
-        "temperature": 0.3,
-    },
-    "execution_agent": {
-        "name": "Execution Agent",
-        "prompt_file": "execution_agent_prompt.txt",
-        "model": "qwen2.5:7b",
-        "temperature": 0.2,
     },
     "weather_agent": {
         "name": "Weather Agent",
         "prompt_file": "weather_agent_prompt.txt",
-        "model": "qwen2.5:7b",
+        "model": "iec-model",
         "temperature": 0.3,
     },
-    "social_agent": {
-        "name": "Social Agent",
-        "prompt_file": "social_agent_prompt.txt",
-        "model": "qwen2.5:7b",
+    "generator_agent": {
+        "name": "Generator Agent",
+        "prompt_file": "generator.py",
+        "model": "iec-model",
         "temperature": 0.3,
     }}
-
 
 # API Configuration
 API_CONFIG = {
@@ -69,5 +50,6 @@ API_CONFIG = {
     "tavily_api_key": get_env_var("TAVILY_API_KEY"),
     "mcp_base_url": get_env_var("MCP_BASE_URL", "http://localhost:8000"),
     "mcp_api_key": get_env_var("MCP_API_KEY"),
-    "ollama_base_url": get_env_var("OLLAMA_BASE_URL", "https://ollama.timnguyen.id.vn/")
+    "openai_api_key": get_env_var("OPENAI_API_KEY", "<API_KEY>"),
+    "openai_base_url": get_env_var("OPENAI_BASE_URL", "https://llmapi.iec-uit.com/v1")
 }
