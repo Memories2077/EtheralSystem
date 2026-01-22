@@ -18,6 +18,8 @@ from prompts import supervisor
 
 load_dotenv()
 
+from tools.research_tools import weather_research
+
 # Initialize LLM
 llm = ChatOpenAI(
     model="iec-model",

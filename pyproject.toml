@@ -15,6 +15,7 @@ dependencies = [
     "langchain-openai",
     "ipython",
     "langchain-google-genai",
+    "langchain-ollama",
     "deepagents",
     "python-dotenv",
     "requests",
