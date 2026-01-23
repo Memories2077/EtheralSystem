@@ -34,7 +34,7 @@ class SupervisorAgent:
             prompt=self.prompt
         )
     
-    def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Invoke the supervisor agent
         
@@ -50,7 +50,7 @@ class SupervisorAgent:
             messages.append(SystemMessage(content=f"Context: {context}"))
         messages.append(HumanMessage(content=query))
         
-        result = self.agent.invoke({"messages": messages})
+        result = await self.agent.ainvoke({"messages": messages})
         return result
     
     def __repr__(self):

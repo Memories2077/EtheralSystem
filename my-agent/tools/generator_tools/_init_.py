@@ -3,7 +3,7 @@ Generate Tools - Tools for generating MCP Server
 """
 
 import os
-import requests
+import httpx
 from typing import Literal, Dict, Any, List, Optional
 from langchain_core.tools import tool
 import asyncio
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @tool
-def create_MCPServer(query: List[str]) -> str:
+async def create_MCPServer(query: List[str]) -> str:
     """
         The tool for creating MCP server
         
@@ -75,14 +75,14 @@ def create_MCPServer(query: List[str]) -> str:
     }
     
     try:
-        # Send POST request to create MCP server
+        # Send POST request to create MCP server using async httpx
         create_url = "http://localhost:8080/api/mcp/create"
-        response = requests.post(
-            create_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=30
-        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                create_url,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
         
         # Check response status
         if response.status_code == 200 or response.status_code == 201:
@@ -115,13 +115,13 @@ def create_MCPServer(query: List[str]) -> str:
         else:
             return f"❌ Error: Received status code {response.status_code}. Response: {response.text}"
     
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         return "❌ Error: Request timed out. The MCP server creation service is not responding."
     
-    except requests.exceptions.ConnectionError:
+    except httpx.ConnectError:
         return "❌ Error: Cannot connect to MCP server creation service at http://localhost:8080. Please ensure the service is running."
     
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         return f"❌ Error: Request failed - {str(e)}"
     
     except Exception as e:
