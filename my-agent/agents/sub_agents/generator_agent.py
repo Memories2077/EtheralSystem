@@ -23,7 +23,7 @@ class AgentState(TypedDict):
     final_response: str
 
 
-def generator_agent_node(state: AgentState) -> AgentState:
+async def generator_agent_node(state: AgentState) -> AgentState:
     """Generator agent that handles content generation tasks"""
     messages = state["messages"]
     
@@ -37,8 +37,9 @@ def generator_agent_node(state: AgentState) -> AgentState:
         api_key=SecretStr(API_CONFIG["openai_api_key"])
     )
     
-    # Bind generator tools
-    llm_with_tools = llm.bind_tools([create_MCPServer, test_mcp_server])
+    # Bind generator tools - only bind create_MCPServer (sync tool)
+    # test_mcp_server is async and will be handled separately if needed
+    llm_with_tools = llm.bind_tools([create_MCPServer])
     
     # Find the delegation task
     last_message = messages[-1]
@@ -53,31 +54,98 @@ def generator_agent_node(state: AgentState) -> AgentState:
     if not task_content:
         task_content = "Generate content based on the user's request"
     
+    # Parse task_content to extract API documentation, userId, and email
+    # Expected format:
+    # API_DOCUMENTATION:
+    # [content]
+    # USER_ID: [userId]
+    # EMAIL: [email]
+    
+    def parse_task_content(content: str) -> tuple:
+        """Parse task content to extract API doc, userId, and email"""
+        api_doc = ""
+        user_id = "default_user"
+        email = "user@example.com"
+        
+        # Extract API documentation
+        if "API_DOCUMENTATION:" in content:
+            parts = content.split("USER_ID:", 1)
+            api_doc = parts[0].replace("API_DOCUMENTATION:", "").strip()
+            
+            # Extract userId and email if present
+            if len(parts) > 1:
+                remaining = parts[1]
+                if "EMAIL:" in remaining:
+                    user_parts = remaining.split("EMAIL:", 1)
+                    user_id = user_parts[0].strip()
+                    email = user_parts[1].strip().split("\n")[0].strip()
+                else:
+                    user_id = remaining.strip().split("\n")[0].strip()
+        else:
+            # If no format markers, treat entire content as API doc
+            api_doc = content.strip()
+        
+        return api_doc, user_id, email
+    
+    # Add parsed parameters to the task for the generator
+    api_doc, user_id, email = parse_task_content(task_content)
+    
+    # CRITICAL: Pre-construct the query with FULL API documentation
+    # This ensures the complete API doc (no truncation) is passed to create_MCPServer
+    constructed_query = [api_doc, user_id, email]  # Contains FULL api_doc
+    
+    # Create instruction with API documentation preview for the LLM
+    # Show enough context so LLM understands it needs to call the tool
+    api_preview = api_doc[:500] + "..." if len(api_doc) > 500 else api_doc
+    
+    enhanced_task = f"""You need to create an MCP Server using the following information:
+
+    API DOCUMENTATION PREVIEW:
+    ```
+    {api_preview}
+    ```
+
+    FULL DETAILS:
+    - API Documentation: {len(api_doc)} characters (complete documentation ready)
+    - User ID: {user_id}
+    - Email: {email}
+
+    INSTRUCTIONS:
+    Call the create_MCPServer tool now with the query parameter.
+    The full API documentation has been prepared for you.
+    Just invoke: create_MCPServer(query=[api_doc, userId, email])"""
+    
     # Create generator query
     generator_messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=task_content)
+        HumanMessage(content=enhanced_task)
     ]
     
-    response = llm_with_tools.invoke(generator_messages)
+    response = await llm_with_tools.ainvoke(generator_messages)
     
     # If tool calls exist, execute them
     if response.tool_calls:
         tool_results = []
         for tool_call in response.tool_calls:
             if tool_call["name"] == "create_MCPServer":
-                query = tool_call["args"].get("query", [])
-                # Ensure query is a list of strings
-                if not isinstance(query, list):
-                    query = [str(query)]
-                result = create_MCPServer.invoke({"query": query})
+                # CRITICAL: Use our pre-constructed query with FULL API doc
+                # We ignore whatever the LLM provides and use our complete version
+                query = constructed_query  # Contains [full_api_doc, user_id, email]
+                
+                print(f"[Generator] Creating MCP Server with FULL API documentation...")
+                print(f"  - API Doc Length: {len(query[0])} chars (COMPLETE, NOT TRUNCATED)")
+                print(f"  - User ID: {query[1]}")
+                print(f"  - Email: {query[2]}")
+                
+                # Properly await the async tool
+                result = await create_MCPServer.ainvoke({"query": query})
                 tool_results.append(result)
             
             elif tool_call["name"] == "test_mcp_server":
                 mcp_link = tool_call["args"].get("MCPLink", "")
                 if mcp_link:
-                    import asyncio
-                    result = asyncio.run(test_mcp_server.invoke({"MCPLink": mcp_link}))
+                    # Properly await the async tool
+                    result = await test_mcp_server.ainvoke({"MCPLink": mcp_link})
                     tool_results.append(str(result))
                 else:
                     tool_results.append("❌ Error: MCPLink parameter is required for testing")
@@ -87,7 +155,7 @@ def generator_agent_node(state: AgentState) -> AgentState:
             ToolMessage(content=str(result), tool_call_id=tc["id"])
             for result, tc in zip(tool_results, response.tool_calls)
         ]
-        final_response = llm.invoke(final_messages)
+        final_response = await llm.ainvoke(final_messages)
         
         return {
             "messages": [final_response],
@@ -118,7 +186,7 @@ class GeneratorAgent:
             api_key=SecretStr(API_CONFIG["openai_api_key"])
         )
     
-    def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Invoke the generator agent (legacy method)
         
@@ -133,8 +201,8 @@ class GeneratorAgent:
         if context:
             messages.insert(0, SystemMessage(content=f"Context: {context}"))
         
-        # Simple generation without tools
-        response = self.model.invoke(messages)
+        # Simple generation without tools (using async)
+        response = await self.model.ainvoke(messages)
         return {
             "messages": messages + [response],
             "final_response": str(response.content) if hasattr(response, 'content') else str(response)

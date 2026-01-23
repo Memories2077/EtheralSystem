@@ -69,28 +69,42 @@ supervisor_tools = [delegate_to_generator_agent]
 # AGENT NODES
 # ============================================================================
 
-def supervisor_node(state: AgentState) -> AgentState:
+async def supervisor_node(state: AgentState) -> AgentState:
     """Supervisor agent that delegates tasks to sub-agents"""
     messages = state["messages"]
     
     system_prompt = supervisor.SUPERVISOR_MAIN_PROMPT
     
     # Bind tools to LLM
-    llm_with_tools = llm.bind_tools(supervisor_tools)
+    llm_with_tools = llm.bind_tools(supervisor_tools, tool_choice="auto")
     
     # Create message list with system prompt
     message_list = [SystemMessage(content=system_prompt)] + list(messages)
     
-    # Get response from LLM
-    response = llm_with_tools.invoke(message_list)
+    # Get response from LLM (using async)
+    response = await llm_with_tools.ainvoke(message_list)
     
-    # Determine next agent based on tool calls
-    next_agent = "supervisor"
-    if response.tool_calls:
-        for tool_call in response.tool_calls:
-            if "generator" in tool_call["name"].lower():
-                next_agent = "generator"
-                break
+    # IMPORTANT: Check if tool calls exist to determine routing
+    # If tool_calls present, go to tools node for execution
+    # Otherwise go to end
+    next_agent = "tools" if response.tool_calls else "end"
+    
+    # Debug: Log if no tool_calls when MCP keywords detected
+    if messages:
+        last_msg = messages[-1]
+        # Handle both dict and Message object
+        if isinstance(last_msg, dict):
+            user_query = str(last_msg.get("content", "")).lower()
+        else:
+            user_query = str(getattr(last_msg, "content", "")).lower()
+    else:
+        user_query = ""
+    
+    if not response.tool_calls and any(keyword in user_query for keyword in ["mcp", "server", "api"]):
+        print(f"⚠️  WARNING: MCP-related query detected but LLM didn't create tool_calls!")
+        print(f"   Query: {user_query[:100]}...")
+        resp_content = str(getattr(response, "content", response))[:200]
+        print(f"   LLM Response: {resp_content}...")
     
     return {
         "messages": [response],
@@ -99,16 +113,30 @@ def supervisor_node(state: AgentState) -> AgentState:
     }
 
 
-def supervisor_final_node(state: AgentState) -> AgentState:
+def should_continue_after_tools(state: AgentState) -> Literal["generator", "end"]:
+    """Determine next step after tools execution"""
+    messages = state["messages"]
+    
+    # Check the last tool message for delegation
+    for msg in reversed(messages):
+        if isinstance(msg, ToolMessage):
+            content = str(msg.content)
+            if "DELEGATE_TO_GENERATOR" in content:
+                return "generator"
+    
+    return "end"
+
+
+async def supervisor_final_node(state: AgentState) -> AgentState:
     """Supervisor reviews generator results and creates final response"""
     messages = state["messages"]
     
     # Get the generator's output
     last_content = str(messages[-1].content) if messages else ""
     
-    # Create final summary
+    # Create final summary (using async)
     system_prompt = "Summarize the results from the generator agent into a cohesive response."
-    summary_response = llm.invoke([
+    summary_response = await llm.ainvoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"Results: {last_content}")
     ])
@@ -123,14 +151,12 @@ def supervisor_final_node(state: AgentState) -> AgentState:
 # ROUTING LOGIC
 # ============================================================================
 
-def route_agent(state: AgentState) -> Literal["generator", "supervisor_final", "end"]:
-    """Route to the next agent based on state"""
+def route_agent(state: AgentState) -> Literal["tools", "end"]:
+    """Route to tools or end based on state"""
     next_agent = state.get("next_agent", "end")
     
-    if next_agent == "generator":
-        return "generator"
-    elif next_agent == "supervisor_final":
-        return "supervisor_final"
+    if next_agent == "tools":
+        return "tools"
     else:
         return "end"
 
@@ -142,7 +168,7 @@ def create_multi_agent_graph():
     """Create the multi-agent workflow graph
     
     Flow:
-    User Query -> Supervisor Agent -> Generator Agent -> Supervisor Final -> End
+    User Query -> Supervisor Agent -> Tools (if needed) -> Generator Agent -> Supervisor Final -> End
     
     The Supervisor delegates content generation tasks to the Generator Agent:
     - Generator Agent: Handles content generation, MCP server creation, and related tasks
@@ -154,6 +180,7 @@ def create_multi_agent_graph():
     
     # Add nodes
     workflow.add_node("supervisor", supervisor_node)
+    workflow.add_node("tools", ToolNode(supervisor_tools))  # Add ToolNode to execute tools
     workflow.add_node("generator", generator_agent_node)  # Uses imported function from generator_agent.py
     workflow.add_node("supervisor_final", supervisor_final_node)
     
@@ -165,8 +192,17 @@ def create_multi_agent_graph():
         "supervisor",
         route_agent,
         {
+            "tools": "tools",
+            "end": END
+        }
+    )
+    
+    # After tools execution, check where to go next
+    workflow.add_conditional_edges(
+        "tools",
+        should_continue_after_tools,
+        {
             "generator": "generator",
-            "supervisor_final": "supervisor_final",
             "end": END
         }
     )
@@ -193,7 +229,7 @@ class MultiAgentSystem:
         print("✓ Generator Agent")
         print("\nMulti-Agent System Ready!\n")
     
-    def run(self, query: str) -> str:
+    async def run(self, query: str) -> str:
         """
         Run a query through the multi-agent system
         
@@ -214,11 +250,11 @@ class MultiAgentSystem:
             "final_response": ""
         }
         
-        # Run the graph
+        # Run the graph (using async)
         print("Starting workflow...\n")
         
         try:
-            result = self.graph.invoke(initial_state)
+            result = await self.graph.ainvoke(initial_state)
             
             # Display flow
             print("\n" + "="*60)
@@ -261,7 +297,7 @@ class MultiAgentSystem:
             traceback.print_exc()
             return f"Error: {e}"
     
-    def interactive_mode(self):
+    async def interactive_mode(self):
         """Run in interactive mode"""
         print("\n" + "="*60)
         print("INTERACTIVE MODE")
@@ -282,25 +318,8 @@ class MultiAgentSystem:
                     print("\nGoodbye!")
                     break
                 
-                query = ""
-                if user_input.startswith("file:"):
-                    file_path = user_input.split(":", 1)[1].strip()
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            query = f.read()
-                        print(f"Loaded prompt from '{file_path}'")
-                    except FileNotFoundError:
-                        print(f"❌ Error: File not found at '{file_path}'")
-                        continue
-                    except Exception as e:
-                        print(f"❌ Error reading file: {e}")
-                        continue
-                else:
-                    query = user_input
-
-                # Run query if it's not empty
-                if query:
-                    self.run(query)
+                # Run query (await async call)
+                await self.run(user_input)
                 
             except KeyboardInterrupt:
                 print("\n\nGoodbye!")
@@ -319,13 +338,15 @@ app = create_multi_agent_graph()
 # OPTIONAL: CLI/Interactive Mode
 # ============================================================================
 
+import asyncio
+
 def main():
     """Main function for CLI/interactive mode (optional)"""
     # Initialize system
     system = MultiAgentSystem()
     
-    # Run in interactive mode
-    system.interactive_mode()
+    # Run in interactive mode using asyncio
+    asyncio.run(system.interactive_mode())
 
 
 if __name__ == "__main__":
