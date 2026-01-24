@@ -2,6 +2,9 @@
 Multi-Agent System with LangGraph
 Implements Supervisor and Generator Agent with delegation
 """
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -9,14 +12,12 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from typing import TypedDict, Annotated, Sequence, Literal
 import operator
-from dotenv import load_dotenv
 import json
 from agents.sub_agents.generator_agent import generator_agent_node
 import os
 from pydantic import SecretStr
 from prompts import supervisor
 
-load_dotenv()
 
 # Initialize LLM
 llm = ChatOpenAI(
@@ -343,6 +344,7 @@ class MultiAgentSystem:
         print("INTERACTIVE MODE")
         print("="*60)
         print("Type your queries and press Enter")
+        print("To load a prompt from a file, type 'file: <path/to/your/file.txt>'")
         print("Type 'exit' or 'quit' to exit")
         print("="*60 + "\n")
         

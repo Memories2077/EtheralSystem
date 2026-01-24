@@ -13,13 +13,16 @@ dependencies = [
     "langgraph",
     "langchain",
     "langchain-openai",
+    "langchain-core",
     "ipython",
     "langchain-google-genai",
+    "langchain-ollama",
     "deepagents",
     "python-dotenv",
     "requests",
     "httpx",
     "tavily-python",
+    "mcp"
 ]
 
 [tool.setuptools.packages.find]
