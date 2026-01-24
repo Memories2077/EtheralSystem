@@ -42,16 +42,38 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     llm_with_tools = llm.bind_tools([create_MCPServer])
     
     # Find the delegation task
-    last_message = messages[-1]
+    # With ToolNode: messages = [HumanMessage, AIMessage with tool_calls, ToolMessage with result]
+    # Without ToolNode: messages = [HumanMessage, AIMessage with tool_calls]
     task_content = ""
     
-    tool_calls = getattr(last_message, 'tool_calls', None)
-    if tool_calls:
-        for tool_call in tool_calls:
-            if "delegate_to_generator_agent" in tool_call.get("name", ""):
-                task_content = tool_call.get("args", {}).get("task", "")
+    # Try to find task from ToolMessage first (when using ToolNode)
+    for msg in reversed(messages):
+        if isinstance(msg, ToolMessage):
+            content = str(msg.content)
+            if "DELEGATE_TO_GENERATOR:" in content:
+                # Extract task from "DELEGATE_TO_GENERATOR: [task]"
+                task_content = content.replace("DELEGATE_TO_GENERATOR:", "").strip()
+                print(f"[Generator] Found task from ToolMessage: {task_content[:200]}...")
+                break
+    
+    # Fallback: Try to find from AIMessage tool_calls (old flow without ToolNode)
+    if not task_content:
+        for msg in reversed(messages):
+            tool_calls = getattr(msg, 'tool_calls', None)
+            if tool_calls:
+                for tool_call in tool_calls:
+                    if "delegate_to_generator_agent" in tool_call.get("name", ""):
+                        task_content = tool_call.get("args", {}).get("task", "")
+                        print(f"[Generator] Found task from AIMessage tool_calls: {task_content[:200]}...")
+                        break
+                if task_content:
+                    break
     
     if not task_content:
+        print("[Generator] ⚠️  WARNING: No task content found! Using default.")
+        print(f"[Generator] Messages received: {len(messages)} messages")
+        for idx, msg in enumerate(messages):
+            print(f"  [{idx}] {type(msg).__name__}: {str(msg)[:100]}...")
         task_content = "Generate content based on the user's request"
     
     # Parse task_content to extract API documentation, userId, and email
