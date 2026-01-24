@@ -72,38 +72,79 @@ async def supervisor_node(state: AgentState) -> AgentState:
     """Supervisor agent that delegates tasks to sub-agents"""
     messages = state["messages"]
     
+    # Check if request is already completed (prevent duplicate processing)
+    request_completed = False
+    last_user_message_idx = -1
+    completion_found_idx = -1
+    
+    for idx, msg in enumerate(messages):
+        msg_content = str(getattr(msg, 'content', ''))
+        
+        # Track last user message position
+        if isinstance(msg, HumanMessage):
+            # Check if this is a new MCP request (contains API docs)
+            if any(keyword in msg_content.lower() for keyword in ['mcp server', 'api', 'curl', 'endpoint']):
+                last_user_message_idx = idx
+        
+        # Check for completion indicators
+        if 'MCP Server created successfully' in msg_content or 'Server ID:' in msg_content:
+            completion_found_idx = idx
+    
+    # Request is complete if completion was found AFTER the last user request
+    if completion_found_idx > last_user_message_idx and last_user_message_idx >= 0:
+        request_completed = True
+        print(f"[Supervisor] ✅ Detected completed request - will not re-delegate")
+    
     system_prompt = supervisor.SUPERVISOR_MAIN_PROMPT
     
-    # Bind tools to LLM
-    llm_with_tools = llm.bind_tools(supervisor_tools, tool_choice="auto")
-    
-    # Create message list with system prompt
-    message_list = [SystemMessage(content=system_prompt)] + list(messages)
-    
-    # Get response from LLM (using async)
-    response = await llm_with_tools.ainvoke(message_list)
+    # If already completed, don't bind tools to prevent re-delegation
+    if request_completed:
+        print(f"[Supervisor] Using LLM without tools for summarization")
+        message_list = [SystemMessage(content=system_prompt)] + list(messages)
+        response = await llm.ainvoke(message_list)
+    else:
+        # Bind tools to LLM
+        llm_with_tools = llm.bind_tools(supervisor_tools, tool_choice="auto")
+        
+        # Create message list with system prompt
+        message_list = [SystemMessage(content=system_prompt)] + list(messages)
+        
+        # Get response from LLM (using async) with error handling for streaming issues
+        try:
+            response = await llm_with_tools.ainvoke(message_list)
+        except Exception as e:
+            error_msg = str(e)
+            if "Invalid diff" in error_msg or "less tool calls" in error_msg:
+                print(f"[Supervisor] ⚠️  Streaming error detected, retrying without streaming...")
+                # Retry with streaming disabled
+                llm_no_stream = llm.bind_tools(supervisor_tools, tool_choice="auto")
+                response = await llm_no_stream.ainvoke(message_list)
+            else:
+                raise e
     
     # IMPORTANT: Check if tool calls exist to determine routing
     # If tool_calls present, go to tools node for execution
     # Otherwise go to end
-    next_agent = "tools" if response.tool_calls else "end"
+    has_tool_calls = hasattr(response, 'tool_calls') and response.tool_calls
+    next_agent = "tools" if has_tool_calls else "end"
     
-    # Debug: Log if no tool_calls when MCP keywords detected
-    if messages:
-        last_msg = messages[-1]
-        # Handle both dict and Message object
-        if isinstance(last_msg, dict):
-            user_query = str(last_msg.get("content", "")).lower()
+    # Debug: Log if no tool_calls when MCP keywords detected (but NOT for completed requests)
+    if not request_completed and not has_tool_calls:
+        if messages:
+            last_msg = messages[-1]
+            # Handle both dict and Message object
+            if isinstance(last_msg, dict):
+                user_query = str(last_msg.get("content", "")).lower()
+            else:
+                user_query = str(getattr(last_msg, "content", "")).lower()
         else:
-            user_query = str(getattr(last_msg, "content", "")).lower()
-    else:
-        user_query = ""
-    
-    if not response.tool_calls and any(keyword in user_query for keyword in ["mcp", "server", "api"]):
-        print(f"⚠️  WARNING: MCP-related query detected but LLM didn't create tool_calls!")
-        print(f"   Query: {user_query[:100]}...")
-        resp_content = str(getattr(response, "content", response))[:200]
-        print(f"   LLM Response: {resp_content}...")
+            user_query = ""
+        
+        if any(keyword in user_query for keyword in ["mcp", "server", "api"]):
+            print(f"⚠️  WARNING: MCP-related query detected but LLM didn't create tool_calls!")
+            print(f"   Query: {user_query[:100]}...")
+            resp_content = str(getattr(response, "content", response))[:200]
+            print(f"   LLM Response: {resp_content}...")
     
     return {
         "messages": [response],
