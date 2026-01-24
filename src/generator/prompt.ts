@@ -64,7 +64,7 @@ CONVERSION RULES:
      {
          title: "Update a page",
          description: "Update a page with new properties, archive status, or icon.",
-         inputSchema: {
+         inputSchema: z.object({
              page_id: z.string().describe("Page ID"),
              properties: z.record(z.any()).optional().describe("Page properties to update"),
              archived: z.boolean().optional().describe("Archive status"),
@@ -79,7 +79,7 @@ CONVERSION RULES:
                  }).optional()
              }).optional().describe("Page cover image"),
              notion_api_token: z.string().describe("API token")
-         }
+         })
      },
      async ({ page_id, properties, archived, icon, cover, notion_api_token }) => {
          const requestBody: any = {};
@@ -91,11 +91,11 @@ CONVERSION RULES:
          const response = await makeAPIRequest(url, {
              method: 'PATCH',
              headers: {
-                 'Authorization': \'Bearer \${notion_api_token}\',
+                 'Authorization': \`Bearer \${notion_api_token}\`,
                  'Notion-Version': '2022-06-28'
-                    },
-                    body: JSON.stringify(requestBody)
-                });
+             },
+             body: JSON.stringify(requestBody)
+         });
                 // Handle response...
             }
         );
@@ -107,13 +107,13 @@ CONVERSION RULES:
         - Use proper null checks in the handler function
         
         Example:
-        inputSchema: {
+        inputSchema: z.object({
             parent: z.object({
                 child: z.object({
                     value: z.string()
                 }).optional()
             }).optional()
-        }
+        })
         
         Handler:
         if (parent !== undefined) {
@@ -128,7 +128,7 @@ server.registerTool(
     {
         title: "Create a new resource",
         description: "Create a new resource with simple or complex body.",
-        inputSchema: {
+        inputSchema: z.object({
             // Simple body
             data: z.object({
                 name: z.string(),
@@ -144,7 +144,7 @@ server.registerTool(
                 tags: z.array(z.string()),
                 metadata: z.record(z.any()).optional()
             }).describe("Complex resource data"),
-        }
+        })
     },
     async ({ data, complexData }) => {
         const body = complexData || data;
@@ -218,7 +218,7 @@ CRITICAL REQUIREMENTS:
 1. Use the EXACT import structure from the reference:
    - import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
    - import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-   - import { z } from "zod/v4";
+   - import { z } from "zod";
    - import express, { Request, Response } from 'express';
    - import cors from "cors";
    - import { randomUUID } from "node:crypto";
@@ -301,7 +301,8 @@ async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promis
 CRITICAL ZOD SCHEMA VALIDATION:
 🚨 EVERY inputSchema property MUST be a valid Zod schema:
 
-❌ WRONG:
+❌ WRONG (WILL CAUSE "cannot read properties of undefined reading _zod" ERROR):
+inputSchema: {}                        // Empty object - WILL CAUSE _zod ERROR
 inputSchema: {
     name: "string",                    // String literal - WILL CAUSE ERROR
     age: 25,                           // Number literal - WILL CAUSE ERROR
@@ -311,7 +312,11 @@ inputSchema: {
 }
 
 ✅ CORRECT:
-inputSchema: {
+// For tools with NO parameters, use z.object({}):
+inputSchema: z.object({})              // Empty Zod schema - CORRECT for no params
+
+// For tools with parameters, MUST wrap in z.object():
+inputSchema: z.object({
     name: z.string().describe("Name"),
     age: z.number().min(0).describe("Age"),
     tags: z.array(z.string()).optional().describe("Tags"),
@@ -320,27 +325,56 @@ inputSchema: {
         theme: z.string(),
         notifications: z.boolean()
     }).optional().describe("Settings")
-}
+})
 
 🔍 VALIDATION CHECKLIST:
-1. ✅ Every property starts with "z."
-2. ✅ Every property has .describe() with clear description
-3. ✅ Optional properties have .optional() AFTER all other modifiers
-4. ✅ Objects use z.object({}) or z.record(z.any())
-5. ✅ Arrays use z.array(z.type())
-6. ✅ Never use undefined, null, or raw literals
+1. ✅ CRITICAL: inputSchema MUST be wrapped in z.object() - NEVER use plain object
+2. ✅ For tools with NO parameters: inputSchema: z.object({})
+3. ✅ Every property starts with "z."
+4. ✅ Every property has .describe() with clear description
+5. ✅ Optional properties have .optional() AFTER all other modifiers
+6. ✅ Objects use z.object({}) or z.record(z.any())
+7. ✅ Arrays use z.array(z.type())
+8. ✅ Never use undefined, null, or raw literals
+9. ✅ String interpolation uses backticks \` not quotes
 
-TOOL REGISTRATION PATTERN (typescript):
+TOOL REGISTRATION PATTERN - NO PARAMETERS (typescript):
+// 🚨 CRITICAL: When tool has NO parameters, use z.object({}) NOT {}
+server.registerTool(
+    "list-all-items",
+    {
+        title: "List All Items",
+        description: "Retrieves all items without any parameters",
+        inputSchema: z.object({})  // ✅ CORRECT - empty Zod schema
+        // inputSchema: {}         // ❌ WRONG - causes _zod error
+    },
+    async () => {
+        const url = \`\${BASE_URL}/items\`;
+        const result = await makeAPIRequest<ItemType[]>(url);
+        
+        if (!result) {
+            return {
+                content: [{ type: "text", text: "Failed to retrieve items" }],
+            };
+        }
+        
+        return {
+            content: [{ type: "text", text: \`Retrieved \${result.length} items\` }],
+        };
+    }
+);
+
+TOOL REGISTRATION PATTERN - WITH PARAMETERS (typescript):
 server.registerTool(
     "tool-name",
     {
         title: "Tool Name",
         description: "Comprehensive description of what this tool does and when to use it",
-        inputSchema: {
+        inputSchema: z.object({
             param1: z.string().describe("Required string parameter with clear usage description"),
             param2: z.number().min(1).max(100).optional().describe("Optional number parameter (1-100)"),
             param3: z.enum(["option1", "option2", "option3"]).optional().describe("Optional enum parameter"),
-        }
+        })
     },
     async ({ param1, param2, param3 }) => {
         try {
@@ -801,12 +835,20 @@ ${openApiSpec}
 8. ALWAYS check !== undefined before adding to request body
 
 ⚠️ ZOD SCHEMA REQUIREMENTS (CRITICAL - PREVENTS _zod ERROR):
-✅ Every inputSchema property MUST be a Zod schema (starts with z.)
+🚨 CRITICAL: inputSchema MUST be z.object({...}) NOT plain object {...}
+✅ For NO parameters: inputSchema: z.object({})
+✅ For WITH parameters: inputSchema: z.object({ param: z.string(), ... })
+✅ Every property inside z.object() MUST be a Zod schema (starts with z.)
 ✅ Use z.record(z.any()) for objects without defined structure
 ✅ Use z.object({...}) for objects with defined structure
 ✅ Mark optional fields with .optional() at the end
 ✅ Always add .describe() with clear description
-❌ NEVER use: undefined, null, {}, [], "string", 123, etc.
+❌ NEVER use plain object: inputSchema: { param: z.string() } ← WRONG!
+❌ NEVER use: undefined, null, raw literals like {}, [], "string", 123
+
+⚠️ STRING INTERPOLATION (CRITICAL - PREVENTS AUTH ERRORS):
+✅ Use backticks for template strings: \\\`Bearer \\\${token}\\\`
+❌ NEVER use quotes: 'Bearer \\\${token}' or "Bearer \\\${token}"
 
 ⚠️ OUTPUT REQUIREMENTS:
 - Do NOT wrap the output in \`\`\`typescript code blocks (Critical)
