@@ -12,5 +12,8 @@ RUN npm audit fix || true
 
 COPY . .
 
+# Tạo thư mục chứa dữ liệu JWT
+RUN mkdir /app/data
+
 # Start the proxy
 CMD ["npx", "tsx", "./src/dynamic-proxy.ts"]
