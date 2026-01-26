@@ -4,6 +4,7 @@ Generate Tools - Tools for generating MCP Server
 
 import os
 import httpx
+import json
 from typing import Literal, Dict, Any, List, Optional
 from langchain_core.tools import tool
 import asyncio
@@ -109,8 +110,10 @@ async def create_MCPServer(query: List[str]) -> str:
                 
                 # Format the success response
                 server_id = result.get("serverId", "unknown")
-                config = result.get("config", {})
+                claude_config = result.get("claudeConfig", {})
                 status = result.get("status", "success")
+
+                config_str = json.dumps(claude_config, indent=4)
                 
                 logger.info(f"MCP Server created successfully: {server_id}")
                 
@@ -121,7 +124,7 @@ async def create_MCPServer(query: List[str]) -> str:
                     - Status: {status}
 
                     ⚙️ Configuration:
-                    {config}
+                    {config_str}
 
                     You can now use this MCP server with the provided configuration."""
             except Exception as json_error:
