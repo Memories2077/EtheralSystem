@@ -1,0 +1,246 @@
+"""
+Generate Tools - Tools for generating MCP Server
+"""
+
+import os
+import httpx
+from typing import Literal, Dict, Any, List, Optional
+from langchain_core.tools import tool
+import asyncio
+import logging
+from contextlib import AsyncExitStack
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@tool
+async def create_MCPServer(query: List[str]) -> str:
+    """
+        The tool for creating MCP server
+        
+        QUERY EXAMPLE:
+            {
+            "request": "Reddit:\nReddit API Usage Guide\n\nStep 1: Get Access Token\n\ncurl -X POST \\\n  -H \"User-Agent: script:your_app_name:v1.0 (by /u/your_username)\" \\\n  -H \"Content-Type: application/x-www-form-urlencoded\" \\\n  -d 'grant_type=password&username=your_username&password=your_password' \\\n  --user 'your_client_id:your_client_secret' \\\n  https://www.reddit.com/api/v1/access_token\n\nResponse:\n{\n  \"access_token\": \"your_access_token_here\",\n  \"token_type\": \"bearer\",\n  \"expires_in\": 3600,\n  \"scope\": \"*\"\n}\n\nStep 2: Use Access Token for API Calls\n\ncurl -H \"Authorization: bearer your_access_token\" \\\n     -A \"your_app_name/1.0 by your_username\" \\\n     https://oauth.reddit.com/api/v1/me\n\nResponse:\n{\n  \"comment_karma\": 0,\n  \"created\": 1389649907.0,\n  \"created_utc\": 1389649907.0,\n  \"has_mail\": false,\n  \"has_mod_mail\": false,\n  \"has_verified_email\": null,\n  \"id\": \"1\",\n  \"is_gold\": false,\n  \"is_mod\": true,\n  \"link_karma\": 1,\n  \"name\": \"reddit_bot\",\n  \"over_18\": true\n}\n\nOther Endpoints:\nGET:\n- /api/v1/me\n- /api/v1/me/karma\n- /api/v1/me/prefs\n- /api/v1/me/trophies\n- /api/announcements/v1\n\nPOST:\n- /api/announcements/v1/read_all",
+            "userId": "user123",
+            "email": "user@example.com"
+            }
+        
+        RESPONSE EXAMPLE:
+            {
+                "status": "success",
+                "serverId": "mcp-server-abc123",
+                "config": {
+                    "mcpServers": {
+                        "my-api-mcp": {
+                            "command": "npx",
+                            "args": [
+                            "mcp-remote",
+                            "http://your-domain.com:8080/mcp/mcp-server-abc123?token=jwt_token_here",
+                            "--allow-http"
+                            ]
+                        }
+                    }
+                }
+            }
+            
+        ARGS:
+            query: List of parameters
+            query[0] - request
+            query[1] - userId
+            query[2] - email
+    """
+    if not query:
+        logger.warning("Empty query provided to create_MCPServer")
+        return "❌❓ There no input in query then how can I do this?"
+    
+    if len(query) < 3:
+        logger.warning(f"Insufficient query parameters: {len(query)} provided, 3 required")
+        return "❌ Error: Query must contain at least 3 parameters: request, userId, and email"
+    
+    # Extract parameters from query
+    request_data = query[0]
+    user_id = query[1]
+    email = query[2]
+    
+    # Validate inputs
+    if not request_data or not user_id or not email:
+        logger.warning("One or more required parameters are empty")
+        return "❌ Error: All parameters (request, userId, email) are required"
+    
+    logger.info(f"Creating MCP Server for user: {user_id}, email: {email}")
+    logger.info(f"API documentation size: {len(request_data)} characters")
+    
+    # Prepare the payload
+    payload = {
+        "request": request_data,
+        "userId": user_id,
+        "email": email
+    }
+    
+    try:
+        # Send POST request to create MCP server using async httpx
+        # Increased timeout to allow backend enough time to process and respond
+        # Using a longer read timeout since MCP server creation can take time
+        create_url = "http://localhost:8080/api/mcp/create"
+        timeout_config = httpx.Timeout(
+            connect=10.0,    # Time to establish connection
+            read=300.0,      # Time to wait for backend response (5 minutes)
+            write=10.0,      # Time to send request
+            pool=10.0        # Time to get connection from pool
+        )
+        
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
+            response = await client.post(
+                create_url,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+        
+        # Log response details for debugging
+        logger.info(f"Received response with status code: {response.status_code}")
+        
+        # Check response status - only conclude when we have a definitive response
+        if response.status_code == 200 or response.status_code == 201:
+            try:
+                result = response.json()
+                
+                # Format the success response
+                server_id = result.get("serverId", "unknown")
+                config = result.get("config", {})
+                status = result.get("status", "success")
+                
+                logger.info(f"MCP Server created successfully: {server_id}")
+                
+                return f"""✅ MCP Server created successfully!
+            
+                    📋 Server Details:
+                    - Server ID: {server_id}
+                    - Status: {status}
+
+                    ⚙️ Configuration:
+                    {config}
+
+                    You can now use this MCP server with the provided configuration."""
+            except Exception as json_error:
+                logger.error(f"Failed to parse success response: {json_error}")
+                return f"✅ MCP Server created (Status {response.status_code}), but response format was unexpected. Raw response: {response.text[:500]}"
+        
+        elif response.status_code == 400:
+            error_detail = ""
+            try:
+                error_data = response.json()
+                error_detail = error_data.get("message", error_data.get("error", ""))
+            except:
+                error_detail = response.text[:200]
+            return f"❌ Bad Request: Invalid input data. {error_detail}"
+        
+        elif response.status_code == 401:
+            return f"❌ Unauthorized: Authentication failed."
+        
+        elif response.status_code == 500:
+            error_detail = ""
+            try:
+                error_data = response.json()
+                error_detail = error_data.get("message", error_data.get("error", ""))
+            except:
+                error_detail = response.text[:200]
+            return f"❌ Server Error: The MCP server creation service encountered an error. {error_detail}"
+        
+        else:
+            return f"❌ Error: Received status code {response.status_code}. Response: {response.text[:500]}"
+    
+    except httpx.TimeoutException as timeout_error:
+        logger.error(f"Request timed out after waiting for backend: {timeout_error}")
+        return f"""❌ Error: Request timed out after 5 minutes. 
+
+        The MCP server creation service did not respond in time. This could mean:
+        1. The backend is still processing your request (check backend logs)
+        2. The API documentation is very large and requires more processing time
+        3. The backend service may be experiencing issues
+
+        Please check the backend service status and try again. If the issue persists, contact support."""
+    
+    except httpx.ConnectError as connect_error:
+        logger.error(f"Connection failed: {connect_error}")
+        return f"❌ Error: Cannot connect to MCP server creation service at {create_url}. Please ensure the backend service is running on port 8080."
+    
+    except httpx.RequestError as request_error:
+        logger.error(f"Request error: {request_error}")
+        return f"❌ Error: Request failed - {str(request_error)}"
+    
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        return f"❌ Unexpected Error: {str(e)}"
+
+@tool
+async def test_mcp_server(MCPLink: str):
+    """Test MCP Server functionality"""
+    
+    # Cấu hình server parameters
+    server_params = StdioServerParameters(
+        command="python",  # command để chạy server
+        args=[MCPLink],  # đường dẫn đến server
+        env=None  # environment variables (optional)
+    )
+    
+    exit_stack = AsyncExitStack()
+    
+    try:
+        # Kết nối với server
+        read, write = await exit_stack.enter_async_context(
+            stdio_client(server_params)
+        )
+        
+        # Tạo session
+        session = await exit_stack.enter_async_context(
+            ClientSession(read, write)
+        )
+        
+        # Initialize connection
+        logger.info("Initializing connection...")
+        await session.initialize()
+        logger.info("✓ Connection initialized")
+        
+        # 1. Test list tools
+        logger.info("Testing list_tools...")
+        tools_response = await session.list_tools()
+        print(f"✓ Available tools: {tools_response.tools}")
+        
+        # 2. Test call tool
+        if tools_response.tools:
+            tool_name = tools_response.tools[0].name
+            logger.info(f"Testing call_tool with '{tool_name}'...")
+            
+            result = await session.call_tool(
+                name=tool_name,
+                arguments={"test": "value"}  # Thay arguments phù hợp
+            )
+            print(f"✓ Tool result: {result}")
+        
+        # 3. Test list resources
+        logger.info("Testing list_resources...")
+        resources_response = await session.list_resources()
+        print(f"✓ Resources: {resources_response.resources}")
+        
+        # 4. Test list prompts (optional)
+        logger.info("Testing list_prompts...")
+        prompts_response = await session.list_prompts()
+        print(f"✓ Prompts: {prompts_response.prompts}")
+        
+        logger.info("✅ All tests passed!")
+        
+    except Exception as error:
+        logger.error(f"❌ Test failed: {error}", exc_info=True)
+        raise
+        
+    finally:
+        await exit_stack.aclose()
+
+
+# Export tools list
+GENERATE_TOOLS = [
+    create_MCPServer
+]

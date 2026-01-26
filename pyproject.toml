@@ -6,8 +6,24 @@ build-backend = "setuptools.build_meta"
 name = "langchain-application"
 version = "0.1.0"
 description = "LangGraph application"
-readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "tung" }]
-dependencies = ["langgraph", "langchain", "ipython", "langchain-google-genai"]
+dependencies = [
+    "langgraph",
+    "langchain",
+    "langchain-openai",
+    "langchain-core",
+    "ipython",
+    "langchain-google-genai",
+    "langchain-ollama",
+    "deepagents",
+    "python-dotenv",
+    "requests",
+    "httpx",
+    "tavily-python",
+    "mcp"
+]
+
+[tool.setuptools.packages.find]
+where = ["my-agent"]
