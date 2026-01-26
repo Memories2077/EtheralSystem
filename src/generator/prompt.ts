@@ -1,4 +1,10 @@
 // src/generator/prompt.ts - Improved version for MCP Server Generation
+import {
+  calculateMessageTokens,
+  truncateMessages,
+  formatTokenCount,
+  getContextWarningLevel,
+} from "../utils/token-counter.ts";
 
 interface ChatMessage {
   role: "user" | "model";
@@ -18,10 +24,29 @@ CONVERSION RULES:
    OpenAPI type: integer -> z.number()
    OpenAPI type: boolean -> z.boolean()
    OpenAPI type: array -> z.array(z.type())
-   OpenAPI type: object -> z.object({})
+   OpenAPI type: object (with defined properties) -> z.object({ ... })
+   OpenAPI type: object (without defined properties, free-form) -> z.record(z.any())
+   OpenAPI type: object (additionalProperties: true) -> z.record(z.any())
    OpenAPI required: false -> z.optional()
 
-3. Complex Objects Pattern:
+3. CRITICAL - Free-form Objects:
+   When an OpenAPI schema has:
+   - type: object WITHOUT properties defined
+   - additionalProperties: true
+   - A field named "properties" that accepts any key-value pairs
+   
+   Convert to: z.record(z.any())
+   
+   Example:
+   // OpenAPI:
+   properties:
+     type: object
+     description: Key-value pairs
+   
+   // Zod:
+   properties: z.record(z.any()).optional().describe("Key-value pairs")
+
+4. Complex Objects Pattern:
    // OpenAPI Schema:
    UpdatePageRequest:
      properties:
@@ -39,7 +64,7 @@ CONVERSION RULES:
      {
          title: "Update a page",
          description: "Update a page with new properties, archive status, or icon.",
-         inputSchema: {
+         inputSchema: z.object({
              page_id: z.string().describe("Page ID"),
              properties: z.record(z.any()).optional().describe("Page properties to update"),
              archived: z.boolean().optional().describe("Archive status"),
@@ -47,18 +72,54 @@ CONVERSION RULES:
                  type: z.literal("emoji"),
                  emoji: z.string()
              }).optional().describe("Page icon"),
+             cover: z.object({
+                 type: z.enum(["external", "file"]),
+                 external: z.object({
+                     url: z.string().url()
+                 }).optional()
+             }).optional().describe("Page cover image"),
              notion_api_token: z.string().describe("API token")
-         }
+         })
      },
-     async ({ page_id, properties, archived, icon, notion_api_token }) => {
+     async ({ page_id, properties, archived, icon, cover, notion_api_token }) => {
          const requestBody: any = {};
-         if (properties) requestBody.properties = properties;
+         if (properties !== undefined) requestBody.properties = properties;
          if (archived !== undefined) requestBody.archived = archived;
-         if (icon) requestBody.icon = icon;
-         // Make API call...
-     }
-   );
-`;
+         if (icon !== undefined) requestBody.icon = icon;
+         if (cover !== undefined) requestBody.cover = cover;
+         
+         const response = await makeAPIRequest(url, {
+             method: 'PATCH',
+             headers: {
+                 'Authorization': \`Bearer \${notion_api_token}\`,
+                 'Notion-Version': '2022-06-28'
+             },
+             body: JSON.stringify(requestBody)
+         });
+                // Handle response...
+            }
+        );
+
+        5. CRITICAL - Nested Optional Objects:
+        When handling nested optional objects, ALWAYS:
+        - Mark parent object as .optional()
+        - Check if value !== undefined before adding to request body
+        - Use proper null checks in the handler function
+        
+        Example:
+        inputSchema: z.object({
+            parent: z.object({
+                child: z.object({
+                    value: z.string()
+                }).optional()
+            }).optional()
+        })
+        
+        Handler:
+        if (parent !== undefined) {
+            requestBody.parent = parent;
+        }
+        `;
 
 const FLEXIBLE_BODY_PATTERNS = `
 // For POST/PUT/PATCH endpoints with request body (Latest MCP Server Syntax)
@@ -67,7 +128,7 @@ server.registerTool(
     {
         title: "Create a new resource",
         description: "Create a new resource with simple or complex body.",
-        inputSchema: {
+        inputSchema: z.object({
             // Simple body
             data: z.object({
                 name: z.string(),
@@ -83,7 +144,7 @@ server.registerTool(
                 tags: z.array(z.string()),
                 metadata: z.record(z.any()).optional()
             }).describe("Complex resource data"),
-        }
+        })
     },
     async ({ data, complexData }) => {
         const body = complexData || data;
@@ -237,18 +298,83 @@ async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promis
     }
 }
 
+CRITICAL ZOD SCHEMA VALIDATION:
+🚨 EVERY inputSchema property MUST be a valid Zod schema:
 
-TOOL REGISTRATION PATTERN (typescript):
+❌ WRONG (WILL CAUSE "cannot read properties of undefined reading _zod" ERROR):
+inputSchema: {}                        // Empty object - WILL CAUSE _zod ERROR
+inputSchema: {
+    name: "string",                    // String literal - WILL CAUSE ERROR
+    age: 25,                           // Number literal - WILL CAUSE ERROR
+    tags: [],                          // Array literal - WILL CAUSE ERROR
+    data: {},                          // Object literal - WILL CAUSE ERROR
+    optional: undefined                // Undefined - WILL CAUSE _zod ERROR
+}
+
+✅ CORRECT:
+// For tools with NO parameters, use z.object({}):
+inputSchema: z.object({})              // Empty Zod schema - CORRECT for no params
+
+// For tools with parameters, MUST wrap in z.object():
+inputSchema: z.object({
+    name: z.string().describe("Name"),
+    age: z.number().min(0).describe("Age"),
+    tags: z.array(z.string()).optional().describe("Tags"),
+    data: z.record(z.any()).optional().describe("Data"),
+    settings: z.object({
+        theme: z.string(),
+        notifications: z.boolean()
+    }).optional().describe("Settings")
+})
+
+🔍 VALIDATION CHECKLIST:
+1. ✅ CRITICAL: inputSchema MUST be wrapped in z.object() - NEVER use plain object
+2. ✅ For tools with NO parameters: inputSchema: z.object({})
+3. ✅ Every property starts with "z."
+4. ✅ Every property has .describe() with clear description
+5. ✅ Optional properties have .optional() AFTER all other modifiers
+6. ✅ Objects use z.object({}) or z.record(z.any())
+7. ✅ Arrays use z.array(z.type())
+8. ✅ Never use undefined, null, or raw literals
+9. ✅ String interpolation uses backticks \` not quotes
+
+TOOL REGISTRATION PATTERN - NO PARAMETERS (typescript):
+// 🚨 CRITICAL: When tool has NO parameters, use z.object({}) NOT {}
+server.registerTool(
+    "list-all-items",
+    {
+        title: "List All Items",
+        description: "Retrieves all items without any parameters",
+        inputSchema: z.object({})  // ✅ CORRECT - empty Zod schema
+        // inputSchema: {}         // ❌ WRONG - causes _zod error
+    },
+    async () => {
+        const url = \`\${BASE_URL}/items\`;
+        const result = await makeAPIRequest<ItemType[]>(url);
+        
+        if (!result) {
+            return {
+                content: [{ type: "text", text: "Failed to retrieve items" }],
+            };
+        }
+        
+        return {
+            content: [{ type: "text", text: \`Retrieved \${result.length} items\` }],
+        };
+    }
+);
+
+TOOL REGISTRATION PATTERN - WITH PARAMETERS (typescript):
 server.registerTool(
     "tool-name",
     {
         title: "Tool Name",
         description: "Comprehensive description of what this tool does and when to use it",
-        inputSchema: {
+        inputSchema: z.object({
             param1: z.string().describe("Required string parameter with clear usage description"),
             param2: z.number().min(1).max(100).optional().describe("Optional number parameter (1-100)"),
             param3: z.enum(["option1", "option2", "option3"]).optional().describe("Optional enum parameter"),
-        }
+        })
     },
     async ({ param1, param2, param3 }) => {
         try {
@@ -264,10 +390,22 @@ server.registerTool(
             // Add query parameters if any exist
             if (queryParams.toString()) url += \`\?\${queryParams.toString()}\`;
 
+            // 🚨 CRITICAL: For POST/PUT/PATCH with complex body
+            // Build request body dynamically, only include defined values
+            const requestBody: any = {};
+            if (param1 !== undefined) requestBody.field1 = param1;
+            if (param2 !== undefined) requestBody.field2 = param2;
+            // For nested objects, check before assigning
+            if (param3 !== undefined) requestBody.nestedObject = param3;
+
             // Make API request with proper error handling
             const result = await makeAPIRequest<ResponseType>(url, {
-                method: "GET",
-                headers: { "Accept": "application/json" }
+                method: "POST", // or "GET", "PUT", "PATCH", "DELETE"
+                headers: { 
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(requestBody) // Only for POST/PUT/PATCH
             });
             
             if (!result) {
@@ -663,9 +801,9 @@ export function buildPromptWithExamples(
   openApiSpec: string,
   referenceStructure: string,
   inputExample: string,
-  outputExample: string
+  outputExample: string,
 ): ChatMessage[] {
-  return [
+  const messages: ChatMessage[] = [
     {
       role: "model",
       content: SYSTEM_INSTRUCTION_For_Generating_MCPServer.trim(),
@@ -692,23 +830,60 @@ ${openApiSpec}
 3. Convert ALL requestBody properties to separate Zod parameters
 4. Ensure ALL optional fields are marked .optional()
 5. Build request bodies dynamically from provided parameters
+6. NEVER use undefined, null, or raw literals in inputSchema
+7. ALWAYS use z.record(z.any()) for free-form objects
+8. ALWAYS check !== undefined before adding to request body
+
+⚠️ ZOD SCHEMA REQUIREMENTS (CRITICAL - PREVENTS _zod ERROR):
+🚨 CRITICAL: inputSchema MUST be z.object({...}) NOT plain object {...}
+✅ For NO parameters: inputSchema: z.object({})
+✅ For WITH parameters: inputSchema: z.object({ param: z.string(), ... })
+✅ Every property inside z.object() MUST be a Zod schema (starts with z.)
+✅ Use z.record(z.any()) for objects without defined structure
+✅ Use z.object({...}) for objects with defined structure
+✅ Mark optional fields with .optional() at the end
+✅ Always add .describe() with clear description
+❌ NEVER use plain object: inputSchema: { param: z.string() } ← WRONG!
+❌ NEVER use: undefined, null, raw literals like {}, [], "string", 123
+
+⚠️ STRING INTERPOLATION (CRITICAL - PREVENTS AUTH ERRORS):
+✅ Use backticks for template strings: \\\`Bearer \\\${token}\\\`
+❌ NEVER use quotes: 'Bearer \\\${token}' or "Bearer \\\${token}"
 
 ⚠️ OUTPUT REQUIREMENTS:
 - Do NOT wrap the output in \`\`\`typescript code blocks (Critical)
 - NO explanations  
 - START with "import"
 - IMPLEMENT EVERY ENDPOINT
-- EVERY REQUEST BODY PROPERTY = SEPARATE ZOD PARAMETER`,
+- EVERY REQUEST BODY PROPERTY = SEPARATE ZOD PARAMETER
+- EVERY INPUTSCHEMA PROPERTY = VALID ZOD SCHEMA`,
     },
   ];
+
+  // Check token count and truncate if needed
+  const stats = calculateMessageTokens(messages);
+  const warningLevel = getContextWarningLevel(stats.totalTokens);
+
+  console.log(
+    `📊 Context size: ${formatTokenCount(stats.totalTokens)} (${warningLevel})`,
+  );
+
+  if (warningLevel === "danger" || warningLevel === "critical") {
+    console.warn(
+      `⚠️ Large context detected, applying truncation to fit within limits...`,
+    );
+    return truncateMessages(messages, 120000);
+  }
+
+  return messages;
 }
 
 export function buildOpenAPIPromptWithExamples(
   apiEndpoints: string,
   inputExample: string,
-  outputExample: string
+  outputExample: string,
 ): ChatMessage[] {
-  return [
+  const messages: ChatMessage[] = [
     {
       role: "model",
       content: SYSTEM_INSTRUCTION_For_Generating_OPENAPISpec.trim(),
@@ -741,4 +916,21 @@ CRITICAL OUTPUT REQUIREMENTS:
 Follow the exact same patterns, structure, and documentation style as shown in the examples.`,
     },
   ];
+
+  // Check token count and truncate if needed
+  const stats = calculateMessageTokens(messages);
+  const warningLevel = getContextWarningLevel(stats.totalTokens);
+
+  console.log(
+    `📊 Context size: ${formatTokenCount(stats.totalTokens)} (${warningLevel})`,
+  );
+
+  if (warningLevel === "danger" || warningLevel === "critical") {
+    console.warn(
+      `⚠️ Large context detected, applying truncation to fit within limits...`,
+    );
+    return truncateMessages(messages, 120000);
+  }
+
+  return messages;
 }

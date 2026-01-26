@@ -7,10 +7,13 @@ COPY package*.json ./
 RUN npm install -g npm@latest
 RUN npm install
 
-# Vá lại các lỗi/lỗ hổng package nếu có
-RUN npm audit fix
+# Vá lại các lỗi/lỗ hổng package nếu có (bỏ qua nếu có breaking changes)
+RUN npm audit fix || true
 
 COPY . .
+
+# Tạo thư mục chứa dữ liệu JWT
+RUN mkdir /app/data
 
 # Start the proxy
 CMD ["npx", "tsx", "./src/dynamic-proxy.ts"]

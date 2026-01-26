@@ -2,8 +2,13 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-export const genaiConfig = {
-    apiKey: process.env.GOOGLE_GENAI_API_KEY,
-    model: process.env.GOOGLE_GENAI_MODEL || "models/gemini-2.0-flash",
-    timeoutMs: Number(process.env.GOOGLE_GENAI_TIMEOUT_MS || 60000),
+export const openaiConfig = {
+  baseUrl: process.env.OPENAI_BASE_URL || "https://llmapi.iec-uit.com/v1",
+  apiKey: process.env.OPENAI_API_KEY || "",
+  model: process.env.OPENAI_MODEL || "iec-model",
+  temperature: Number(process.env.OPENAI_TEMPERATURE || 0.5),
+  timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 60000),
 };
+
+// Keep backward compatibility
+export const ollamaConfig = openaiConfig;

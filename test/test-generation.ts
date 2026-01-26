@@ -95,7 +95,7 @@ export async function main(options: Options = {}) {
     console.log("❄️ Referring the output example");
 
     // Gọi hàm generate
-    console.log("🤖 Calling Gemini to generate MCP server...");
+    console.log("🤖 Calling Ollama to generate MCP server...");
     const result = await generateMCP(
       specPath,
       structurePath,

@@ -1,4 +1,4 @@
-import amqp, { Connection, Channel, Message } from "amqplib";
+import amqp, { Channel, ChannelModel, Message } from "amqplib";
 
 export interface BuildMessage {
   serverId: string;
@@ -43,7 +43,7 @@ export interface DeleteMessage {
 }
 
 export class MessageQueueService {
-  private connection!: Connection;
+  private connection!: ChannelModel;
   private channel!: Channel;
   private rabbitUrl: string;
   private buildQueue: string = "mcp.build";
@@ -60,7 +60,7 @@ export class MessageQueueService {
       rabbitUrl || process.env.RABBITMQ_URL || "amqp://localhost";
 
     console.log(
-      `🐰 RabbitMQ URL: ${this.rabbitUrl.replace(/\/\/.*@/, "//***:***@")}`
+      `🐰 RabbitMQ URL: ${this.rabbitUrl.replace(/\/\/.*@/, "//***:***@")}`,
     );
   }
 
@@ -174,7 +174,7 @@ export class MessageQueueService {
   }
 
   async publishGetConfigResponse(
-    response: GetClaudeConfigResponse
+    response: GetClaudeConfigResponse,
   ): Promise<void> {
     if (!this.isConnected) {
       console.warn("RabbitMQ not connected, skipping response");
@@ -196,7 +196,7 @@ export class MessageQueueService {
     buildHandler: (message: BuildMessage) => Promise<void>,
     statusHandler: (message: StatusUpdateMessage) => Promise<void>,
     getConfigHandler: (message: GetClaudeConfig) => Promise<void>,
-    deleteHandler: (message: DeleteMessage) => Promise<void>
+    deleteHandler: (message: DeleteMessage) => Promise<void>,
   ): Promise<void> {
     if (!this.isConnected) {
       throw new Error("RabbitMQ not connected");
@@ -209,7 +209,7 @@ export class MessageQueueService {
         if (msg) {
           try {
             const buildMessage: BuildMessage = JSON.parse(
-              msg.content.toString()
+              msg.content.toString(),
             );
             await buildHandler(buildMessage);
             this.channel.ack(msg);
@@ -219,7 +219,7 @@ export class MessageQueueService {
           }
         }
       },
-      { noAck: false }
+      { noAck: false },
     );
 
     // Status update queue consumer
@@ -229,7 +229,7 @@ export class MessageQueueService {
         if (msg) {
           try {
             const statusMessage: StatusUpdateMessage = JSON.parse(
-              msg.content.toString()
+              msg.content.toString(),
             );
             await statusHandler(statusMessage);
             this.channel.ack(msg);
@@ -239,7 +239,7 @@ export class MessageQueueService {
           }
         }
       },
-      { noAck: false }
+      { noAck: false },
     );
 
     await this.channel.consume(
@@ -248,7 +248,7 @@ export class MessageQueueService {
         if (msg) {
           try {
             const getConfigMessage: GetClaudeConfig = JSON.parse(
-              msg.content.toString()
+              msg.content.toString(),
             );
             await getConfigHandler(getConfigMessage);
             this.channel.ack(msg);
@@ -258,7 +258,7 @@ export class MessageQueueService {
           }
         }
       },
-      { noAck: false }
+      { noAck: false },
     );
 
     await this.channel.consume(
@@ -267,7 +267,7 @@ export class MessageQueueService {
         if (msg) {
           try {
             const deleteMessage: DeleteMessage = JSON.parse(
-              msg.content.toString()
+              msg.content.toString(),
             );
             await deleteHandler(deleteMessage);
             this.channel.ack(msg);
@@ -277,7 +277,7 @@ export class MessageQueueService {
           }
         }
       },
-      { noAck: false }
+      { noAck: false },
     );
 
     // Response queue consumer
@@ -287,7 +287,7 @@ export class MessageQueueService {
         if (msg) {
           try {
             const response: GetClaudeConfigResponse = JSON.parse(
-              msg.content.toString()
+              msg.content.toString(),
             );
 
             // Find and resolve the pending request
@@ -304,7 +304,7 @@ export class MessageQueueService {
           }
         }
       },
-      { noAck: false }
+      { noAck: false },
     );
 
     console.log("✅ Message consumers set up successfully");

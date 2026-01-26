@@ -202,6 +202,11 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: "Invalid token" }));
       }
     }
+    else {
+      console.warn("JWT secret not found, rejecting all requests");
+      res.writeHead(503);
+      return res.end(JSON.stringify({ error: "Token not found or invalid!" }));
+    }
 
     // Check if serverId exists in backends map
     let port = backends.get(serverId);

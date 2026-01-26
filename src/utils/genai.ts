@@ -1,8 +1,10 @@
-import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
-import { genaiConfig } from "./config.js"; // Assuming this file exports { apiKey: string, model: string }
+import { ChatOpenAI } from "@langchain/openai";
+import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages";
+import { openaiConfig } from "./config.js";
+import { estimateTokens, formatTokenCount } from "./token-counter.js";
 
 export interface GenAIChatMessage {
-  role: "user" | "model";
+  role: "user" | "model" | "assistant" | "system";
   content: string;
 }
 
@@ -12,29 +14,82 @@ export interface GenAICompletionParams {
   temperature?: number;
 }
 
-const genAI = new GoogleGenAI({ apiKey: genaiConfig.apiKey });
+// Initialize LangChain OpenAI client with configuration
+const client = new ChatOpenAI({
+  configuration: {
+    baseURL: openaiConfig.baseUrl,
+  },
+  apiKey: openaiConfig.apiKey,
+  model: openaiConfig.model,
+  temperature: openaiConfig.temperature,
+  timeout: openaiConfig.timeoutMs,
+  maxRetries: 2,
+});
+
+// Convert GenAIChatMessage to LangChain message format
+function convertToLangChainMessages(messages: GenAIChatMessage[]) {
+  return messages.map((m) => {
+    if (m.role === "system") {
+      return new SystemMessage(m.content);
+    } else if (m.role === "assistant" || m.role === "model") {
+      return new AIMessage(m.content);
+    } else {
+      return new HumanMessage(m.content);
+    }
+  });
+}
 
 // --- Original function for single API calls ---
 export async function genaiCompletion({
   messages,
+  temperature,
+  maxTokens,
 }: GenAICompletionParams): Promise<string> {
   try {
-    // Now call generateContent on the 'model' instance
-    const result = await genAI.models.generateContent({
-      model: genaiConfig.model,
-      contents: messages.map((m) => ({
-        role: m.role,
-        parts: [{ text: m.content }],
-      })),
-    });
+    // Log context usage
+    const totalTokens = messages.reduce(
+      (sum, msg) => sum + estimateTokens(msg.content),
+      0,
+    );
+    console.log(`🤖 Sending request to LLM: ${formatTokenCount(totalTokens)}`);
 
-    return result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    // Convert messages to LangChain format
+    const langchainMessages = convertToLangChainMessages(messages);
+
+    // Create a new client instance with custom parameters if needed
+    const llm = temperature !== undefined || maxTokens !== undefined
+      ? new ChatOpenAI({
+          configuration: {
+            baseURL: openaiConfig.baseUrl,
+          },
+          apiKey: openaiConfig.apiKey,
+          model: openaiConfig.model,
+          temperature: temperature ?? openaiConfig.temperature,
+          maxTokens: maxTokens,
+          timeout: openaiConfig.timeoutMs,
+          maxRetries: 2,
+        })
+      : client;
+
+    // Call LangChain OpenAI API
+    const response = await llm.invoke(langchainMessages);
+
+    // Extract content from response
+    const result = typeof response.content === "string" 
+      ? response.content 
+      : JSON.stringify(response.content);
+
+    console.log(
+      `✅ Received response: ${formatTokenCount(estimateTokens(result))}`,
+    );
+
+    return result;
   } catch (error: any) {
-    console.error("Error calling GenAI API:", error);
+    console.error("Error calling OpenAI API:", error);
     if (error.message) {
-      return `Error from GenAI service: ${error.message}`;
+      return `Error from OpenAI service: ${error.message}`;
     } else {
-      return "An unknown error occurred while contacting the GenAI service.";
+      return "An unknown error occurred while contacting the OpenAI service.";
     }
   }
 }

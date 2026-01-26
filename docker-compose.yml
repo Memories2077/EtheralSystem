@@ -24,7 +24,8 @@ services:
       - ME_CONFIG_BASICAUTH_USERNAME=admin
       - ME_CONFIG_BASICAUTH_PASSWORD=admin123
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     restart: unless-stopped
 
   rabbitmq:
@@ -60,9 +61,10 @@ services:
       - shared_input:/app/input
       - shared_openapi_spec:/app/src-generated-yaml
       - shared_mcpserver_ts:/app/src-generated-ts
+      - jwt_data:/app/data
     environment:
       - USE_DOCKER_PING=false
-      - PUBLIC_URL=https://mcp.hi-mcp.xyz
+      - PUBLIC_URL=http://localhost:8081
       - MONGO_URI=mongodb://mongodb:27017
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - NODE_ENV=production
@@ -89,6 +91,8 @@ services:
       - MONGO_URI=mongodb://mongodb:27017
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - jwt_data:/app/data
     depends_on:
       - docker-manager
       - mongodb
@@ -107,3 +111,4 @@ volumes:
   shared_mcpserver_ts:
     driver: local
     name: shared_mcpserver_ts
+  jwt_data:
