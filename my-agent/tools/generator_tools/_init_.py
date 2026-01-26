@@ -4,7 +4,6 @@ Generate Tools - Tools for generating MCP Server
 
 import os
 import httpx
-import json
 from typing import Literal, Dict, Any, List, Optional
 from langchain_core.tools import tool
 import asyncio
@@ -54,9 +53,11 @@ async def create_MCPServer(query: List[str]) -> str:
             query[2] - email
     """
     if not query:
+        logger.warning("Empty query provided to create_MCPServer")
         return "❌❓ There no input in query then how can I do this?"
     
     if len(query) < 3:
+        logger.warning(f"Insufficient query parameters: {len(query)} provided, 3 required")
         return "❌ Error: Query must contain at least 3 parameters: request, userId, and email"
     
     # Extract parameters from query
@@ -66,7 +67,11 @@ async def create_MCPServer(query: List[str]) -> str:
     
     # Validate inputs
     if not request_data or not user_id or not email:
+        logger.warning("One or more required parameters are empty")
         return "❌ Error: All parameters (request, userId, email) are required"
+    
+    logger.info(f"Creating MCP Server for user: {user_id}, email: {email}")
+    logger.info(f"API documentation size: {len(request_data)} characters")
     
     # Prepare the payload
     payload = {
@@ -77,57 +82,97 @@ async def create_MCPServer(query: List[str]) -> str:
     
     try:
         # Send POST request to create MCP server using async httpx
+        # Increased timeout to allow backend enough time to process and respond
+        # Using a longer read timeout since MCP server creation can take time
         create_url = "http://localhost:8080/api/mcp/create"
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        timeout_config = httpx.Timeout(
+            connect=10.0,    # Time to establish connection
+            read=300.0,      # Time to wait for backend response (5 minutes)
+            write=10.0,      # Time to send request
+            pool=10.0        # Time to get connection from pool
+        )
+        
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             response = await client.post(
                 create_url,
                 json=payload,
                 headers={"Content-Type": "application/json"}
             )
         
-        # Check response status
+        # Log response details for debugging
+        logger.info(f"Received response with status code: {response.status_code}")
+        
+        # Check response status - only conclude when we have a definitive response
         if response.status_code == 200 or response.status_code == 201:
-            result = response.json()
-            
-            # Format the success response
-            server_id = result.get("serverId", "unknown")
-            claude_config = result.get("claudeConfig", {})
-
-            config_str = json.dumps(claude_config, indent=4)
-            
-            return f"""✅ MCP Server created successfully!
+            try:
+                result = response.json()
+                
+                # Format the success response
+                server_id = result.get("serverId", "unknown")
+                config = result.get("config", {})
+                status = result.get("status", "success")
+                
+                logger.info(f"MCP Server created successfully: {server_id}")
+                
+                return f"""✅ MCP Server created successfully!
             
                     📋 Server Details:
                     - Server ID: {server_id}
-                    - Status: {result.get("status", "success")}
+                    - Status: {status}
 
                     ⚙️ Configuration:
-                    {config_str}
+                    {config}
 
                     You can now use this MCP server with the provided configuration."""
+            except Exception as json_error:
+                logger.error(f"Failed to parse success response: {json_error}")
+                return f"✅ MCP Server created (Status {response.status_code}), but response format was unexpected. Raw response: {response.text[:500]}"
         
         elif response.status_code == 400:
-            return f"❌ Bad Request: Invalid input data. Please check your request format."
+            error_detail = ""
+            try:
+                error_data = response.json()
+                error_detail = error_data.get("message", error_data.get("error", ""))
+            except:
+                error_detail = response.text[:200]
+            return f"❌ Bad Request: Invalid input data. {error_detail}"
         
         elif response.status_code == 401:
             return f"❌ Unauthorized: Authentication failed."
         
         elif response.status_code == 500:
-            return f"❌ Server Error: The MCP server creation service encountered an error."
+            error_detail = ""
+            try:
+                error_data = response.json()
+                error_detail = error_data.get("message", error_data.get("error", ""))
+            except:
+                error_detail = response.text[:200]
+            return f"❌ Server Error: The MCP server creation service encountered an error. {error_detail}"
         
         else:
-            return f"❌ Error: Received status code {response.status_code}. Response: {response.text}"
+            return f"❌ Error: Received status code {response.status_code}. Response: {response.text[:500]}"
     
-    except httpx.TimeoutException:
-        return "❌ Error: Request timed out. The MCP server creation service is not responding."
+    except httpx.TimeoutException as timeout_error:
+        logger.error(f"Request timed out after waiting for backend: {timeout_error}")
+        return f"""❌ Error: Request timed out after 5 minutes. 
+
+        The MCP server creation service did not respond in time. This could mean:
+        1. The backend is still processing your request (check backend logs)
+        2. The API documentation is very large and requires more processing time
+        3. The backend service may be experiencing issues
+
+        Please check the backend service status and try again. If the issue persists, contact support."""
     
-    except httpx.ConnectError:
-        return "❌ Error: Cannot connect to MCP server creation service at http://localhost:8080. Please ensure the service is running."
+    except httpx.ConnectError as connect_error:
+        logger.error(f"Connection failed: {connect_error}")
+        return f"❌ Error: Cannot connect to MCP server creation service at {create_url}. Please ensure the backend service is running on port 8080."
     
-    except httpx.RequestError as e:
-        return f"❌ Error: Request failed - {str(e)}"
+    except httpx.RequestError as request_error:
+        logger.error(f"Request error: {request_error}")
+        return f"❌ Error: Request failed - {str(request_error)}"
     
     except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         return f"❌ Unexpected Error: {str(e)}"
 
 @tool
