@@ -1,3 +1,28 @@
+/**
+ * OpenAPI to MCP Server Generator
+ *
+ * This module converts OpenAPI specifications into MCP (Model Context Protocol) servers.
+ *
+ * AUTHENTICATION SUPPORT:
+ * - Basic Authentication: username + password (base64 encoded)
+ * - Bearer Token: Authorization header with Bearer token
+ * - API Key: In header, query, or cookie
+ *
+ * IMPORTANT NOTES:
+ * - All authentication parameters are USER-PROVIDED (not loaded from .env)
+ * - Automatically extracts security schemes from OpenAPI spec
+ * - Adds required auth parameters to tool input schemas
+ * - Builds appropriate Authorization headers for each request
+ *
+ * SUPPORTED OPENAPI FEATURES:
+ * - components.securitySchemes (http/basic, http/bearer, apiKey)
+ * - operation-level security requirements
+ * - operation-specific servers
+ * - path/query parameters
+ * - request body (JSON)
+ * - multiple HTTP methods (GET, POST, PUT, DELETE, PATCH)
+ */
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -22,7 +47,17 @@ interface OpenAPISpec {
   paths: Record<string, Record<string, PathOperation>>;
   components?: {
     schemas?: Record<string, SchemaObject>;
+    securitySchemes?: Record<string, SecurityScheme>;
   };
+}
+
+interface SecurityScheme {
+  type: "http" | "apiKey" | "oauth2" | "openIdConnect";
+  scheme?: "basic" | "bearer" | string;
+  bearerFormat?: string;
+  name?: string;
+  in?: "query" | "header" | "cookie";
+  description?: string;
 }
 
 interface PathOperation {
@@ -33,6 +68,8 @@ interface PathOperation {
   parameters?: Parameter[];
   requestBody?: RequestBody;
   responses: Record<string, response>;
+  security?: Array<Record<string, string[]>>;
+  servers?: Array<{ url: string; description?: string }>;
 }
 
 interface Parameter {
@@ -176,11 +213,21 @@ class OpenAPIMCPGenerator {
     return `${methodName}-${pathParts.join("-")}`;
   }
 
+  // Get security scheme by name
+  private getSecurityScheme(schemeName: string): SecurityScheme | undefined {
+    return this.spec.components?.securitySchemes?.[schemeName];
+  }
+
+  // Get security requirements for an operation
+  private getSecurityRequirements(
+    operation: PathOperation,
+  ): Array<Record<string, string[]>> {
+    return operation.security || [];
+  }
+
   // Generate tool parameters from OpenAPI parameters - Updated to match new format
   // Returns a ZodObject for the input schema
-  private generateInputSchema(
-    operation: PathOperation,
-  ): z.ZodObject<any> {
+  private generateInputSchema(operation: PathOperation): z.ZodObject<any> {
     const inputSchema: Record<string, z.ZodTypeAny> = {};
 
     // Add path parameters
@@ -211,17 +258,105 @@ class OpenAPIMCPGenerator {
       }
     }
 
+    // Add authentication parameters based on security schemes
+    const securityRequirements = this.getSecurityRequirements(operation);
+    securityRequirements.forEach((securityReq) => {
+      Object.keys(securityReq).forEach((schemeName) => {
+        const scheme = this.getSecurityScheme(schemeName);
+        if (!scheme) return;
+
+        if (scheme.type === "http") {
+          if (scheme.scheme === "basic") {
+            // Basic Auth requires username and password
+            inputSchema.username = z
+              .string()
+              .describe(
+                "Username for basic authentication (USER-PROVIDED, not from .env)",
+              );
+            inputSchema.password = z
+              .string()
+              .describe(
+                "Password for basic authentication (USER-PROVIDED, not from .env)",
+              );
+          } else if (scheme.scheme === "bearer") {
+            // Bearer token
+            inputSchema.bearer_token = z
+              .string()
+              .describe(
+                scheme.description ||
+                  "Bearer token for authentication (USER-PROVIDED, not from .env)",
+              );
+          }
+        } else if (scheme.type === "apiKey") {
+          // API Key
+          const paramName = scheme.name || "api_key";
+          inputSchema[paramName] = z
+            .string()
+            .describe(
+              scheme.description ||
+                `API key for authentication (USER-PROVIDED, not from .env)`,
+            );
+        }
+      });
+    });
+
     return z.object(inputSchema);
+  }
+
+  // Build authentication headers based on security schemes
+  private buildAuthHeaders(
+    operation: PathOperation,
+    args: Record<string, any>,
+  ): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    const securityRequirements = this.getSecurityRequirements(operation);
+    securityRequirements.forEach((securityReq) => {
+      Object.keys(securityReq).forEach((schemeName) => {
+        const scheme = this.getSecurityScheme(schemeName);
+        if (!scheme) return;
+
+        if (scheme.type === "http") {
+          if (scheme.scheme === "basic") {
+            // Basic Auth: base64(username:password)
+            if (args.username && args.password) {
+              const credentials = Buffer.from(
+                `${args.username}:${args.password}`,
+              ).toString("base64");
+              headers["Authorization"] = `Basic ${credentials}`;
+            }
+          } else if (scheme.scheme === "bearer") {
+            // Bearer token
+            if (args.bearer_token) {
+              headers["Authorization"] = `Bearer ${args.bearer_token}`;
+            }
+          }
+        } else if (scheme.type === "apiKey") {
+          // API Key
+          const paramName = scheme.name || "api_key";
+          if (args[paramName]) {
+            if (scheme.in === "header") {
+              headers[paramName] = args[paramName];
+            }
+            // Note: query and cookie params are handled in buildUrl/request options
+          }
+        }
+      });
+    });
+
+    return headers;
   }
 
   // Make HTTP request helper
   private async makeRequest<T>(
     url: string,
     options: RequestInit = {},
+    authHeaders: Record<string, string> = {},
   ): Promise<T | null> {
     const headers = {
       "User-Agent": this.userAgent,
       "Content-Type": "application/json",
+      ...authHeaders,
       ...options.headers,
     };
 
@@ -317,8 +452,15 @@ class OpenAPIMCPGenerator {
               }
             }
 
+            // Use operation-specific server if available
+            const baseUrl = operation.servers?.[0]?.url || this.baseUrl;
+            const fullPath = baseUrl + path;
+
             // Build URL
             const url = this.buildUrl(path, pathParams, queryParams);
+
+            // Build authentication headers
+            const authHeaders = this.buildAuthHeaders(operation, args);
 
             // Make request
             const requestOptions: RequestInit = {
@@ -329,7 +471,11 @@ class OpenAPIMCPGenerator {
               requestOptions.body = JSON.stringify(bodyParams);
             }
 
-            const result = await this.makeRequest(url, requestOptions);
+            const result = await this.makeRequest(
+              url,
+              requestOptions,
+              authHeaders,
+            );
 
             if (!result) {
               return {

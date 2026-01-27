@@ -19,7 +19,7 @@ const api_input_example = path.join(
   "..",
   "test",
   "generate_openapi",
-  "input_example.ts"
+  "input_example.ts",
 );
 
 const openapi_spec_output_example = path.join(
@@ -28,32 +28,68 @@ const openapi_spec_output_example = path.join(
   "..",
   "test",
   "generate_openapi",
-  "output_example.yaml"
+  "output_example.yaml",
+);
+
+const openapi_spec_output_example_reddit = path.join(
+  __dirname,
+  "..",
+  "..",
+  "test",
+  "generate_openapi",
+  "output_example_reddit.yaml",
+);
+
+const openapi_spec_output_example_twilio = path.join(
+  __dirname,
+  "..",
+  "..",
+  "test",
+  "generate_openapi",
+  "output_example_twilio.yaml",
 );
 
 const outputDir_yaml = path.join(__dirname, "..", "..", "src-generated-yaml");
 
-export async function generateOpenAPISpec(
-  input: string,
-  //input_example: string,
-  //output_example: string,
-  //outDir: string,
-  name: string
-) {
+export async function generateOpenAPISpec(input: string, name: string) {
   try {
     console.log("📖 Reading Input...");
     const read_input = await readFile(input);
 
-    console.log("📖⬅️ Reading Input Example...");
+    console.log("📖⬅️ Reading Input Examples...");
     const input_Example = await readFile(api_input_example);
 
-    console.log("📖➡️ Reading Output Example...");
+    console.log("📖➡️ Reading Output Examples...");
     const output_Example = await readFile(openapi_spec_output_example);
+
+    // Read additional examples for Reddit and Twilio
+    let output_Example_Reddit = "";
+    let output_Example_Twilio = "";
+
+    try {
+      output_Example_Reddit = await readFile(
+        openapi_spec_output_example_reddit,
+      );
+      console.log("📖✅ Reddit example loaded");
+    } catch (error) {
+      console.log("📖⚠️ Reddit example not found, skipping...");
+    }
+
+    try {
+      output_Example_Twilio = await readFile(
+        openapi_spec_output_example_twilio,
+      );
+      console.log("📖✅ Twilio example loaded");
+    } catch (error) {
+      console.log("📖⚠️ Twilio example not found, skipping...");
+    }
 
     const messages = buildOpenAPIPromptWithExamples(
       read_input,
       input_Example,
-      output_Example
+      output_Example,
+      output_Example_Reddit,
+      output_Example_Twilio,
     );
 
     const aiCode = await genaiCompletion({
@@ -78,7 +114,7 @@ export async function generateOpenAPISpec(
     }
 
     console.log(
-      `📝 Cleaned YAML (first 100 chars): ${fullCode.substring(0, 100)}...`
+      `📝 Cleaned YAML (first 100 chars): ${fullCode.substring(0, 100)}...`,
     );
 
     console.log("🗑️ Cleaning up existing .yaml files...");
@@ -112,7 +148,7 @@ export async function generateMCP(
   input_example: string,
   output_example: string,
   outDir: string,
-  name: string | undefined
+  name: string | undefined,
 ) {
   try {
     console.log("📖 Reading OpenAPI spec...");
@@ -137,11 +173,29 @@ export async function generateMCP(
     console.log("📖 Reading Output Example...");
     const outputExample = await readFile(output_example);
 
+    // Try to read auth example
+    let authExample = "";
+    try {
+      const authExamplePath = path.join(
+        __dirname,
+        "..",
+        "..",
+        "test",
+        "specs",
+        "OpenAPI_Auth_Examples.ts",
+      );
+      authExample = await readFile(authExamplePath);
+      console.log("📖✅ Auth example loaded");
+    } catch (error) {
+      console.log("📖⚠️ Auth example not found, skipping...");
+    }
+
     const messages = buildPromptWithExamples(
       spec,
       structure,
       inputExample,
-      outputExample
+      outputExample,
+      authExample,
     );
 
     // Gọi GenAI với messages thay vì prompt đơn giản
@@ -169,8 +223,8 @@ export async function generateMCP(
     console.log(
       `📝 Cleaned TypeScript (first 100 chars): ${fullCode.substring(
         0,
-        100
-      )}...`
+        100,
+      )}...`,
     );
 
     console.log("🗑️ Cleaning up existing .ts files...");

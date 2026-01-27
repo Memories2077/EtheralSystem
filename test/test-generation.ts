@@ -40,7 +40,7 @@ export async function main(options: Options = {}) {
         if (fs.existsSync(specificPath)) {
           apiInputPath = specificPath;
           console.log(
-            `📎 Found input file for server ${serverId}: ${specificFile}`
+            `📎 Found input file for server ${serverId}: ${specificFile}`,
           );
         } else {
           console.error(`❌ Specific input file not found: ${specificFile}`);
@@ -65,7 +65,7 @@ export async function main(options: Options = {}) {
     console.log(`📖 API input path: ${apiInputPath}`);
     console.log(`📁 Output directory for OpenAPI Spec: ${outputDir_yaml}`);
     console.log(
-      `📁 Output directory for MCP Server TypeScript file: ${outputDir_ts}`
+      `📁 Output directory for MCP Server TypeScript file: ${outputDir_ts}`,
     );
 
     // Đường dẫn đến file OpenAPI spec
@@ -76,22 +76,18 @@ export async function main(options: Options = {}) {
     const structurePath = path.join(
       __dirname,
       "specs",
-      "OpenAPI_to_MCPServer_structure.ts"
+      "OpenAPI_to_MCPServer_structure.ts",
     );
     console.log(
-      "📖 Referring the structure converts OpenAPI spec to MCP Server"
+      "📖 Referring the structure converts OpenAPI spec to MCP Server",
     );
 
     // Đường dẫn đến input example
-    const input_example = path.join(__dirname, "specs", "JSONPlaceHolder.yaml");
+    const input_example = path.join(__dirname, "specs", "Reddit.yaml");
     console.log("🔥 Referring the input example");
 
     // Đường dẫn đến output example
-    const output_example = path.join(
-      __dirname,
-      "specs",
-      "JSONPlaceHolder_MCPServer.ts"
-    );
+    const output_example = path.join(__dirname, "specs", "Reddit_MCPServer.ts");
     console.log("❄️ Referring the output example");
 
     // Gọi hàm generate
@@ -102,13 +98,13 @@ export async function main(options: Options = {}) {
       input_example,
       output_example,
       outputDir_ts,
-      serverId
+      serverId,
     );
 
     console.log("✅ Generation completed!");
     console.log(
       "📄 Generated file:",
-      path.join(outputDir_ts, `${serverId}.ts`)
+      path.join(outputDir_ts, `${serverId}.ts`),
     );
     if (result) {
       console.log("📊 Generated code preview:");

@@ -88,15 +88,22 @@ CONVERSION RULES:
          if (icon !== undefined) requestBody.icon = icon;
          if (cover !== undefined) requestBody.cover = cover;
          
-         const response = await makeAPIRequest(url, {
+         const { data: response, error } = await makeAPIRequest(url, {
              method: 'PATCH',
              headers: {
                  'Authorization': \`Bearer \${notion_api_token}\`,
-                 'Notion-Version': '2022-06-28'
+                 'Notion-Version': '2022-06-28',
+                 'Content-Type': 'application/json'
              },
              body: JSON.stringify(requestBody)
          });
-                // Handle response...
+         
+         if (error || !response) {
+             return {
+                 content: [{ type: "text", text: \`Failed to update page. Error: \${error || "Unknown error"}\` }],
+             };
+         }
+                // Handle successful response...
             }
         );
 
@@ -148,17 +155,32 @@ server.registerTool(
     },
     async ({ data, complexData }) => {
         const body = complexData || data;
-        const result = await makeAPIRequest<ResponseType>(url, {
+        const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
             method: 'POST',
+            headers: {
+                "Content-Type": "application/json"
+            },
             body: JSON.stringify(body),
         });
-        // Handle response...
+        
+        if (error || !result) {
+            return {
+                content: [{
+                    type: "text",
+                    text: \`Failed to create resource. Error: \${error || "Unknown error"}\`
+                }],
+            };
+        }
+        // Handle successful response...
     }
 );
 `;
 
 // Thêm pattern:
 const CONTENT_TYPE_PATTERNS = `
+// CRITICAL: Always include Content-Type header for POST/PUT/PATCH requests
+// Different content types require different body formatting
+
 // Handle different content types
 function buildRequestOptions(body: any, contentType: string): RequestInit {
     const headers: Record<string, string> = {
@@ -173,6 +195,7 @@ function buildRequestOptions(body: any, contentType: string): RequestInit {
             processedBody = JSON.stringify(body);
             break;
         case 'application/x-www-form-urlencoded':
+            // CRITICAL: Required for OAuth token endpoints and form submissions
             headers['Content-Type'] = 'application/x-www-form-urlencoded';
             processedBody = new URLSearchParams(body).toString();
             break;
@@ -190,6 +213,16 @@ function buildRequestOptions(body: any, contentType: string): RequestInit {
     
     return { headers, body: processedBody };
 }
+
+// BEST PRACTICE: For most POST/PUT/PATCH requests with JSON body:
+const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json", // CRITICAL: Always include for JSON payloads
+        "Accept": "application/json"
+    },
+    body: JSON.stringify(requestBody)
+});
 `;
 
 // Thêm instruction:
@@ -241,7 +274,10 @@ CRITICAL REQUIREMENTS:
    - Create a helper function like makeAPIRequest<T>() for HTTP calls
    - Use fetch() with proper headers including User-Agent
    - Include proper error handling with try-catch blocks
-   - Return null on errors and handle gracefully in tools
+   - Parse response text before JSON parse for better error debugging
+   - Return { data, error } structure instead of null for better error handling
+   - Always add Content-Type header for POST/PUT/PATCH requests
+   - Log detailed error information (status, response body)
 
 5. Parameter Handling:
    - Use Zod schemas for parameter validation
@@ -279,23 +315,86 @@ TYPESCRIPT CONTENT_TYPE_PATTERNS:
 ${CONTENT_TYPE_PATTERNS}
 
 TYPESCRIPT ERROR HANDLING PATTERN:
-async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promise<T | null> {
+async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promise<{ data: T | null; error: string | null }> {
     const headers = {
         "User-Agent": USER_AGENT,
-        "Content-Type": "application/json",
         ...options.headers,
     };
 
     try {
         const response = await fetch(url, { ...options, headers });
+
+        // Get response text for better error reporting
+        const responseText = await response.text();
+
         if (!response.ok) {
-            throw new Error(\`HTTP error! status: \${response.status}\`);
+            console.error(
+                \`HTTP error! status: \\\${response.status}, body: \\\${responseText}\`,
+            );
+            return {
+                data: null,
+                error: \`HTTP \\\${response.status}: \\\${responseText}\`,
+            };
         }
-        return (await response.json()) as T;
+
+        try {
+            const data = JSON.parse(responseText) as T;
+            return { data, error: null };
+        } catch (parseError) {
+            console.error("JSON parse error:", parseError, "Response:", responseText);
+            return {
+                data: null,
+                error: "Failed to parse JSON response",
+            };
+        }
     } catch (error) {
-        console.error("Error making API request:", error);
-        return null;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error("Error making API request:", errorMessage);
+        return {
+            data: null,
+            error: \`Network error: \\\${errorMessage}\`,
+        };
     }
+}
+
+BEARER TOKEN AUTO-PREFIX PATTERN:
+// When handling Authorization headers, automatically add "Bearer " prefix if not present
+// This improves user experience by accepting tokens with or without the "Bearer " prefix
+
+// Example implementation:
+async ({ Authorization: bearerToken, "User-Agent": userAgent }) => {
+    const url = \`\${API_BASE_URL}/protected-endpoint\`;
+    
+    // Ensure bearer token has correct format
+    const authHeader = bearerToken.startsWith("Bearer ")
+        ? bearerToken
+        : \`Bearer \${bearerToken}\`;
+
+    const headers = {
+        Authorization: authHeader,
+        "User-Agent": userAgent,
+    };
+
+    const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
+        method: "GET",
+        headers,
+    });
+
+    if (error || !result) {
+        return {
+            content: [{
+                type: "text",
+                text: \`Failed to retrieve data. Error: \${error || "Unknown error"}\`
+            }],
+        };
+    }
+
+    return {
+        content: [{
+            type: "text",
+            text: \`Successfully retrieved data: \${JSON.stringify(result)}\`
+        }],
+    };
 }
 
 CRITICAL ZOD SCHEMA VALIDATION:
@@ -350,11 +449,11 @@ server.registerTool(
     },
     async () => {
         const url = \`\${BASE_URL}/items\`;
-        const result = await makeAPIRequest<ItemType[]>(url);
+        const { data: result, error } = await makeAPIRequest<ItemType[]>(url);
         
-        if (!result) {
+        if (error || !result) {
             return {
-                content: [{ type: "text", text: "Failed to retrieve items" }],
+                content: [{ type: "text", text: \`Failed to retrieve items. Error: \${error || "Unknown error"}\` }],
             };
         }
         
@@ -399,7 +498,7 @@ server.registerTool(
             if (param3 !== undefined) requestBody.nestedObject = param3;
 
             // Make API request with proper error handling
-            const result = await makeAPIRequest<ResponseType>(url, {
+            const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
                 method: "POST", // or "GET", "PUT", "PATCH", "DELETE"
                 headers: { 
                     "Accept": "application/json",
@@ -408,11 +507,11 @@ server.registerTool(
                 body: JSON.stringify(requestBody) // Only for POST/PUT/PATCH
             });
             
-            if (!result) {
+            if (error || !result) {
                 return {
                     content: [{ 
                         type: "text", 
-                        text: \`Failed to retrieve data from \${url}\` 
+                        text: \`Failed to retrieve data from \${url}. Error: \${error || "Unknown error"}\` 
                     }],
                 };
             }
@@ -802,7 +901,20 @@ export function buildPromptWithExamples(
   referenceStructure: string,
   inputExample: string,
   outputExample: string,
+  authExample?: string,
 ): ChatMessage[] {
+  // Build examples section
+  let examplesSection = `YAML INPUT EXAMPLE (OpenAPI Spec):
+${inputExample}
+
+TYPESCRIPT OUTPUT EXAMPLE (Generated MCP Server):
+${outputExample}`;
+
+  // Add auth example if available
+  if (authExample) {
+    examplesSection += `\n\n${"=".repeat(80)}\n\nAUTHENTICATION EXAMPLE (WITH BASIC AUTH, BEARER TOKEN, API KEY):\n\nTYPESCRIPT REFERENCE WITH FULL AUTHENTICATION SUPPORT:\n${authExample}\n\n🔐 KEY AUTHENTICATION PATTERNS FROM THIS EXAMPLE:\n- Basic Auth: Adds username + password parameters to inputSchema\n- Bearer Token: Adds bearer_token parameter to inputSchema\n- API Key: Adds api_key parameter to inputSchema\n- Security schemes are extracted from components.securitySchemes\n- Auth headers are built dynamically in the handler\n- All auth parameters are USER-PROVIDED (not from .env)\n- Use base64 encoding for Basic Auth: btoa(\`\${username}:\${password}\`)\n- Use Bearer format for tokens: \`Bearer \${bearer_token}\`\n- Apply security per operation using operation.security array`;
+  }
+
   const messages: ChatMessage[] = [
     {
       role: "model",
@@ -815,11 +927,7 @@ export function buildPromptWithExamples(
 TYPESCRIPT REFERENCE STRUCTURE (ONLY FOR REFERENCING):
 ${referenceStructure}
 
-YAML INPUT EXAMPLE (OpenAPI Spec):
-${inputExample}
-
-TYPESCRIPT OUTPUT EXAMPLE (Generated MCP Server):
-${outputExample}
+${examplesSection}
 
 NOW GENERATE FOR THIS YAML OPENAPI SPEC:
 ${openApiSpec}
@@ -833,6 +941,20 @@ ${openApiSpec}
 6. NEVER use undefined, null, or raw literals in inputSchema
 7. ALWAYS use z.record(z.any()) for free-form objects
 8. ALWAYS check !== undefined before adding to request body
+
+🔐 AUTHENTICATION REQUIREMENTS (IF SPEC HAS SECURITY):
+1. Check components.securitySchemes for authentication types
+2. For each operation, check operation.security array
+3. Add authentication parameters to inputSchema based on security type:
+   - Basic Auth: username, password (both z.string())
+   - Bearer Token: bearer_token (z.string())
+   - API Key: api_key or custom name (z.string())
+4. Build authentication headers in handler:
+   - Basic: Authorization: Basic btoa(\`\${username}:\${password}\`)
+   - Bearer: Authorization: Bearer \${bearer_token}
+   - API Key: Custom header or query parameter
+5. Add descriptions noting credentials are USER-PROVIDED
+6. Never load credentials from environment variables
 
 ⚠️ ZOD SCHEMA REQUIREMENTS (CRITICAL - PREVENTS _zod ERROR):
 🚨 CRITICAL: inputSchema MUST be z.object({...}) NOT plain object {...}
@@ -882,7 +1004,56 @@ export function buildOpenAPIPromptWithExamples(
   apiEndpoints: string,
   inputExample: string,
   outputExample: string,
+  outputExampleReddit?: string,
+  outputExampleTwilio?: string,
 ): ChatMessage[] {
+  // Build the examples section with all available examples
+  let examplesSection = `EXAMPLE 1 - HTTPBin API (Simple GET/POST):
+
+INPUT EXAMPLE:
+${inputExample}
+
+YAML OUTPUT EXAMPLE:
+${outputExample}`;
+
+  // Add Reddit example if available
+  if (outputExampleReddit) {
+    // Extract reddit input from inputExample
+    const redditInputMatch = inputExample.match(
+      /\/\/ Reddit API with OAuth2\s*\nconst redditInput = `([^`]+)`/s,
+    );
+    const redditInput = redditInputMatch
+      ? redditInputMatch[1]
+      : "Reddit API (see input example)";
+
+    examplesSection += `\n\n${"=".repeat(80)}\n\nEXAMPLE 2 - Reddit API (OAuth2 Bearer Token Authentication):
+
+INPUT EXAMPLE:
+${redditInput}
+
+YAML OUTPUT EXAMPLE:
+${outputExampleReddit}`;
+  }
+
+  // Add Twilio example if available
+  if (outputExampleTwilio) {
+    // Extract twilio input from inputExample
+    const twilioInputMatch = inputExample.match(
+      /\/\/ Twilio WhatsApp API with Basic Auth\s*\nconst twilioInput = `([^`]+)`/s,
+    );
+    const twilioInput = twilioInputMatch
+      ? twilioInputMatch[1]
+      : "Twilio WhatsApp API (see input example)";
+
+    examplesSection += `\n\n${"=".repeat(80)}\n\nEXAMPLE 3 - Twilio WhatsApp API (Basic Authentication):
+
+INPUT EXAMPLE:
+${twilioInput}
+
+YAML OUTPUT EXAMPLE:
+${outputExampleTwilio}`;
+  }
+
   const messages: ChatMessage[] = [
     {
       role: "model",
@@ -890,16 +1061,26 @@ export function buildOpenAPIPromptWithExamples(
     },
     {
       role: "user",
-      content: `Generate a complete OpenAPI specification following this exact pattern:
+      content: `Generate a complete OpenAPI specification following these exact patterns.
 
-INPUT EXAMPLE (API Endpoints):
-${inputExample}
+You have ${outputExampleReddit && outputExampleTwilio ? "THREE" : outputExampleReddit || outputExampleTwilio ? "TWO" : "ONE"} comprehensive example(s) showing different authentication methods:
 
-YAML OUTPUT EXAMPLE (Generated OpenAPI Spec):
-${outputExample}
+${examplesSection}
 
 🚨 AUTHENTICATION REQUIREMENTS - CRITICAL:
 ${INPUT_FORMAT}
+
+KEY PATTERNS TO FOLLOW:
+1. HTTPBin Example: Simple REST API without authentication
+2. Reddit Example: OAuth2 with Basic Auth for token endpoint + Bearer token for API calls
+3. Twilio Example: Basic Auth with Account_SID:Auth_Token for all endpoints
+
+AUTHENTICATION PATTERNS:
+- Basic Auth: Use "basicAuth" security scheme with http/basic
+- Bearer Token: Use "bearerAuth" security scheme with http/bearer
+- OAuth2: Combine both - Basic Auth for token endpoint, Bearer for protected endpoints
+- Always include detailed descriptions about required parameters
+- Note when parameters are USER-PROVIDED (not from .env files)
 
 NOW GENERATE FOR THESE API ENDPOINTS:
 ${apiEndpoints}
@@ -911,9 +1092,12 @@ CRITICAL OUTPUT REQUIREMENTS:
 - Do NOT wrap the output in \`\`\`yaml code blocks
 - Start directly with "openapi: 3.0.3"
 - End with the last line of the YAML specification
-- ENSURE client_id and client_secret are included in authentication endpoints
+- ENSURE authentication parameters (like client_id, client_secret, tokens) are properly documented
+- Include security schemes in components/securitySchemes
+- Apply security requirements at operation level where needed
+- Add detailed descriptions for authentication headers and parameters
 
-Follow the exact same patterns, structure, and documentation style as shown in the examples.`,
+Follow the exact same patterns, structure, and documentation style as shown in the examples above.`,
     },
   ];
 
