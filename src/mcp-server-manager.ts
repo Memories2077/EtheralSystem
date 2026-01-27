@@ -89,7 +89,7 @@ class MCPServerManager {
     // ✅ Set persistence file path
     this.persistenceFilePath = path.resolve(
       __dirname,
-      "../data/persistence.json"
+      "../data/persistence.json",
     );
 
     // ✅ Ensure data directory exists
@@ -115,7 +115,7 @@ class MCPServerManager {
         console.log("✅ Docker connection successful");
       } catch (error) {
         throw new Error(
-          "❌ Docker is not available. Please ensure Docker is running."
+          "❌ Docker is not available. Please ensure Docker is running.",
         );
       }
     } else {
@@ -128,7 +128,7 @@ class MCPServerManager {
       console.log("✅ MongoDB connection successful");
     } catch (error) {
       console.warn(
-        "⚠️ MongoDB is not available. Continuing without database features."
+        "⚠️ MongoDB is not available. Continuing without database features.",
       );
     }
 
@@ -139,7 +139,7 @@ class MCPServerManager {
       console.log("✅ RabbitMQ connection successful");
     } catch (error) {
       console.warn(
-        "⚠️ RabbitMQ is not available. Continuing without message queue features."
+        "⚠️ RabbitMQ is not available. Continuing without message queue features.",
       );
     }
   }
@@ -163,7 +163,7 @@ class MCPServerManager {
       // Delete server handler
       async (message: DeleteMessage) => {
         await this.processDeleteServer(message);
-      }
+      },
     );
   }
 
@@ -189,7 +189,7 @@ class MCPServerManager {
       // Build and run container
       const containerId = await this.buildAndRunContainer(
         server,
-        dockerfilePath
+        dockerfilePath,
       );
 
       // Update status to running
@@ -239,7 +239,7 @@ class MCPServerManager {
   }
 
   private async processStatusUpdate(
-    message: StatusUpdateMessage
+    message: StatusUpdateMessage,
   ): Promise<void> {
     const { serverId, status, containerId, buildLogs, error } = message;
 
@@ -408,7 +408,7 @@ class MCPServerManager {
 
   private async SaveToDB(
     server: ServerLogEntry,
-    action: "created" | "error" | "deleted" | "running" | "stopped"
+    action: "created" | "error" | "deleted" | "running" | "stopped",
   ) {
     try {
       if (!this.logsCollection) {
@@ -429,11 +429,11 @@ class MCPServerManager {
               buildLogs: server.buildLogs,
               updatedAt: new Date(),
             },
-          }
+          },
         );
       }
       console.log(
-        `✅ Saved server ${server.serverId} to MongoDB with action: ${action}`
+        `✅ Saved server ${server.serverId} to MongoDB with action: ${action}`,
       );
     } catch (error) {
       console.error("❌ Failed to save to MongoDB:", error);
@@ -550,7 +550,7 @@ class MCPServerManager {
                     status: "running",
                     updatedAt: new Date(),
                   },
-                }
+                },
               );
 
               console.log(`Recovered running container for server ${serverId}`);
@@ -567,16 +567,16 @@ class MCPServerManager {
                     status: "stopped",
                     updatedAt: new Date(),
                   },
-                }
+                },
               );
 
               console.log(
-                `Container for server ${serverId} is ${containerStatus}`
+                `Container for server ${serverId} is ${containerStatus}`,
               );
             }
           } else {
             console.log(
-              `Server ${serverId} has no containerId, marking for cleanup`
+              `Server ${serverId} has no containerId, marking for cleanup`,
             );
 
             // Update only status and updatedAt
@@ -587,13 +587,13 @@ class MCPServerManager {
                   status: "error",
                   updatedAt: new Date(),
                 },
-              }
+              },
             );
           }
         } catch (error: any) {
           console.error(
             `Failed to recover container for server ${serverId}:`,
-            error
+            error,
           );
 
           // Check if container was manually deleted (404 error)
@@ -602,7 +602,7 @@ class MCPServerManager {
             error.reason === "no such container"
           ) {
             console.log(
-              `Container ${config.containerId} was manually deleted, cleaning up server data for ${serverId}`
+              `Container ${config.containerId} was manually deleted, cleaning up server data for ${serverId}`,
             );
 
             // Update status and clear containerId without affecting other fields
@@ -616,7 +616,7 @@ class MCPServerManager {
                 $unset: {
                   containerId: "",
                 },
-              }
+              },
             );
 
             // Release the port since container is gone
@@ -625,7 +625,7 @@ class MCPServerManager {
             }
 
             console.log(
-              `Cleaned up orphaned container reference for server ${serverId}`
+              `Cleaned up orphaned container reference for server ${serverId}`,
             );
           } else {
             // Other errors, just mark as error
@@ -636,7 +636,7 @@ class MCPServerManager {
                   status: "error",
                   updatedAt: new Date(),
                 },
-              }
+              },
             );
           }
         }
@@ -674,7 +674,7 @@ class MCPServerManager {
             iat: Math.floor(Date.now() / 1000),
             exp: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
           },
-          this.jwtSecret
+          this.jwtSecret,
         );
 
         // Lấy public url của server, nếu không có thì fallback localhost
@@ -757,7 +757,7 @@ class MCPServerManager {
           __dirname,
           "..",
           "src-generated-yaml",
-          `${serverId}.yaml`
+          `${serverId}.yaml`,
         );
 
         // Nếu inputType là yaml thì copy trực tiếp sang openapi_filepath
@@ -769,7 +769,7 @@ class MCPServerManager {
           }
           fs.copyFileSync(outputPath, openapi_filepath);
           console.log(
-            `✅ Copied YAML input to OpenAPI spec: ${openapi_filepath}`
+            `✅ Copied YAML input to OpenAPI spec: ${openapi_filepath}`,
           );
         } else if (inputType === "json") {
           console.log("🔄 Converting JSON to YAML...");
@@ -782,7 +782,7 @@ class MCPServerManager {
           }
           fs.writeFileSync(openapi_filepath, yamlContent);
           console.log(
-            `✅ Converted JSON to YAML and saved to: ${openapi_filepath}`
+            `✅ Converted JSON to YAML and saved to: ${openapi_filepath}`,
           );
         } else if (inputType === "text") {
           console.log("🤖 Calling Gemini to generate OpenAPI spec...");
@@ -838,7 +838,7 @@ class MCPServerManager {
           // Fallback to synchronous processing
           const containerId = await this.buildAndRunContainer(
             serverConfig,
-            "../Dockerfile"
+            "../Dockerfile",
           );
 
           serverConfig.containerId = containerId;
@@ -1010,7 +1010,7 @@ class MCPServerManager {
 
   private async buildAndRunContainer(
     config: ServerLogEntry,
-    dockerfilePath?: string
+    dockerfilePath?: string,
   ): Promise<string> {
     try {
       // Kiểm tra image có tồn tại không
@@ -1021,7 +1021,7 @@ class MCPServerManager {
         const buildPath = dockerfilePath || this.defaultDockerfilePath;
         if (!buildPath) {
           throw new Error(
-            `Docker image not found and no Dockerfile path provided: ${config.dockerImage}`
+            `Docker image not found and no Dockerfile path provided: ${config.dockerImage}`,
           );
         }
         await this.buildDockerImage(config, buildPath);
@@ -1077,7 +1077,7 @@ class MCPServerManager {
       await container.start();
 
       config.buildLogs?.push(
-        "Container started, waiting for service to be ready..."
+        "Container started, waiting for service to be ready...",
       );
       config.containerId = container.id;
       return container.id;
@@ -1086,7 +1086,7 @@ class MCPServerManager {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       config.buildLogs?.push(
-        `Failed to build and run container: ${errorMessage}`
+        `Failed to build and run container: ${errorMessage}`,
       );
 
       throw error;
@@ -1096,7 +1096,7 @@ class MCPServerManager {
   private async buildDockerImage(
     config: ServerLogEntry,
     dockerfilePath?: string,
-    contextPath?: string
+    contextPath?: string,
   ): Promise<void> {
     try {
       const buildPath = dockerfilePath || this.defaultDockerfilePath;
@@ -1150,9 +1150,9 @@ class MCPServerManager {
                 if (event.stream) {
                   config.buildLogs?.push(event.stream.trim());
                 }
-              }
+              },
             );
-          }
+          },
         );
       });
     } catch (error) {
@@ -1331,7 +1331,7 @@ class MCPServerManager {
       }
     } else {
       console.warn(
-        "MongoDB not available, starting without existing server data"
+        "MongoDB not available, starting without existing server data",
       );
     }
 
