@@ -5,5 +5,10 @@ OPENAI_MODEL=iec-model
 OPENAI_TEMPERATURE=0.5
 OPENAI_TIMEOUT_MS=60000
 
+# Debug Options (Optional)
+# Set to "true" to enable detailed debug logging for GenAI responses
+# This will log response structure, reasoning content length, etc.
+DEBUG_GENAI=false
+
 # Default Docker Image for MCP Servers
 DEFAULT_MCP_IMAGE=mcp-gen

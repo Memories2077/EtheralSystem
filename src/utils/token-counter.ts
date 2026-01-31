@@ -2,7 +2,7 @@
 // Utility for estimating and managing token counts in LLM prompts
 
 export interface ChatMessage {
-  role: "user" | "model";
+  role: "user" | "model" | "assistant" | "system";
   content: string;
 }
 
@@ -58,7 +58,7 @@ export function calculateMessageTokens(messages: ChatMessage[]): TokenStats {
 export function truncateToTokenLimit(
   text: string,
   maxTokens: number,
-  preserveStart: number = 0.6
+  preserveStart: number = 0.6,
 ): string {
   const currentTokens = estimateTokens(text);
 
@@ -85,19 +85,19 @@ export function truncateToTokenLimit(
  */
 export function truncateMessages(
   messages: ChatMessage[],
-  maxTokens: number = 120000 // Reserve 8k for response
+  maxTokens: number = 120000, // Reserve 8k for response
 ): ChatMessage[] {
   const stats = calculateMessageTokens(messages);
 
   if (stats.totalTokens <= maxTokens) {
     console.log(
-      `✅ Context size OK: ${stats.totalTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`
+      `✅ Context size OK: ${stats.totalTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`,
     );
     return messages;
   }
 
   console.warn(
-    `⚠️ Context too large: ${stats.totalTokens.toLocaleString()} tokens (max: ${maxTokens.toLocaleString()})`
+    `⚠️ Context too large: ${stats.totalTokens.toLocaleString()} tokens (max: ${maxTokens.toLocaleString()})`,
   );
   console.warn(`   System: ${stats.systemTokens.toLocaleString()} tokens`);
   console.warn(`   User: ${stats.userTokens.toLocaleString()} tokens`);
@@ -117,7 +117,7 @@ export function truncateMessages(
       const truncatedContent = truncateUserMessage(
         msg.content,
         excessTokens,
-        stats.userTokens
+        stats.userTokens,
       );
       return { ...msg, content: truncatedContent };
     }
@@ -132,7 +132,7 @@ export function truncateMessages(
 function truncateUserMessage(
   content: string,
   excessTokens: number,
-  totalUserTokens: number
+  totalUserTokens: number,
 ): string {
   // Calculate target token count
   const targetTokens = totalUserTokens - excessTokens;
@@ -144,7 +144,7 @@ function truncateUserMessage(
     referenceStructure: extractSection(
       content,
       "REFERENCE STRUCTURE",
-      "YAML INPUT"
+      "YAML INPUT",
     ),
   };
 
@@ -157,7 +157,7 @@ function truncateUserMessage(
       const truncated = truncateToTokenLimit(sections.outputExample, 15000);
       newContent = newContent.replace(sections.outputExample, truncated);
       console.log(
-        `   📝 Truncated OUTPUT EXAMPLE: ${outputTokens.toLocaleString()} → 15,000 tokens`
+        `   📝 Truncated OUTPUT EXAMPLE: ${outputTokens.toLocaleString()} → 15,000 tokens`,
       );
     }
   }
@@ -172,7 +172,7 @@ function truncateUserMessage(
         const truncated = truncateToTokenLimit(sections.inputExample, 8000);
         newContent = newContent.replace(sections.inputExample, truncated);
         console.log(
-          `   📝 Truncated INPUT EXAMPLE: ${inputTokens.toLocaleString()} → 8,000 tokens`
+          `   📝 Truncated INPUT EXAMPLE: ${inputTokens.toLocaleString()} → 8,000 tokens`,
         );
       }
     }
@@ -183,7 +183,7 @@ function truncateUserMessage(
   if (finalTokens > targetTokens) {
     newContent = truncateToTokenLimit(newContent, targetTokens);
     console.log(
-      `   ⚠️ Applied final truncation: ${finalTokens.toLocaleString()} → ${targetTokens.toLocaleString()} tokens`
+      `   ⚠️ Applied final truncation: ${finalTokens.toLocaleString()} → ${targetTokens.toLocaleString()} tokens`,
     );
   }
 
@@ -196,7 +196,7 @@ function truncateUserMessage(
 function extractSection(
   text: string,
   startMarker: string,
-  endMarker: string
+  endMarker: string,
 ): string | null {
   const startIdx = text.indexOf(startMarker);
   if (startIdx === -1) return null;
@@ -222,7 +222,7 @@ export function formatTokenCount(tokens: number): string {
 export function isContextSafe(
   tokens: number,
   maxTokens: number = 128000,
-  reserveForResponse: number = 8000
+  reserveForResponse: number = 8000,
 ): boolean {
   return tokens <= maxTokens - reserveForResponse;
 }
@@ -232,7 +232,7 @@ export function isContextSafe(
  */
 export function getContextWarningLevel(
   tokens: number,
-  maxTokens: number = 128000
+  maxTokens: number = 128000,
 ): "safe" | "warning" | "danger" | "critical" {
   const usage = tokens / maxTokens;
 

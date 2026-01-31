@@ -100,17 +100,142 @@ export async function generateOpenAPISpec(input: string, name: string) {
     // Strip markdown code blocks if present (```yaml ... ``` or ```...```)
     let fullCode = aiCode.trim();
 
-    // Remove opening code fence
-    if (fullCode.startsWith("```")) {
-      const firstNewline = fullCode.indexOf("\n");
-      if (firstNewline !== -1) {
-        fullCode = fullCode.substring(firstNewline + 1);
+    // 🚨 CRITICAL: Remove ALL markdown formatting BEFORE other processing
+    // Step 1: Remove markdown headers (# Title, ## Subtitle, etc.)
+    if (/^#{1,6}\s+/m.test(fullCode)) {
+      console.log("⚠️ Detected markdown headers, removing...");
+      fullCode = fullCode
+        .split("\n")
+        .filter((line) => !line.match(/^#{1,6}\s+/))
+        .join("\n")
+        .trim();
+    }
+
+    // Step 2: Remove markdown code blocks more aggressively
+    // Handle various formats: ```yaml, ```yml, ```, etc.
+    if (fullCode.includes("```")) {
+      console.log("⚠️ Detected markdown code block wrapper, removing...");
+
+      // Try to extract content between ```yaml and ``` or between ``` and ```
+      const codeBlockMatch = fullCode.match(
+        /```(?:yaml|yml)?\s*\n([\s\S]*?)\n```/,
+      );
+      if (codeBlockMatch && codeBlockMatch[1]) {
+        fullCode = codeBlockMatch[1].trim();
+        console.log(
+          `✅ Extracted from code blocks, length: ${fullCode.length} chars`,
+        );
+      } else {
+        // Fallback: remove all lines with ```
+        fullCode = fullCode
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("```"))
+          .join("\n")
+          .trim();
+        console.log(
+          `✅ Removed code block markers, length: ${fullCode.length} chars`,
+        );
       }
     }
 
-    // Remove closing code fence
-    if (fullCode.endsWith("```")) {
-      fullCode = fullCode.substring(0, fullCode.lastIndexOf("```")).trim();
+    // Step 3: Double-check with regex-based removal
+    if (fullCode.startsWith("```") || fullCode.includes("```")) {
+      console.warn("⚠️ Code blocks still present, using aggressive removal...");
+      fullCode = fullCode.replace(/^```[a-z]*\n/gim, "");
+      fullCode = fullCode.replace(/\n```\s*$/gim, "");
+      fullCode = fullCode.replace(/```/g, "");
+      fullCode = fullCode.trim();
+    }
+
+    // 🚨 CRITICAL: Detect template syntax (Jinja2, Handlebars, etc.)
+    const templatePatterns = [
+      /\{%-?\s*(for|if|set|endif|endfor)/gi, // Jinja2: {%- for, {%- if, etc.
+      /\{\{-?\s*[a-z_]+/gi, // Jinja2/Handlebars: {{- variable, {{ bos_token
+      /<%[=\-]?\s*/gi, // EJS: <%, <%=, <%-
+      /\{%\s*(for|if)/gi, // Liquid: {% for, {% if
+    ];
+
+    for (const pattern of templatePatterns) {
+      if (pattern.test(fullCode)) {
+        console.error("❌ Detected template syntax in output!");
+        console.error("   The model returned template code instead of YAML.");
+        console.error("   This is likely a model configuration issue.");
+        console.error(`   Pattern matched: ${pattern}`);
+        console.error(`   First 200 chars: ${fullCode.substring(0, 200)}...`);
+        throw new Error(
+          "Model output contains template syntax (Jinja2/Handlebars/etc.) instead of pure YAML. " +
+            "This indicates the model is confused about the output format. " +
+            "Please check the model configuration or try a different model.",
+        );
+      }
+    }
+
+    // 🚨 CRITICAL: Detect duplicate OpenAPI declarations (model copied examples)
+    const openapiMatches = fullCode.match(/^openapi:\s*3\./gm);
+    if (openapiMatches && openapiMatches.length > 1) {
+      console.error("❌ Detected multiple OpenAPI declarations in output!");
+      console.error(
+        `   Found ${openapiMatches.length} 'openapi:' declarations - expected only 1`,
+      );
+      console.error(
+        "   The model copied example specs instead of generating a single spec.",
+      );
+      console.error(`   First 500 chars: ${fullCode.substring(0, 500)}...`);
+      throw new Error(
+        `Model output contains multiple OpenAPI specs (${openapiMatches.length} declarations found). ` +
+          "The model copied example specs instead of generating a single new spec. " +
+          "This is a prompt adherence issue. Please retry.",
+      );
+    }
+
+    // 🚨 CRITICAL: Check for markdown headers that indicate improper formatting
+    if (/^#{1,6}\s+/m.test(fullCode)) {
+      console.error("❌ Detected markdown headers in output!");
+      console.error(
+        "   The model returned markdown-formatted content instead of pure YAML.",
+      );
+      console.error(`   First 300 chars: ${fullCode.substring(0, 300)}...`);
+      throw new Error(
+        "Model output contains markdown headers (# Title, ## Subtitle, etc.). " +
+          "The output must be pure YAML without any markdown formatting. " +
+          "This is a prompt adherence issue. Please retry.",
+      );
+    }
+
+    // 🚨 CRITICAL: Validate content before writing
+    if (!fullCode || fullCode.length < 50) {
+      console.error("❌ Generated content is too short or empty!");
+      console.error(`   Content length: ${fullCode.length} bytes`);
+      console.error(`   Content: "${fullCode}"`);
+      throw new Error(
+        `Invalid generated content: too short (${fullCode.length} bytes). ` +
+          "Model may have failed to generate proper YAML. " +
+          "Original response length: " +
+          aiCode.length +
+          " bytes",
+      );
+    }
+
+    // Validate it starts with openapi:
+    if (!fullCode.startsWith("openapi:")) {
+      console.error("❌ Generated content does not start with 'openapi:'!");
+      console.error(`   First 200 chars: ${fullCode.substring(0, 200)}...`);
+      throw new Error(
+        "Invalid generated content: does not start with 'openapi:'. " +
+          "Model may have included extra text or markdown.",
+      );
+    }
+
+    // 🚨 CRITICAL: Check for example reference comments
+    if (/^#.*HTTPBin|^#.*Reddit|^#.*Twilio/m.test(fullCode)) {
+      console.error("❌ Detected example reference comments in output!");
+      console.error("   The model included references to example specs.");
+      console.error(`   First 300 chars: ${fullCode.substring(0, 300)}...`);
+      throw new Error(
+        "Model output contains references to example specs (HTTPBin/Reddit/Twilio). " +
+          "The model should generate NEW content, not copy examples. " +
+          "This is a prompt adherence issue. Please retry.",
+      );
     }
 
     console.log(
@@ -207,17 +332,56 @@ export async function generateMCP(
     // Strip markdown code blocks if present (```typescript ... ``` or ```...```)
     let fullCode = aiCode.trim();
 
-    // Remove opening code fence
+    // 🚨 CRITICAL: Remove markdown code blocks more aggressively
+    // Handle various formats: ```typescript, ```ts, ```, etc.
     if (fullCode.startsWith("```")) {
-      const firstNewline = fullCode.indexOf("\n");
-      if (firstNewline !== -1) {
-        fullCode = fullCode.substring(firstNewline + 1);
-      }
+      console.log("⚠️ Detected markdown code block wrapper, removing...");
+      // Remove opening fence (```typescript, ```ts, ```, etc.)
+      fullCode = fullCode.replace(/^```[a-z]*\n/i, "");
+      // Remove closing fence
+      fullCode = fullCode.replace(/\n```\s*$/i, "");
+      fullCode = fullCode.trim();
+      console.log(`✅ Removed code blocks, length: ${fullCode.length} chars`);
     }
 
-    // Remove closing code fence
-    if (fullCode.endsWith("```")) {
-      fullCode = fullCode.substring(0, fullCode.lastIndexOf("```")).trim();
+    // Double-check: if still starts with ```, try more aggressive removal
+    if (fullCode.startsWith("```")) {
+      console.warn("⚠️ Code blocks still present, using aggressive removal...");
+      const lines = fullCode.split("\n");
+      // Remove first line if it's a code fence
+      if (lines[0].startsWith("```")) {
+        lines.shift();
+      }
+      // Remove last line if it's a code fence
+      if (lines[lines.length - 1].trim() === "```") {
+        lines.pop();
+      }
+      fullCode = lines.join("\n").trim();
+    }
+
+    // 🚨 CRITICAL: Detect template syntax (Jinja2, Handlebars, etc.)
+    const templatePatterns = [
+      /\{%-?\s*(for|if|set|endif|endfor)/gi, // Jinja2: {%- for, {%- if, etc.
+      /\{\{-?\s*[a-z_]+\s*\}\}/gi, // Jinja2/Handlebars: {{- variable }}, {{ bos_token }}
+      /<%[=\-]?\s*/gi, // EJS: <%, <%=, <%-
+      /\{%\s*(for|if)/gi, // Liquid: {% for, {% if
+    ];
+
+    for (const pattern of templatePatterns) {
+      if (pattern.test(fullCode)) {
+        console.error("❌ Detected template syntax in output!");
+        console.error(
+          "   The model returned template code instead of TypeScript.",
+        );
+        console.error("   This is likely a model configuration issue.");
+        console.error(`   Pattern matched: ${pattern}`);
+        console.error(`   First 200 chars: ${fullCode.substring(0, 200)}...`);
+        throw new Error(
+          "Model output contains template syntax (Jinja2/Handlebars/etc.) instead of pure TypeScript. " +
+            "This indicates the model is confused about the output format. " +
+            "Please check the model configuration or try a different model.",
+        );
+      }
     }
 
     console.log(
