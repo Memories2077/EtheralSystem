@@ -19,12 +19,13 @@ class SupervisorAgent:
         self.name = config["name"]
         self.prompt = load_prompt(config["prompt_file"])
         
-        # Initialize model
+        # Initialize model (streaming=False to avoid 'Invalid diff' error with tool calls)
         self.model = ChatOpenAI(
             model=config["model"],
             temperature=config["temperature"],
             base_url=API_CONFIG["openai_base_url"],
-            api_key=SecretStr(str(API_CONFIG["openai_api_key"]))
+            api_key=SecretStr(str(API_CONFIG["openai_api_key"])),
+            streaming=False
         )
         
         # Create agent with langgraph
@@ -45,10 +46,13 @@ class SupervisorAgent:
         Returns:
             Agent response
         """
-        messages: List[BaseMessage] = []
+        # Combine context with query to avoid SystemMessage at start (template issues)
         if context:
-            messages.append(SystemMessage(content=f"Context: {context}"))
-        messages.append(HumanMessage(content=query))
+            combined_query = f"[Context: {context}]\n\n{query}"
+        else:
+            combined_query = query
+        
+        messages: List[BaseMessage] = [HumanMessage(content=combined_query)]
         
         result = await self.agent.ainvoke({"messages": messages})
         return result

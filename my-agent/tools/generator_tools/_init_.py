@@ -5,6 +5,7 @@ Generate Tools - Tools for generating MCP Server
 import os
 import httpx
 import json
+import base64
 from typing import Literal, Dict, Any, List, Optional
 from langchain_core.tools import tool
 import asyncio
@@ -15,6 +16,65 @@ from mcp.client.stdio import stdio_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def sanitize_api_documentation(doc: str) -> str:
+    """
+    Sanitize API documentation to prevent YAML parsing errors
+    
+    Args:
+        doc: Raw API documentation string
+        
+    Returns:
+        Sanitized documentation safe for YAML generation
+    """
+    if not doc:
+        return ""
+    
+    import re
+    
+    sanitized = doc
+    
+    # Remove control characters except newlines, tabs, and carriage returns
+    sanitized = ''.join(char for char in sanitized if ord(char) >= 32 or char in '\n\t\r')
+    
+    # Normalize whitespace but preserve structure
+    # Replace tabs with spaces
+    sanitized = sanitized.replace('\t', '    ')
+    
+    # Replace multiple spaces with single space (but preserve newlines)
+    lines = sanitized.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Trim each line and replace multiple spaces
+        cleaned_line = re.sub(r' {2,}', ' ', line.strip())
+        cleaned_lines.append(cleaned_line)
+    
+    sanitized = '\n'.join(cleaned_lines)
+    
+    # Remove empty lines (multiple consecutive newlines)
+    sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
+    
+    # Escape problematic YAML characters in text
+    # Don't escape the entire string, just problematic patterns
+    # YAML special chars at start of line: - : > | [ ] { }
+    # Fix lines starting with these by adding a space
+    fixed_lines = []
+    for line in sanitized.split('\n'):
+        if line and line[0] in '-:>|[]{}':
+            fixed_lines.append(' ' + line)
+        else:
+            fixed_lines.append(line)
+    
+    sanitized = '\n'.join(fixed_lines)
+    
+    # Log sanitization info
+    original_len = len(doc)
+    sanitized_len = len(sanitized)
+    if original_len != sanitized_len:
+        logger.info(f"Sanitized API doc: {original_len} -> {sanitized_len} characters")
+    
+    return sanitized.strip()
 
 
 @tool
@@ -72,11 +132,24 @@ async def create_MCPServer(query: List[str]) -> str:
         return "❌ Error: All parameters (request, userId, email) are required"
     
     logger.info(f"Creating MCP Server for user: {user_id}, email: {email}")
-    logger.info(f"API documentation size: {len(request_data)} characters")
+    logger.info(f"API documentation size (raw): {len(request_data)} characters")
+    
+    # Sanitize API documentation to prevent YAML parsing errors
+    sanitized_request = sanitize_api_documentation(request_data)
+    
+    if not sanitized_request:
+        logger.error("API documentation became empty after sanitization")
+        return "❌ Error: API documentation is invalid or empty after sanitization"
+    
+    # Option 1: Send sanitized text (default)
+    # Option 2: If backend supports it, send as base64 to avoid all encoding issues
+    # Uncomment below to use base64 encoding:
+    # sanitized_request = base64.b64encode(request_data.encode('utf-8')).decode('ascii')
+    # logger.info(f"Encoded API doc to base64: {len(sanitized_request)} characters")
     
     # Prepare the payload
     payload = {
-        "request": request_data,
+        "request": sanitized_request,
         "userId": user_id,
         "email": email
     }

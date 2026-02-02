@@ -19,13 +19,96 @@ from pydantic import SecretStr
 from prompts import supervisor
 
 
-# Initialize LLM
+# Initialize LLM (streaming=False to avoid 'Invalid diff' error with tool calls)
 llm = ChatOpenAI(
     model="iec-model",
-    temperature=0.5,
+    temperature=0.2,
     base_url="https://llmapi.iec-uit.com/v1",
-    api_key=SecretStr(os.getenv("OPENAI_API_KEY", "<API_KEY>"))
+    api_key=SecretStr(os.getenv("OPENAI_API_KEY", "<API_KEY>")),
+    streaming=False
 )
+
+# ============================================================================
+# LLM-BASED REQUEST ANALYZER
+# ============================================================================
+
+async def analyze_mcp_request(user_message: str) -> dict:
+    """
+    Use LLM to analyze if the message is an MCP Server creation request
+    and extract the API description if so.
+    
+    Returns:
+        dict: {
+            "is_mcp_request": bool,
+            "api_description": str | None,
+            "api_name": str | None,
+            "confidence": float
+        }
+    """
+    analysis_prompt = f"""Analyze the following user message and determine if it's a request to create an MCP (Model Context Protocol) Server.
+
+USER MESSAGE:
+{user_message}
+
+INSTRUCTIONS:
+1. Check if the user wants to CREATE an MCP Server
+2. If yes, extract the API documentation/description that should be used to create the MCP Server
+3. Identify the API name if mentioned
+
+Respond in this exact JSON format (no markdown, no extra text):
+{{
+    "is_mcp_request": true/false,
+    "api_name": "name of the API or null",
+    "api_description": "the full API documentation/description extracted from the message, or null if not an MCP request",
+    "confidence": 0.0-1.0
+}}
+
+IMPORTANT:
+- If user wants to create MCP Server, set is_mcp_request to true
+- api_description should contain ALL the API details (endpoints, methods, examples, etc.) from the user message
+- Keep the original format of the API documentation in api_description
+- Only output the JSON, nothing else"""
+
+    try:
+        print(f"[MCP Analyzer] Analyzing message ({len(user_message)} chars)...")
+        response = await llm.ainvoke([HumanMessage(content=analysis_prompt)])
+        content = str(response.content).strip()
+        
+        print(f"[MCP Analyzer] Raw LLM response ({len(content)} chars): {content[:300]}...")
+        
+        # Clean up potential markdown formatting
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+        content = content.strip()
+        
+        result = json.loads(content)
+        print(f"[MCP Analyzer] ✅ Analysis result: is_mcp={result.get('is_mcp_request')}, api={result.get('api_name')}, confidence={result.get('confidence')}")
+        
+        # Log api_description length if present
+        if result.get('api_description'):
+            print(f"[MCP Analyzer] API description length: {len(result.get('api_description'))} chars")
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        print(f"[MCP Analyzer] ⚠️ JSON parse error: {e}")
+        print(f"[MCP Analyzer] Raw response: {content[:200]}...")
+        # Fallback: if parsing fails but message looks like MCP request
+        if 'mcp server' in user_message.lower() and ('api' in user_message.lower() or 'endpoint' in user_message.lower()):
+            return {
+                "is_mcp_request": True,
+                "api_name": "Unknown API",
+                "api_description": user_message,
+                "confidence": 0.7
+            }
+        return {"is_mcp_request": False, "api_description": None, "api_name": None, "confidence": 0.0}
+        
+    except Exception as e:
+        print(f"[MCP Analyzer] ❌ Error: {e}")
+        return {"is_mcp_request": False, "api_description": None, "api_name": None, "confidence": 0.0}
+
 
 # ============================================================================
 # STATE DEFINITION
@@ -50,20 +133,149 @@ class AgentState(TypedDict):
 def delegate_to_generator_agent(task: str) -> str:
     """Delegate a content generation task to the Generator Agent.
     
+    This tool is used to delegate MCP Server creation and other content generation tasks
+    to the specialized Generator Agent. Always provide the complete task description
+    including all API specifications, endpoints, and requirements.
+    
     Args:
-        task: The content generation task to perform
+        task (str): The complete content generation task description with all API details
         
     Returns:
-        Result from generator agent
+        str: Result from generator agent
     """
+    if not task or not isinstance(task, str):
+        return "Error: task parameter must be a non-empty string"
+    
+    if len(task.strip()) < 10:
+        return "Error: task description is too short, please provide complete details"
+    
     return f"DELEGATE_TO_GENERATOR: {task}"
 
 
 supervisor_tools = [delegate_to_generator_agent]
 
-# ============================================================================
-# AGENT NODES
-# ============================================================================
+
+# Custom tool node wrapper - uses LLM to analyze and fix empty args
+async def tools_node_wrapper(state: AgentState) -> AgentState:
+    """Wrapper around ToolNode that uses LLM to analyze requests and fix empty tool_calls args"""
+    try:
+        messages = list(state["messages"])  # Create mutable copy
+        
+        # DEBUG: Log all messages to understand structure
+        print(f"[ToolNode] 🔍 Total messages in state: {len(messages)}")
+        for i, msg in enumerate(messages):
+            msg_type = type(msg).__name__
+            msg_content = str(getattr(msg, 'content', ''))[:100]
+            print(f"[ToolNode] 🔍 Message {i}: type={msg_type}, content={msg_content}...")
+        
+        # Find the last AIMessage with tool_calls
+        for idx, msg in enumerate(reversed(messages)):
+            actual_idx = len(messages) - 1 - idx
+            
+            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                print(f"[ToolNode] Found tool_calls at index {actual_idx}: {msg.tool_calls}")
+                
+                # Check if any args are empty
+                needs_fix = False
+                fixed_tool_calls = []
+                
+                for i, tool_call in enumerate(msg.tool_calls):
+                    tool_call_copy = dict(tool_call)  # Make a copy
+                    
+                    # Check for empty args or missing 'task' key
+                    args = tool_call_copy.get('args', {})
+                    if not isinstance(args, dict) or not args or 'task' not in args or not args.get('task'):
+                        print(f"[ToolNode] ⚠️ Empty/missing args detected in tool_call {i}")
+                        needs_fix = True
+                        
+                        # Find the LAST (most recent) user message before this AIMessage
+                        # Handle both HumanMessage objects AND dict format
+                        user_message = None
+                        for prev_idx in range(actual_idx - 1, -1, -1):  # Loop backwards from AIMessage
+                            prev_msg = messages[prev_idx]
+                            
+                            # Check if it's a HumanMessage object
+                            if isinstance(prev_msg, HumanMessage):
+                                user_message = str(prev_msg.content)
+                                print(f"[ToolNode] 📋 Found HumanMessage at index {prev_idx} ({len(user_message)} chars)")
+                                break
+                            
+                            # Check if it's a dict with type='human' or role='user'
+                            elif isinstance(prev_msg, dict):
+                                msg_type = prev_msg.get('type', prev_msg.get('role', ''))
+                                if msg_type in ('human', 'user', 'HumanMessage'):
+                                    user_message = str(prev_msg.get('content', ''))
+                                    print(f"[ToolNode] 📋 Found dict message (type={msg_type}) at index {prev_idx} ({len(user_message)} chars)")
+                                    break
+                        
+                        # Show preview to verify it's the right message
+                        if user_message:
+                            preview = user_message[:200].replace('\n', ' ')
+                            print(f"[ToolNode] Message preview: {preview}...")
+                        
+                        if user_message:
+                            print(f"[ToolNode] 🤖 Using LLM to analyze user request...")
+                            analysis = await analyze_mcp_request(user_message)
+                            
+                            print(f"[ToolNode] Analysis result: is_mcp={analysis.get('is_mcp_request')}, api={analysis.get('api_name')}")
+                            
+                            if analysis.get('is_mcp_request') and analysis.get('api_description'):
+                                # Use the LLM-extracted API description
+                                api_desc = analysis.get('api_description', '')
+                                api_name = analysis.get('api_name', 'API')
+                                
+                                print(f"[ToolNode] 📝 Using extracted API description ({len(api_desc)} chars)")
+                                
+                                task_content = f"""Create an MCP Server for: {api_name}
+
+API Description:
+{api_desc}"""
+                                tool_call_copy['args'] = {'task': task_content}
+                                print(f"[ToolNode] ✅ Fixed with LLM-extracted task (confidence: {analysis.get('confidence')})")
+                            else:
+                                # Fallback: use the full user message
+                                print(f"[ToolNode] ⚠️ LLM didn't identify MCP request or no API description")
+                                print(f"[ToolNode] Using full user message as fallback")
+                                tool_call_copy['args'] = {'task': user_message}
+                        else:
+                            print(f"[ToolNode] ❌ No user message found, using fallback")
+                            tool_call_copy['args'] = {'task': 'Please process the user request from the conversation history'}
+                    
+                    fixed_tool_calls.append(tool_call_copy)
+                
+                # If we needed to fix, create a NEW AIMessage with fixed tool_calls
+                if needs_fix:
+                    print(f"[ToolNode] Creating new AIMessage with fixed tool_calls")
+                    task_preview = fixed_tool_calls[0].get('args', {}).get('task', '')[:150]
+                    print(f"[ToolNode] Task preview: {task_preview}...")
+                    new_ai_message = AIMessage(
+                        content=msg.content,
+                        tool_calls=fixed_tool_calls,
+                        id=msg.id if hasattr(msg, 'id') else None
+                    )
+                    # Replace the message in the list
+                    messages[actual_idx] = new_ai_message
+                    print(f"[ToolNode] ✅ Replaced AIMessage at index {actual_idx}")
+                
+                break  # Only process the last AIMessage with tool_calls
+        
+        # Create new state with fixed messages
+        fixed_state = dict(state)
+        fixed_state["messages"] = messages
+        
+        # Now execute the tools with fixed state
+        tool_node = ToolNode(supervisor_tools)
+        result = await tool_node.ainvoke(fixed_state)
+        return result
+        
+    except Exception as e:
+        print(f"[ToolNode] ❌ Error in tools_node_wrapper: {e}")
+        import traceback
+        traceback.print_exc()
+        # Try to continue with original state
+        tool_node = ToolNode(supervisor_tools)
+        return await tool_node.ainvoke(state)
+
 
 # ============================================================================
 # AGENT NODES
@@ -101,32 +313,124 @@ async def supervisor_node(state: AgentState) -> AgentState:
     # If already completed, don't bind tools to prevent re-delegation
     if request_completed:
         print(f"[Supervisor] Using LLM without tools for summarization")
-        message_list = [SystemMessage(content=system_prompt)] + list(messages)
-        response = await llm.ainvoke(message_list)
+        # Combine system prompt into first user message to avoid template issues
+        combined_messages = list(messages)
+        if combined_messages and hasattr(combined_messages[0], 'content'):
+            first_msg = combined_messages[0]
+            combined_content = f"[SYSTEM]\n{system_prompt}\n\n[MESSAGE]\n{first_msg.content}"
+            combined_messages[0] = HumanMessage(content=combined_content)
+        else:
+            combined_messages = [HumanMessage(content=f"[SYSTEM]\n{system_prompt}\n\n[MESSAGE]\n{str(messages)}")]
+        response = await llm.ainvoke(combined_messages)
     else:
-        # Bind tools to LLM
-        llm_with_tools = llm.bind_tools(supervisor_tools, tool_choice="auto")
+        # Check if this is an MCP Server creation request
+        is_mcp_request = False
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                content = str(msg.content).lower()
+                if any(keyword in content for keyword in ['mcp server', 'create a mcp', 'api description', 'api documentation']):
+                    is_mcp_request = True
+                    break
         
-        # Create message list with system prompt
-        message_list = [SystemMessage(content=system_prompt)] + list(messages)
+        # Force tool call for MCP requests
+        if is_mcp_request:
+            print(f"[Supervisor] 🎯 Detected MCP Server request - forcing tool call")
+            llm_with_tools = llm.bind_tools(
+                supervisor_tools, 
+                tool_choice={"type": "function", "function": {"name": "delegate_to_generator_agent"}}
+            )
+        else:
+            # Auto mode for other requests
+            llm_with_tools = llm.bind_tools(supervisor_tools, tool_choice="auto")
         
-        # Get response from LLM (using async) with error handling for streaming issues
-        try:
-            response = await llm_with_tools.ainvoke(message_list)
-        except Exception as e:
-            error_msg = str(e)
-            if "Invalid diff" in error_msg or "less tool calls" in error_msg:
-                print(f"[Supervisor] ⚠️  Streaming error detected, retrying without streaming...")
-                # Retry with streaming disabled
-                llm_no_stream = llm.bind_tools(supervisor_tools, tool_choice="auto")
-                response = await llm_no_stream.ainvoke(message_list)
-            else:
-                raise e
+        # Combine system prompt with messages to avoid template issues
+        combined_messages = list(messages)
+        if combined_messages and hasattr(combined_messages[0], 'content'):
+            first_msg = combined_messages[0]
+            combined_content = f"[SYSTEM]\n{system_prompt}\n\n[MESSAGE]\n{first_msg.content}"
+            combined_messages[0] = HumanMessage(content=combined_content)
+        else:
+            combined_messages = [HumanMessage(content=f"[SYSTEM]\n{system_prompt}\n\n[MESSAGE]\n{str(messages)}")]
+        
+        # Get response from LLM
+        response = await llm_with_tools.ainvoke(combined_messages)
     
     # IMPORTANT: Check if tool calls exist to determine routing
     # If tool_calls present, go to tools node for execution
     # Otherwise go to end
     has_tool_calls = hasattr(response, 'tool_calls') and response.tool_calls
+    
+    # FALLBACK: If model outputs JSON text instead of tool_calls, parse it
+    if not has_tool_calls and hasattr(response, 'content'):
+        content = str(response.content)
+        # Check if response contains tool-related keywords
+        if 'delegate_to_generator_agent' in content:
+            try:
+                import re
+                
+                # Strategy: Extract the task content after "task":
+                # The task value starts after "task": " and contains the API documentation
+                
+                # Find where task content starts
+                task_start_match = re.search(r'"task"\s*:\s*"', content)
+                
+                if task_start_match:
+                    task_start = task_start_match.end()
+                    
+                    # Extract everything after "task": " until we find the closing pattern
+                    # Need to handle escaped quotes inside the string
+                    remaining = content[task_start:]
+                    
+                    # Find the actual end - look for unescaped quote followed by } or ]
+                    # Count brackets to find proper closing
+                    task_value = ""
+                    i = 0
+                    while i < len(remaining):
+                        char = remaining[i]
+                        
+                        # Handle escape sequences
+                        if char == '\\' and i + 1 < len(remaining):
+                            task_value += remaining[i:i+2]
+                            i += 2
+                            continue
+                        
+                        # Check for end of string value
+                        if char == '"':
+                            # This is the closing quote
+                            break
+                        
+                        task_value += char
+                        i += 1
+                    
+                    # Clean up escaped characters
+                    task_value = task_value.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
+                    
+                    if task_value and len(task_value) > 50:  # Ensure we got meaningful content
+                        response.tool_calls = [{
+                            'name': 'delegate_to_generator_agent',
+                            'args': {'task': task_value},
+                            'id': 'call_fallback_001'
+                        }]
+                        has_tool_calls = True
+                        print(f"[Supervisor] ✅ Parsed tool_call from text response (extracted {len(task_value)} chars)")
+                else:
+                    # Fallback: Pass the entire content as task
+                    # Remove the JSON wrapper and markdown blocks
+                    clean_content = re.sub(r'```json\s*', '', content)
+                    clean_content = re.sub(r'```', '', clean_content)
+                    clean_content = re.sub(r'\{\s*"tool_calls".*?"task"\s*:\s*"?', '', clean_content, flags=re.DOTALL)
+                    
+                    response.tool_calls = [{
+                        'name': 'delegate_to_generator_agent',
+                        'args': {'task': content},  # Pass original content
+                        'id': 'call_fallback_001'
+                    }]
+                    has_tool_calls = True
+                    print(f"[Supervisor] ✅ Parsed tool_call from text response (fallback - full content)")
+                        
+            except Exception as e:
+                print(f"[Supervisor] ⚠️  Failed to parse JSON from response: {e}")
+    
     next_agent = "tools" if has_tool_calls else "end"
     
     # Debug: Log if no tool_calls when MCP keywords detected (but NOT for completed requests)
@@ -175,11 +479,15 @@ async def supervisor_final_node(state: AgentState) -> AgentState:
     # Get the generator's output
     last_content = str(messages[-1].content) if messages else ""
     
-    # Create final summary (using async)
-    system_prompt = "Summarize the results from the generator agent into a cohesive response."
+    # Create final summary (using async) - combine system prompt with content
+    combined_prompt = f"""[SYSTEM INSTRUCTION]
+Summarize the results from the generator agent into a cohesive response.
+
+[RESULTS TO SUMMARIZE]
+{last_content}"""
+    
     summary_response = await llm.ainvoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Results: {last_content}")
+        HumanMessage(content=combined_prompt)
     ])
     
     return {
@@ -221,7 +529,7 @@ def create_multi_agent_graph():
     
     # Add nodes
     workflow.add_node("supervisor", supervisor_node)
-    workflow.add_node("tools", ToolNode(supervisor_tools))  # Add ToolNode to execute tools
+    workflow.add_node("tools", tools_node_wrapper)  # Use custom wrapper for debugging and fixing tool_calls
     workflow.add_node("generator", generator_agent_node)  # Uses imported function from generator_agent.py
     workflow.add_node("supervisor_final", supervisor_final_node)
     
