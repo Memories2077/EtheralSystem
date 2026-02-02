@@ -30,15 +30,14 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     # Initialize LLM for this agent
     config = AGENT_CONFIG["generator_agent"]
     system_prompt = config["prompt_file"]
+    # streaming=False to avoid 'Invalid diff' error with tool calls
     llm = ChatOpenAI(
         model=config["model"],
         temperature=config["temperature"],
         base_url=API_CONFIG["openai_base_url"],
-        api_key=SecretStr(API_CONFIG["openai_api_key"])
+        api_key=SecretStr(API_CONFIG["openai_api_key"]),
+        streaming=False
     )
-    
-    # Bind generator tools - only bind create_MCPServer (sync tool)
-    # test_mcp_server is async and will be handled separately if needed
     llm_with_tools = llm.bind_tools([create_MCPServer])
     
     # Find the delegation task
@@ -137,10 +136,16 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     The full API documentation has been prepared for you.
     Just invoke: create_MCPServer(query=[api_doc, userId, email])"""
     
-    # Create generator query
+    # Create generator query - combine system prompt with task to avoid template issues
+    # Some models have issues when SystemMessage is first, so we combine them
+    combined_prompt = f"""[SYSTEM INSTRUCTION]
+{system_prompt}
+
+[USER REQUEST]
+{enhanced_task}"""
+    
     generator_messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=enhanced_task)
+        HumanMessage(content=combined_prompt)
     ]
     
     response = await llm_with_tools.ainvoke(generator_messages)
@@ -219,9 +224,13 @@ class GeneratorAgent:
         Returns:
             Generated content
         """
-        messages: List[BaseMessage] = [HumanMessage(content=query)]
+        # Combine context with query to avoid SystemMessage (template issues)
         if context:
-            messages.insert(0, SystemMessage(content=f"Context: {context}"))
+            combined_query = f"[Context: {context}]\\n\\n{query}"
+        else:
+            combined_query = query
+        
+        messages: List[BaseMessage] = [HumanMessage(content=combined_query)]
         
         # Simple generation without tools (using async)
         response = await self.model.ainvoke(messages)
