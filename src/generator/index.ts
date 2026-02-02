@@ -51,7 +51,16 @@ const openapi_spec_output_example_twilio = path.join(
 
 const outputDir_yaml = path.join(__dirname, "..", "..", "src-generated-yaml");
 
-export async function generateOpenAPISpec(input: string, name: string) {
+export interface GenerationResult {
+  code: string;
+  llmCallCount: number;
+}
+
+export async function generateOpenAPISpec(
+  input: string,
+  name: string,
+  retryCount: number = 0,
+) {
   try {
     console.log("📖 Reading Input...");
     const read_input = await readFile(input);
@@ -92,6 +101,9 @@ export async function generateOpenAPISpec(input: string, name: string) {
       output_Example_Twilio,
     );
 
+    console.log(
+      `🤖 Calling LLM to generate OpenAPI spec (Attempt ${retryCount + 1})...`,
+    );
     const aiCode = await genaiCompletion({
       messages,
     });
@@ -260,7 +272,9 @@ export async function generateOpenAPISpec(input: string, name: string) {
 
     await writeFileSafe(outputPath, fullCode);
 
-    console.log("✅ OpenAPI spec generated successfully!");
+    console.log(
+      `✅ OpenAPI spec generated successfully! (Total LLM calls: ${retryCount + 1})`,
+    );
   } catch (error) {
     console.error("❌ Error generating OpenAPI spec:", error);
     throw error;
@@ -274,7 +288,8 @@ export async function generateMCP(
   output_example: string,
   outDir: string,
   name: string | undefined,
-) {
+  retryCount: number = 0,
+): Promise<GenerationResult> {
   try {
     console.log("📖 Reading OpenAPI spec...");
     const spec = await readFile(specPath);
@@ -324,6 +339,9 @@ export async function generateMCP(
     );
 
     // Gọi GenAI với messages thay vì prompt đơn giản
+    console.log(
+      `🤖 Calling LLM to generate MCP server (Attempt ${retryCount + 1})...`,
+    );
     const aiCode = await genaiCompletion({
       messages,
     });
@@ -409,8 +427,13 @@ export async function generateMCP(
 
     await writeFileSafe(outputPath, fullCode);
 
-    console.log("✅ MCP server generated successfully!");
-    return fullCode;
+    console.log(
+      `✅ MCP server generated successfully! (Total LLM calls: ${retryCount + 1})`,
+    );
+    return {
+      code: fullCode,
+      llmCallCount: retryCount + 1,
+    };
   } catch (error) {
     console.error("❌ Error generating MCP server:", error);
     throw error;
