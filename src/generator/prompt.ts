@@ -247,6 +247,73 @@ You are an expert TypeScript developer specializing in MCP (Model Context Protoc
 
 Generate a complete, working MCP server from the given OpenAPI specification using the exact structure and patterns shown in the reference implementation.
 
+🚨 CRITICAL CODE STRUCTURE ORDER (MUST FOLLOW THIS EXACT SEQUENCE):
+1. IMPORTS - All imports at the top
+2. CONSTANTS - BASE_URL, USER_AGENT, etc.
+3. TYPE DEFINITIONS - Interfaces for API responses
+4. HELPER FUNCTIONS - makeAPIRequest(), formatResponse(), etc.
+5. SERVER INITIALIZATION - const server = new McpServer(...)
+6. TOOL REGISTRATIONS - server.registerTool() calls
+7. MAIN FUNCTION - Transport setup, Express server
+8. MAIN EXECUTION - main().catch(...)
+
+⚠️ WHY THIS ORDER MATTERS:
+- Helper functions MUST be defined BEFORE server.registerTool() calls
+- Tool handlers reference makeAPIRequest, so it must exist first
+- JavaScript/TypeScript reads code top-to-bottom
+- Undefined function errors occur when calling before definition
+
+CORRECT STRUCTURE EXAMPLE:
+// 1. IMPORTS
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+// ... other imports
+
+// 2. CONSTANTS
+const API_BASE_URL = "https://api.example.com";
+const USER_AGENT = "mcp-server/1.0.0";
+
+// 3. TYPE DEFINITIONS
+interface UserResponse {
+    id: number;
+    name: string;
+}
+
+// 4. HELPER FUNCTIONS (DEFINED BEFORE USE!)
+async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promise<{ data: T | null; error: string | null }> {
+    // Implementation here
+}
+
+// 5. SERVER INITIALIZATION
+const server = new McpServer({
+    name: "example-server",
+    version: "1.0.0"
+});
+
+// 6. TOOL REGISTRATIONS (Now makeAPIRequest is available!)
+server.registerTool(
+    "get-user",
+    {
+        title: "Get User",
+        description: "Get user by ID",
+        inputSchema: z.object({
+            id: z.number().describe("User ID")
+        })
+    },
+    async ({ id }) => {
+        // Can safely call makeAPIRequest here because it's defined above
+        const { data, error } = await makeAPIRequest<UserResponse>(\\\`\\\${API_BASE_URL}/users/\\\${id}\\\`);
+        // ... rest of handler
+    }
+);
+
+// 7. MAIN FUNCTION
+async function main() {
+    // ... setup
+}
+
+// 8. MAIN EXECUTION
+main().catch(console.error);
+
 CRITICAL REQUIREMENTS:
 1. Use the EXACT import structure from the reference:
    - import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -271,6 +338,8 @@ CRITICAL REQUIREMENTS:
    - PATCH endpoints: "patch-{resource}"
 
 4. HTTP Request Implementation:
+   - 🚨 CRITICAL: Define makeAPIRequest<T>() BEFORE any server.registerTool() calls
+   - Define ALL helper functions BEFORE they are used in tool handlers
    - Create a helper function like makeAPIRequest<T>() for HTTP calls
    - Use fetch() with proper headers including User-Agent
    - Include proper error handling with try-catch blocks
@@ -315,6 +384,10 @@ TYPESCRIPT CONTENT_TYPE_PATTERNS:
 ${CONTENT_TYPE_PATTERNS}
 
 TYPESCRIPT ERROR HANDLING PATTERN:
+🚨 CRITICAL: This function MUST be defined BEFORE any server.registerTool() calls!
+
+// Define this helper function IMMEDIATELY after constants and type definitions
+// and BEFORE creating the McpServer instance or registering any tools
 async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promise<{ data: T | null; error: string | null }> {
     const headers = {
         "User-Agent": USER_AGENT,
@@ -329,11 +402,11 @@ async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promis
 
         if (!response.ok) {
             console.error(
-                \`HTTP error! status: \\\${response.status}, body: \\\${responseText}\`,
+                \`HTTP error! status: \${response.status}, body: \${responseText}\`,
             );
             return {
                 data: null,
-                error: \`HTTP \\\${response.status}: \\\${responseText}\`,
+                error: \`HTTP \${response.status}: \${responseText}\`,
             };
         }
 
@@ -352,10 +425,58 @@ async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promis
         console.error("Error making API request:", errorMessage);
         return {
             data: null,
-            error: \`Network error: \\\${errorMessage}\`,
+            error: \`Network error: \${errorMessage}\`,
         };
     }
 }
+
+// Additional helper functions (also defined BEFORE tool registrations)
+function formatResponse(data: any): string {
+    try {
+        return JSON.stringify(data, null, 2);
+    } catch (error) {
+        return String(data);
+    }
+}
+
+// NOW you can create the server and register tools
+const server = new McpServer({
+    name: "your-server-name",
+    version: "1.0.0",
+    capabilities: {
+        tools: {}
+    }
+});
+
+// Tool registrations can now safely use makeAPIRequest and formatResponse
+server.registerTool(
+    "example-tool",
+    {
+        title: "Example Tool",
+        description: "Example tool that uses makeAPIRequest",
+        inputSchema: z.object({})
+    },
+    async () => {
+        // makeAPIRequest is available here because it was defined above
+        const { data, error } = await makeAPIRequest<any>("https://api.example.com/data");
+        
+        if (error || !data) {
+            return {
+                content: [{
+                    type: "text",
+                    text: \`Failed to retrieve data. Error: \${error || "Unknown error"}\`
+                }],
+            };
+        }
+        
+        return {
+            content: [{
+                type: "text",
+                text: formatResponse(data)
+            }],
+        };
+    }
+);
 
 BEARER TOKEN AUTO-PREFIX PATTERN:
 // When handling Authorization headers, automatically add "Bearer " prefix if not present
@@ -649,6 +770,74 @@ IMPORTANT NOTES:
 - Make sure all needed parameters are converted
 - Start directly with "import"
 
+🚨 CRITICAL CODE ORGANIZATION (PREVENTS "is not defined" ERRORS):
+The generated code MUST follow this EXACT order:
+
+1️⃣ IMPORTS (lines 1-10)
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+// ... all other imports
+
+2️⃣ CONSTANTS (lines 11-20)
+const API_BASE_URL = "...";
+const USER_AGENT = "...";
+
+3️⃣ TYPE DEFINITIONS (lines 21-50)
+interface UserResponse { ... }
+interface PostResponse { ... }
+
+4️⃣ HELPER FUNCTIONS (lines 51-150) ⚠️ MUST BE HERE!
+async function makeAPIRequest<T>(...) { ... }
+function formatResponse(...) { ... }
+function buildAuthHeaders(...) { ... }
+
+5️⃣ SERVER INITIALIZATION (lines 151-160)
+const server = new McpServer({ ... });
+
+6️⃣ TOOL REGISTRATIONS (lines 161-800)
+server.registerTool("tool-1", ...);
+server.registerTool("tool-2", ...);
+// All tool handlers can now use makeAPIRequest safely
+
+7️⃣ MAIN FUNCTION (lines 801-950)
+async function main() { ... }
+
+8️⃣ MAIN EXECUTION (lines 951+)
+main().catch(e => { ... });
+
+❌ COMMON MISTAKE TO AVOID:
+// WRONG ORDER (causes "makeAPIRequest is not defined"):
+const server = new McpServer({ ... });
+
+server.registerTool("get-user", ..., async () => {
+    const { data } = await makeAPIRequest(...);  // ❌ ERROR: not defined yet!
+});
+
+async function makeAPIRequest(...) {  // ❌ Defined too late!
+    // ...
+}
+
+✅ CORRECT ORDER:
+// Helper functions first
+async function makeAPIRequest(...) {
+    // ...
+}
+
+// Server and tools after
+const server = new McpServer({ ... });
+
+server.registerTool("get-user", ..., async () => {
+    const { data } = await makeAPIRequest(...);  // ✅ Works! Defined above
+});
+
+🔍 VERIFICATION CHECKLIST:
+Before outputting the code, verify:
+✅ makeAPIRequest is defined BEFORE "const server = new McpServer"
+✅ All helper functions are defined BEFORE server.registerTool() calls
+✅ Constants are defined BEFORE being used
+✅ Type interfaces are defined BEFORE being referenced
+✅ No function is called before its definition
+
 Return ONLY the complete TypeScript code without any explanations or markdown formatting, just a clean and ready to go TypeScript code.
 `;
 
@@ -931,6 +1120,20 @@ ${examplesSection}
 
 NOW GENERATE FOR THIS YAML OPENAPI SPEC:
 ${openApiSpec}
+
+🚨 CRITICAL CODE STRUCTURE - MUST FOLLOW THIS ORDER:
+Step 1: Write ALL imports
+Step 2: Write ALL constants (API_BASE_URL, USER_AGENT)
+Step 3: Write ALL type definitions (interfaces)
+Step 4: Write ALL helper functions (makeAPIRequest, formatResponse, etc.)
+Step 5: Write server initialization (const server = new McpServer(...))
+Step 6: Write ALL tool registrations (server.registerTool(...))
+Step 7: Write main function
+Step 8: Write main execution (main().catch(...))
+
+⚠️ COMMON ERROR TO AVOID:
+❌ Calling makeAPIRequest in tool handlers before defining it
+✅ Define makeAPIRequest BEFORE creating server and registering tools
 
 🚨 CRITICAL ANALYSIS REQUIRED:
 1. Find ALL endpoints in paths section

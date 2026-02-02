@@ -786,7 +786,7 @@ class MCPServerManager {
           );
         } else if (inputType === "text") {
           console.log("🤖 Calling Gemini to generate OpenAPI spec...");
-          await generateOpenAPISpec(outputPath, serverId);
+          await generateOpenAPISpec(outputPath, serverId, 0);
         }
 
         console.log("📍 Using OpenAPI spec:", openapi_filepath);
@@ -797,10 +797,18 @@ class MCPServerManager {
           const maxRetries = 5;
 
           while (!checking && retryCount < maxRetries) {
-            retryCount++;
-            console.log(`Retry attempt ${retryCount} of ${maxRetries}`);
-            await generateOpenAPISpec(outputPath, serverId);
+            console.log(
+              `🔄 Retry attempt ${retryCount + 1} of ${maxRetries} for OpenAPI spec generation`,
+            );
+            await generateOpenAPISpec(outputPath, serverId, retryCount);
             checking = await confirm(openapi_filepath);
+            retryCount++;
+          }
+
+          if (checking) {
+            console.log(
+              `✅ OpenAPI spec validated successfully after ${retryCount} attempts (Total LLM calls: ${retryCount})`,
+            );
           }
         }
 
