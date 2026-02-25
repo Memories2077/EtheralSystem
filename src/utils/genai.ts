@@ -1,13 +1,16 @@
-// --- OLD OpenAI/LangChain imports (COMMENTED OUT) ---
+// --- OLD OpenAI imports (COMMENTED OUT) ---
 // import { ChatOpenAI } from "@langchain/openai";
-// import {
-//   HumanMessage,
-//   SystemMessage,
-//   AIMessage,
-// } from "@langchain/core/messages";
 
-// --- NEW Google Gemini imports ---
-import { GoogleGenerativeAI, Content, Part } from "@google/generative-ai";
+// --- OLD Google SDK imports (COMMENTED OUT) ---
+// import { GoogleGenerativeAI, Content, Part } from "@google/generative-ai";
+
+// --- NEW LangChain Google Generative AI imports ---
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import {
+  HumanMessage,
+  SystemMessage,
+  AIMessage,
+} from "@langchain/core/messages";
 import { geminiConfig } from "./config.js";
 import { estimateTokens, formatTokenCount } from "./token-counter.js";
 
@@ -52,18 +55,24 @@ export interface GenAICompletionParams {
 //   maxRetries: 2,
 // });
 
-// --- NEW Google Gemini client ---
-const genAI = new GoogleGenerativeAI(geminiConfig.apiKey);
+// --- OLD Google SDK client (COMMENTED OUT) ---
+// const genAI = new GoogleGenerativeAI(geminiConfig.apiKey);
 
-// Convert GenAIChatMessage to Google Gemini format
-function convertToGeminiMessages(messages: GenAIChatMessage[]): Content[] {
-  const contents: Content[] = [];
-  let systemInstruction = "";
+// --- NEW LangChain Google Generative AI client ---
+const client = new ChatGoogleGenerativeAI({
+  apiKey: geminiConfig.apiKey,
+  model: geminiConfig.model,
+  temperature: geminiConfig.temperature,
+  maxRetries: 2,
+});
 
-  for (const msg of messages) {
-    if (msg.role === "system") {
-      // Gemini handles system messages differently - we'll prepend to first user message
-      systemInstruction += msg.content + "\n\n";
+// Convert GenAIChatMessage to LangChain message format
+function convertToLangChainMessages(messages: GenAIChatMessage[]) {
+  return messages.map((m) => {
+    if (m.role === "system") {
+      return new SystemMessage(m.content);
+    } else if (m.role === "assistant" || m.role === "model") {
+      return new AIMessage(m.content);
     } else {
       const role =
         msg.role === "assistant" || msg.role === "model" ? "model" : "user";
@@ -82,17 +91,29 @@ function convertToGeminiMessages(messages: GenAIChatMessage[]): Content[] {
   return contents;
 }
 
-// --- OLD LangChain message converter (COMMENTED OUT) ---
-// function convertToLangChainMessages(messages: GenAIChatMessage[]) {
-//   return messages.map((m) => {
-//     if (m.role === "system") {
-//       return new SystemMessage(m.content);
-//     } else if (m.role === "assistant" || m.role === "model") {
-//       return new AIMessage(m.content);
+// --- OLD Google SDK message converter (COMMENTED OUT) ---
+// function convertToGeminiMessages(messages: GenAIChatMessage[]): Content[] {
+//   const contents: Content[] = [];
+//   let systemInstruction = "";
+//
+//   for (const msg of messages) {
+//     if (msg.role === "system") {
+//       systemInstruction += msg.content + "\n\n";
 //     } else {
-//       return new HumanMessage(m.content);
+//       const role =
+//         msg.role === "assistant" || msg.role === "model" ? "model" : "user";
+//       const parts: Part[] = [{ text: msg.content }];
+//
+//       if (systemInstruction && role === "user" && contents.length === 0) {
+//         parts[0] = { text: systemInstruction + msg.content };
+//         systemInstruction = "";
+//       }
+//
+//       contents.push({ role, parts });
 //     }
-//   });
+//   }
+//
+//   return contents;
 // }
 
 // --- Original function for single API calls ---
@@ -108,103 +129,67 @@ export async function genaiCompletion({
       0,
     );
     console.log(
-      `🤖 Sending request to Gemini: ${formatTokenCount(totalTokens)}`,
+      `🤖 Sending request to Gemini (LangChain): ${formatTokenCount(totalTokens)}`,
     );
 
-    // Convert messages to Google Gemini format
-    const geminiContents = convertToGeminiMessages(messages);
+    // Convert messages to LangChain format
+    const langchainMessages = convertToLangChainMessages(messages);
 
-    // Initialize Gemini model with configuration
-    const model = genAI.getGenerativeModel({
-      model: geminiConfig.model,
-      generationConfig: {
-        temperature: temperature ?? geminiConfig.temperature,
-        maxOutputTokens: maxTokens,
-      },
-    });
+    // Create a new client instance with custom parameters if needed
+    const llm =
+      temperature !== undefined || maxTokens !== undefined
+        ? new ChatGoogleGenerativeAI({
+            apiKey: geminiConfig.apiKey,
+            model: geminiConfig.model,
+            temperature: temperature ?? geminiConfig.temperature,
+            maxOutputTokens: maxTokens,
+            maxRetries: 2,
+          })
+        : client;
 
-    // Call Google Gemini API
-    const chat = model.startChat({
-      history: geminiContents.slice(0, -1), // All messages except the last
-    });
+    // Call LangChain Google Generative AI API
+    const response = await llm.invoke(langchainMessages);
 
-    const lastMessage = geminiContents[geminiContents.length - 1];
-    const geminiResult = await chat.sendMessage(
-      lastMessage.parts.map((p) => (p as any).text).join(""),
-    );
-    const response = await geminiResult.response;
-
-    // --- OLD LangChain OpenAI code (COMMENTED OUT) ---
-    // const langchainMessages = convertToLangChainMessages(messages);
-    // const llm =
-    //   temperature !== undefined || maxTokens !== undefined
-    //     ? new ChatOpenAI({
-    //         configuration: {
-    //           baseURL: openaiConfig.baseUrl,
-    //         },
-    //         apiKey: openaiConfig.apiKey,
-    //         model: openaiConfig.model,
-    //         temperature: temperature ?? openaiConfig.temperature,
-    //         maxTokens: maxTokens,
-    //         timeout: openaiConfig.timeoutMs,
-    //         maxRetries: 2,
-    //       })
-    //     : client;
-    // const response = await llm.invoke(langchainMessages);
-
-    // Extract content from Gemini response
-    const text = response.text();
+    // --- OLD Google SDK code (COMMENTED OUT) ---
+    // const geminiContents = convertToGeminiMessages(messages);
+    // const model = genAI.getGenerativeModel({
+    //   model: geminiConfig.model,
+    //   generationConfig: {
+    //     temperature: temperature ?? geminiConfig.temperature,
+    //     maxOutputTokens: maxTokens,
+    //   },
+    // });
+    // const chat = model.startChat({
+    //   history: geminiContents.slice(0, -1),
+    // });
+    // const lastMessage = geminiContents[geminiContents.length - 1];
+    // const geminiResult = await chat.sendMessage(
+    //   lastMessage.parts.map((p) => (p as any).text).join(""),
+    // );
+    // const response = await geminiResult.response;
+    // const text = response.text();
 
     // Debug: Log response structure in development mode
     if (process.env.DEBUG_GENAI === "true") {
-      console.log("🔍 Gemini response structure:", {
-        hasText: !!text,
-        textLength: text?.length,
-        candidatesCount: response.candidates?.length,
+      console.log("🔍 LangChain response structure:", {
+        hasContent: !!response.content,
+        contentType: typeof response.content,
       });
     }
 
-    // --- OLD LangChain/OpenAI response handling (COMMENTED OUT) ---
-    // if (process.env.DEBUG_GENAI === "true") {
-    //   console.log("🔍 Raw response structure:", {
-    //     hasContent: !!response.content,
-    //     contentType: typeof response.content,
-    //     hasChoices: !!(response as any).choices,
-    //     responseKeys: Object.keys(response),
-    //   });
-    // }
-    // let result: string;
-    // if (typeof response.content === "string") {
-    //   result = response.content;
-    // } else if (response.content && typeof response.content === "object") {
-    //   result = JSON.stringify(response.content);
-    // } else {
-    //   const rawResponse = response as unknown as OpenAIResponse;
-    //   if (rawResponse.choices?.[0]?.message) {
-    //     const message = rawResponse.choices[0].message;
-    //     if (message.reasoning_content && !message.content) {
-    //       console.log("🧠 Using reasoning_content as main response");
-    //       result = message.reasoning_content;
-    //     } else if (message.content) {
-    //       result = message.content;
-    //       if (message.reasoning_content) {
-    //         console.log("🧠 Model used reasoning capabilities");
-    //         if (process.env.DEBUG_GENAI === "true") {
-    //           const reasoningLength = message.reasoning_content.length;
-    //           console.log(`🧠 Reasoning length: ${reasoningLength} characters`);
-    //         }
-    //       }
-    //     } else if (message.reasoning_content) {
-    //       result = message.reasoning_content;
-    //     } else {
-    //       console.warn("⚠️ No content or reasoning_content in message");
-    //       result = JSON.stringify(message);
-    //     }
-    //   } else {
-    //     console.warn("⚠️ Unexpected response format, using fallback stringify");
-    //     result = JSON.stringify(response);
-    //   }
-    // }
+    // Extract content from LangChain response
+    let result: string;
+
+    if (typeof response.content === "string") {
+      result = response.content;
+    } else if (response.content && typeof response.content === "object") {
+      // Handle array or object content
+      result = JSON.stringify(response.content);
+    } else {
+      // Fallback: stringify entire response
+      console.warn("⚠️ Unexpected response format, using fallback stringify");
+      result = JSON.stringify(response);
+    }
 
     // Trim leading/trailing whitespace from result
     const result = text.trim();
