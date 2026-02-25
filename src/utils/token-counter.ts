@@ -1,6 +1,8 @@
 // src/utils/token-counter.ts
 // Utility for estimating and managing token counts in LLM prompts
 
+import { encoding_for_model, Tiktoken } from "tiktoken";
+
 export interface ChatMessage {
   role: "user" | "model" | "assistant" | "system";
   content: string;
@@ -13,15 +15,51 @@ export interface TokenStats {
   breakdown: Record<string, number>;
 }
 
+// Cache the encoder to avoid recreating it
+let cachedEncoder: Tiktoken | null = null;
+
 /**
- * Estimates token count for a given text
- * Rule of thumb: 1 token ≈ 4 characters for English text
- * This is a rough approximation, actual tokenization may vary
+ * Gets or creates a tiktoken encoder for GPT models
+ */
+function getEncoder(): Tiktoken {
+  if (!cachedEncoder) {
+    try {
+      // Use cl100k_base encoding (used by GPT-3.5-turbo, GPT-4, and most modern models)
+      cachedEncoder = encoding_for_model("gpt-4");
+    } catch (error) {
+      console.error("Failed to initialize tiktoken encoder:", error);
+      throw error;
+    }
+  }
+  return cachedEncoder;
+}
+
+/**
+ * Accurately counts tokens using tiktoken library
+ * This matches the actual tokenization used by OpenAI models
  */
 export function estimateTokens(text: string): number {
   if (!text) return 0;
-  // Average: 1 token per 4 characters
-  return Math.ceil(text.length / 4);
+
+  try {
+    const encoder = getEncoder();
+    const tokens = encoder.encode(text);
+    return tokens.length;
+  } catch (error) {
+    console.error("Error counting tokens:", error);
+    // Fallback to estimation if tiktoken fails
+    return Math.ceil(text.length / 4);
+  }
+}
+
+/**
+ * Frees the cached encoder (useful for cleanup)
+ */
+export function freeEncoder(): void {
+  if (cachedEncoder) {
+    cachedEncoder.free();
+    cachedEncoder = null;
+  }
 }
 
 /**
