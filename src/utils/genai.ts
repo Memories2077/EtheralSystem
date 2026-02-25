@@ -74,9 +74,21 @@ function convertToLangChainMessages(messages: GenAIChatMessage[]) {
     } else if (m.role === "assistant" || m.role === "model") {
       return new AIMessage(m.content);
     } else {
-      return new HumanMessage(m.content);
+      const role =
+        msg.role === "assistant" || msg.role === "model" ? "model" : "user";
+      const parts: Part[] = [{ text: msg.content }];
+
+      // If we have a system instruction and this is the first user message, prepend it
+      if (systemInstruction && role === "user" && contents.length === 0) {
+        parts[0] = { text: systemInstruction + msg.content };
+        systemInstruction = "";
+      }
+
+      contents.push({ role, parts });
     }
-  });
+  }
+
+  return contents;
 }
 
 // --- OLD Google SDK message converter (COMMENTED OUT) ---
@@ -180,7 +192,7 @@ export async function genaiCompletion({
     }
 
     // Trim leading/trailing whitespace from result
-    result = result.trim();
+    const result = text.trim();
 
     const outputTokens = estimateTokens(result);
     console.log(`✅ Received response: ${formatTokenCount(outputTokens)}`);
