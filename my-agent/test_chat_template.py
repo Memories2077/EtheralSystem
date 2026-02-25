@@ -2,25 +2,23 @@
 Test script to verify chat template compatibility
 """
 import asyncio
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from pydantic import SecretStr
 import os
+from config import API_CONFIG, AGENT_CONFIG
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Initialise LLM model for later usage
+api_key = SecretStr(API_CONFIG["gemini_api_key"])
+llm = ChatGoogleGenerativeAI(model=AGENT_CONFIG["supervisor"]["model"], api_key=api_key)
 
 async def test_simple_call():
     """Test a simple LLM call without SystemMessage"""
     
     print("Testing LLM call without SystemMessage...")
-    
-    llm = ChatOpenAI(
-        model=os.getenv("MODEL_NAME", "mistralai/Mistral-Nemo-Instruct-2407"),
-        temperature=0.0,
-        base_url=os.getenv("OPENAI_BASE_URL", "https://llmapi.iec-uit.com/v1"),
-        api_key=SecretStr(os.getenv("OPENAI_API_KEY", "<API_KEY>"))
-    )
     
     try:
         # Test with only HumanMessage
@@ -40,13 +38,6 @@ async def test_combined_prompt():
     """Test with system instruction combined in user message"""
     
     print("\nTesting with combined system + user prompt...")
-    
-    llm = ChatOpenAI(
-        model=os.getenv("MODEL_NAME", "mistralai/Mistral-Nemo-Instruct-2407"),
-        temperature=0.0,
-        base_url=os.getenv("OPENAI_BASE_URL", "https://llmapi.iec-uit.com/v1"),
-        api_key=SecretStr(os.getenv("OPENAI_API_KEY", "<API_KEY>"))
-    )
     
     try:
         # Combine system instruction with user message

@@ -1,12 +1,11 @@
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
-from langchain_core.tools import tool
-from typing import Dict, Any, Optional, List, TypedDict, Annotated, Sequence, Union
-import operator
+from typing import Dict, Any, Optional, List, Sequence
 from pydantic import SecretStr
 from tools.generator_tools._init_ import create_MCPServer, test_mcp_server
 
 from config import load_prompt, AGENT_CONFIG, API_CONFIG
+from utils.state import AgentState # Import from centralized location
 
 import httpx
 
@@ -14,14 +13,6 @@ custom_client = httpx.Client(
     timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
     limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
 )
-
-
-class AgentState(TypedDict):
-    """State for the multi-agent system"""
-    messages: Annotated[Sequence[HumanMessage | AIMessage | SystemMessage | ToolMessage], operator.add]
-    next_agent: str
-    final_response: str
-
 
 async def generator_agent_node(state: AgentState) -> AgentState:
     """Generator agent that handles content generation tasks"""
@@ -31,13 +22,9 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     config = AGENT_CONFIG["generator_agent"]
     system_prompt = config["prompt_file"]
     # streaming=False to avoid 'Invalid diff' error with tool calls
-    llm = ChatOpenAI(
-        model=config["model"],
-        temperature=config["temperature"],
-        base_url=API_CONFIG["openai_base_url"],
-        api_key=SecretStr(API_CONFIG["openai_api_key"]),
-        streaming=False
-    )
+    api_key = SecretStr(API_CONFIG["gemini_api_key"])
+    llm = ChatGoogleGenerativeAI(model=config["model"], api_key=api_key)
+
     llm_with_tools = llm.bind_tools([create_MCPServer])
     
     # Find the delegation task
@@ -206,13 +193,9 @@ class GeneratorAgent:
         self.prompt = load_prompt(config["prompt_file"])
         
         # Initialize model
-        self.model = ChatOpenAI(
-            model=config["model"],
-            temperature=config["temperature"],
-            base_url=API_CONFIG["openai_base_url"],
-            api_key=SecretStr(API_CONFIG["openai_api_key"])
-        )
-    
+        api_key = SecretStr(API_CONFIG["gemini_api_key"])
+        self.model = ChatGoogleGenerativeAI(mode=config["model"], api_key=api_key)
+
     async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Invoke the generator agent (legacy method)
