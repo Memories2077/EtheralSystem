@@ -3,7 +3,7 @@ Supervisor Agent - Coordinates and delegates tasks to sub-agents
 """
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from typing import Dict, Any, Optional, List
 from pydantic import SecretStr
 
@@ -29,7 +29,7 @@ class SupervisorAgent:
         )
         
         # Create agent with langgraph
-        self.agent = create_react_agent(
+        self.agent = create_agent(
             model=self.model,
             tools=SUPERVISOR_TOOLS,
             prompt=self.prompt
