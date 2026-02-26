@@ -7,7 +7,7 @@ import {
 } from "../utils/token-counter.ts";
 
 interface ChatMessage {
-  role: "user" | "model";
+  role: "user" | "model" | "assistant" | "system";
   content: string;
 }
 const OPENAPI_TO_ZOD_MAPPING = `
@@ -88,15 +88,22 @@ CONVERSION RULES:
          if (icon !== undefined) requestBody.icon = icon;
          if (cover !== undefined) requestBody.cover = cover;
          
-         const response = await makeAPIRequest(url, {
+         const { data: response, error } = await makeAPIRequest(url, {
              method: 'PATCH',
              headers: {
                  'Authorization': \`Bearer \${notion_api_token}\`,
-                 'Notion-Version': '2022-06-28'
+                 'Notion-Version': '2022-06-28',
+                 'Content-Type': 'application/json'
              },
              body: JSON.stringify(requestBody)
          });
-                // Handle response...
+         
+         if (error || !response) {
+             return {
+                 content: [{ type: "text", text: \`Failed to update page. Error: \${error || "Unknown error"}\` }],
+             };
+         }
+                // Handle successful response...
             }
         );
 
@@ -148,17 +155,32 @@ server.registerTool(
     },
     async ({ data, complexData }) => {
         const body = complexData || data;
-        const result = await makeAPIRequest<ResponseType>(url, {
+        const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
             method: 'POST',
+            headers: {
+                "Content-Type": "application/json"
+            },
             body: JSON.stringify(body),
         });
-        // Handle response...
+        
+        if (error || !result) {
+            return {
+                content: [{
+                    type: "text",
+                    text: \`Failed to create resource. Error: \${error || "Unknown error"}\`
+                }],
+            };
+        }
+        // Handle successful response...
     }
 );
 `;
 
 // Thêm pattern:
 const CONTENT_TYPE_PATTERNS = `
+// CRITICAL: Always include Content-Type header for POST/PUT/PATCH requests
+// Different content types require different body formatting
+
 // Handle different content types
 function buildRequestOptions(body: any, contentType: string): RequestInit {
     const headers: Record<string, string> = {
@@ -173,6 +195,7 @@ function buildRequestOptions(body: any, contentType: string): RequestInit {
             processedBody = JSON.stringify(body);
             break;
         case 'application/x-www-form-urlencoded':
+            // CRITICAL: Required for OAuth token endpoints and form submissions
             headers['Content-Type'] = 'application/x-www-form-urlencoded';
             processedBody = new URLSearchParams(body).toString();
             break;
@@ -190,6 +213,16 @@ function buildRequestOptions(body: any, contentType: string): RequestInit {
     
     return { headers, body: processedBody };
 }
+
+// BEST PRACTICE: For most POST/PUT/PATCH requests with JSON body:
+const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json", // CRITICAL: Always include for JSON payloads
+        "Accept": "application/json"
+    },
+    body: JSON.stringify(requestBody)
+});
 `;
 
 // Thêm instruction:
@@ -213,6 +246,73 @@ const SYSTEM_INSTRUCTION_For_Generating_MCPServer = `
 You are an expert TypeScript developer specializing in MCP (Model Context Protocol) servers.
 
 Generate a complete, working MCP server from the given OpenAPI specification using the exact structure and patterns shown in the reference implementation.
+
+🚨 CRITICAL CODE STRUCTURE ORDER (MUST FOLLOW THIS EXACT SEQUENCE):
+1. IMPORTS - All imports at the top
+2. CONSTANTS - BASE_URL, USER_AGENT, etc.
+3. TYPE DEFINITIONS - Interfaces for API responses
+4. HELPER FUNCTIONS - makeAPIRequest(), formatResponse(), etc.
+5. SERVER INITIALIZATION - const server = new McpServer(...)
+6. TOOL REGISTRATIONS - server.registerTool() calls
+7. MAIN FUNCTION - Transport setup, Express server
+8. MAIN EXECUTION - main().catch(...)
+
+⚠️ WHY THIS ORDER MATTERS:
+- Helper functions MUST be defined BEFORE server.registerTool() calls
+- Tool handlers reference makeAPIRequest, so it must exist first
+- JavaScript/TypeScript reads code top-to-bottom
+- Undefined function errors occur when calling before definition
+
+CORRECT STRUCTURE EXAMPLE:
+// 1. IMPORTS
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+// ... other imports
+
+// 2. CONSTANTS
+const API_BASE_URL = "https://api.example.com";
+const USER_AGENT = "mcp-server/1.0.0";
+
+// 3. TYPE DEFINITIONS
+interface UserResponse {
+    id: number;
+    name: string;
+}
+
+// 4. HELPER FUNCTIONS (DEFINED BEFORE USE!)
+async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promise<{ data: T | null; error: string | null }> {
+    // Implementation here
+}
+
+// 5. SERVER INITIALIZATION
+const server = new McpServer({
+    name: "example-server",
+    version: "1.0.0"
+});
+
+// 6. TOOL REGISTRATIONS (Now makeAPIRequest is available!)
+server.registerTool(
+    "get-user",
+    {
+        title: "Get User",
+        description: "Get user by ID",
+        inputSchema: z.object({
+            id: z.number().describe("User ID")
+        })
+    },
+    async ({ id }) => {
+        // Can safely call makeAPIRequest here because it's defined above
+        const { data, error } = await makeAPIRequest<UserResponse>(\\\`\\\${API_BASE_URL}/users/\\\${id}\\\`);
+        // ... rest of handler
+    }
+);
+
+// 7. MAIN FUNCTION
+async function main() {
+    // ... setup
+}
+
+// 8. MAIN EXECUTION
+main().catch(console.error);
 
 CRITICAL REQUIREMENTS:
 1. Use the EXACT import structure from the reference:
@@ -238,10 +338,15 @@ CRITICAL REQUIREMENTS:
    - PATCH endpoints: "patch-{resource}"
 
 4. HTTP Request Implementation:
+   - 🚨 CRITICAL: Define makeAPIRequest<T>() BEFORE any server.registerTool() calls
+   - Define ALL helper functions BEFORE they are used in tool handlers
    - Create a helper function like makeAPIRequest<T>() for HTTP calls
    - Use fetch() with proper headers including User-Agent
    - Include proper error handling with try-catch blocks
-   - Return null on errors and handle gracefully in tools
+   - Parse response text before JSON parse for better error debugging
+   - Return { data, error } structure instead of null for better error handling
+   - Always add Content-Type header for POST/PUT/PATCH requests
+   - Log detailed error information (status, response body)
 
 5. Parameter Handling:
    - Use Zod schemas for parameter validation
@@ -279,23 +384,138 @@ TYPESCRIPT CONTENT_TYPE_PATTERNS:
 ${CONTENT_TYPE_PATTERNS}
 
 TYPESCRIPT ERROR HANDLING PATTERN:
-async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promise<T | null> {
+🚨 CRITICAL: This function MUST be defined BEFORE any server.registerTool() calls!
+
+// Define this helper function IMMEDIATELY after constants and type definitions
+// and BEFORE creating the McpServer instance or registering any tools
+async function makeAPIRequest<T>(url: string, options: RequestInit = {}): Promise<{ data: T | null; error: string | null }> {
     const headers = {
         "User-Agent": USER_AGENT,
-        "Content-Type": "application/json",
         ...options.headers,
     };
 
     try {
         const response = await fetch(url, { ...options, headers });
+
+        // Get response text for better error reporting
+        const responseText = await response.text();
+
         if (!response.ok) {
-            throw new Error(\`HTTP error! status: \${response.status}\`);
+            console.error(
+                \`HTTP error! status: \${response.status}, body: \${responseText}\`,
+            );
+            return {
+                data: null,
+                error: \`HTTP \${response.status}: \${responseText}\`,
+            };
         }
-        return (await response.json()) as T;
+
+        try {
+            const data = JSON.parse(responseText) as T;
+            return { data, error: null };
+        } catch (parseError) {
+            console.error("JSON parse error:", parseError, "Response:", responseText);
+            return {
+                data: null,
+                error: "Failed to parse JSON response",
+            };
+        }
     } catch (error) {
-        console.error("Error making API request:", error);
-        return null;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error("Error making API request:", errorMessage);
+        return {
+            data: null,
+            error: \`Network error: \${errorMessage}\`,
+        };
     }
+}
+
+// Additional helper functions (also defined BEFORE tool registrations)
+function formatResponse(data: any): string {
+    try {
+        return JSON.stringify(data, null, 2);
+    } catch (error) {
+        return String(data);
+    }
+}
+
+// NOW you can create the server and register tools
+const server = new McpServer({
+    name: "your-server-name",
+    version: "1.0.0",
+    capabilities: {
+        tools: {}
+    }
+});
+
+// Tool registrations can now safely use makeAPIRequest and formatResponse
+server.registerTool(
+    "example-tool",
+    {
+        title: "Example Tool",
+        description: "Example tool that uses makeAPIRequest",
+        inputSchema: z.object({})
+    },
+    async () => {
+        // makeAPIRequest is available here because it was defined above
+        const { data, error } = await makeAPIRequest<any>("https://api.example.com/data");
+        
+        if (error || !data) {
+            return {
+                content: [{
+                    type: "text",
+                    text: \`Failed to retrieve data. Error: \${error || "Unknown error"}\`
+                }],
+            };
+        }
+        
+        return {
+            content: [{
+                type: "text",
+                text: formatResponse(data)
+            }],
+        };
+    }
+);
+
+BEARER TOKEN AUTO-PREFIX PATTERN:
+// When handling Authorization headers, automatically add "Bearer " prefix if not present
+// This improves user experience by accepting tokens with or without the "Bearer " prefix
+
+// Example implementation:
+async ({ Authorization: bearerToken, "User-Agent": userAgent }) => {
+    const url = \`\${API_BASE_URL}/protected-endpoint\`;
+    
+    // Ensure bearer token has correct format
+    const authHeader = bearerToken.startsWith("Bearer ")
+        ? bearerToken
+        : \`Bearer \${bearerToken}\`;
+
+    const headers = {
+        Authorization: authHeader,
+        "User-Agent": userAgent,
+    };
+
+    const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
+        method: "GET",
+        headers,
+    });
+
+    if (error || !result) {
+        return {
+            content: [{
+                type: "text",
+                text: \`Failed to retrieve data. Error: \${error || "Unknown error"}\`
+            }],
+        };
+    }
+
+    return {
+        content: [{
+            type: "text",
+            text: \`Successfully retrieved data: \${JSON.stringify(result)}\`
+        }],
+    };
 }
 
 CRITICAL ZOD SCHEMA VALIDATION:
@@ -350,11 +570,11 @@ server.registerTool(
     },
     async () => {
         const url = \`\${BASE_URL}/items\`;
-        const result = await makeAPIRequest<ItemType[]>(url);
+        const { data: result, error } = await makeAPIRequest<ItemType[]>(url);
         
-        if (!result) {
+        if (error || !result) {
             return {
-                content: [{ type: "text", text: "Failed to retrieve items" }],
+                content: [{ type: "text", text: \`Failed to retrieve items. Error: \${error || "Unknown error"}\` }],
             };
         }
         
@@ -399,7 +619,7 @@ server.registerTool(
             if (param3 !== undefined) requestBody.nestedObject = param3;
 
             // Make API request with proper error handling
-            const result = await makeAPIRequest<ResponseType>(url, {
+            const { data: result, error } = await makeAPIRequest<ResponseType>(url, {
                 method: "POST", // or "GET", "PUT", "PATCH", "DELETE"
                 headers: { 
                     "Accept": "application/json",
@@ -408,11 +628,11 @@ server.registerTool(
                 body: JSON.stringify(requestBody) // Only for POST/PUT/PATCH
             });
             
-            if (!result) {
+            if (error || !result) {
                 return {
                     content: [{ 
                         type: "text", 
-                        text: \`Failed to retrieve data from \${url}\` 
+                        text: \`Failed to retrieve data from \${url}. Error: \${error || "Unknown error"}\` 
                     }],
                 };
             }
@@ -549,6 +769,74 @@ IMPORTANT NOTES:
 - Replace path parameters using string replacement
 - Make sure all needed parameters are converted
 - Start directly with "import"
+
+🚨 CRITICAL CODE ORGANIZATION (PREVENTS "is not defined" ERRORS):
+The generated code MUST follow this EXACT order:
+
+1️⃣ IMPORTS (lines 1-10)
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+// ... all other imports
+
+2️⃣ CONSTANTS (lines 11-20)
+const API_BASE_URL = "...";
+const USER_AGENT = "...";
+
+3️⃣ TYPE DEFINITIONS (lines 21-50)
+interface UserResponse { ... }
+interface PostResponse { ... }
+
+4️⃣ HELPER FUNCTIONS (lines 51-150) ⚠️ MUST BE HERE!
+async function makeAPIRequest<T>(...) { ... }
+function formatResponse(...) { ... }
+function buildAuthHeaders(...) { ... }
+
+5️⃣ SERVER INITIALIZATION (lines 151-160)
+const server = new McpServer({ ... });
+
+6️⃣ TOOL REGISTRATIONS (lines 161-800)
+server.registerTool("tool-1", ...);
+server.registerTool("tool-2", ...);
+// All tool handlers can now use makeAPIRequest safely
+
+7️⃣ MAIN FUNCTION (lines 801-950)
+async function main() { ... }
+
+8️⃣ MAIN EXECUTION (lines 951+)
+main().catch(e => { ... });
+
+❌ COMMON MISTAKE TO AVOID:
+// WRONG ORDER (causes "makeAPIRequest is not defined"):
+const server = new McpServer({ ... });
+
+server.registerTool("get-user", ..., async () => {
+    const { data } = await makeAPIRequest(...);  // ❌ ERROR: not defined yet!
+});
+
+async function makeAPIRequest(...) {  // ❌ Defined too late!
+    // ...
+}
+
+✅ CORRECT ORDER:
+// Helper functions first
+async function makeAPIRequest(...) {
+    // ...
+}
+
+// Server and tools after
+const server = new McpServer({ ... });
+
+server.registerTool("get-user", ..., async () => {
+    const { data } = await makeAPIRequest(...);  // ✅ Works! Defined above
+});
+
+🔍 VERIFICATION CHECKLIST:
+Before outputting the code, verify:
+✅ makeAPIRequest is defined BEFORE "const server = new McpServer"
+✅ All helper functions are defined BEFORE server.registerTool() calls
+✅ Constants are defined BEFORE being used
+✅ Type interfaces are defined BEFORE being referenced
+✅ No function is called before its definition
 
 Return ONLY the complete TypeScript code without any explanations or markdown formatting, just a clean and ready to go TypeScript code.
 `;
@@ -802,10 +1090,23 @@ export function buildPromptWithExamples(
   referenceStructure: string,
   inputExample: string,
   outputExample: string,
+  authExample?: string,
 ): ChatMessage[] {
+  // Build examples section
+  let examplesSection = `YAML INPUT EXAMPLE (OpenAPI Spec):
+${inputExample}
+
+TYPESCRIPT OUTPUT EXAMPLE (Generated MCP Server):
+${outputExample}`;
+
+  // Add auth example if available
+  if (authExample) {
+    examplesSection += `\n\n${"=".repeat(80)}\n\nAUTHENTICATION EXAMPLE (WITH BASIC AUTH, BEARER TOKEN, API KEY):\n\nTYPESCRIPT REFERENCE WITH FULL AUTHENTICATION SUPPORT:\n${authExample}\n\n🔐 KEY AUTHENTICATION PATTERNS FROM THIS EXAMPLE:\n- Basic Auth: Adds username + password parameters to inputSchema\n- Bearer Token: Adds bearer_token parameter to inputSchema\n- API Key: Adds api_key parameter to inputSchema\n- Security schemes are extracted from components.securitySchemes\n- Auth headers are built dynamically in the handler\n- All auth parameters are USER-PROVIDED (not from .env)\n- Use base64 encoding for Basic Auth: btoa(\`\${username}:\${password}\`)\n- Use Bearer format for tokens: \`Bearer \${bearer_token}\`\n- Apply security per operation using operation.security array`;
+  }
+
   const messages: ChatMessage[] = [
     {
-      role: "model",
+      role: "system",
       content: SYSTEM_INSTRUCTION_For_Generating_MCPServer.trim(),
     },
     {
@@ -815,14 +1116,24 @@ export function buildPromptWithExamples(
 TYPESCRIPT REFERENCE STRUCTURE (ONLY FOR REFERENCING):
 ${referenceStructure}
 
-YAML INPUT EXAMPLE (OpenAPI Spec):
-${inputExample}
-
-TYPESCRIPT OUTPUT EXAMPLE (Generated MCP Server):
-${outputExample}
+${examplesSection}
 
 NOW GENERATE FOR THIS YAML OPENAPI SPEC:
 ${openApiSpec}
+
+🚨 CRITICAL CODE STRUCTURE - MUST FOLLOW THIS ORDER:
+Step 1: Write ALL imports
+Step 2: Write ALL constants (API_BASE_URL, USER_AGENT)
+Step 3: Write ALL type definitions (interfaces)
+Step 4: Write ALL helper functions (makeAPIRequest, formatResponse, etc.)
+Step 5: Write server initialization (const server = new McpServer(...))
+Step 6: Write ALL tool registrations (server.registerTool(...))
+Step 7: Write main function
+Step 8: Write main execution (main().catch(...))
+
+⚠️ COMMON ERROR TO AVOID:
+❌ Calling makeAPIRequest in tool handlers before defining it
+✅ Define makeAPIRequest BEFORE creating server and registering tools
 
 🚨 CRITICAL ANALYSIS REQUIRED:
 1. Find ALL endpoints in paths section
@@ -833,6 +1144,20 @@ ${openApiSpec}
 6. NEVER use undefined, null, or raw literals in inputSchema
 7. ALWAYS use z.record(z.any()) for free-form objects
 8. ALWAYS check !== undefined before adding to request body
+
+🔐 AUTHENTICATION REQUIREMENTS (IF SPEC HAS SECURITY):
+1. Check components.securitySchemes for authentication types
+2. For each operation, check operation.security array
+3. Add authentication parameters to inputSchema based on security type:
+   - Basic Auth: username, password (both z.string())
+   - Bearer Token: bearer_token (z.string())
+   - API Key: api_key or custom name (z.string())
+4. Build authentication headers in handler:
+   - Basic: Authorization: Basic btoa(\`\${username}:\${password}\`)
+   - Bearer: Authorization: Bearer \${bearer_token}
+   - API Key: Custom header or query parameter
+5. Add descriptions noting credentials are USER-PROVIDED
+6. Never load credentials from environment variables
 
 ⚠️ ZOD SCHEMA REQUIREMENTS (CRITICAL - PREVENTS _zod ERROR):
 🚨 CRITICAL: inputSchema MUST be z.object({...}) NOT plain object {...}
@@ -850,13 +1175,73 @@ ${openApiSpec}
 ✅ Use backticks for template strings: \\\`Bearer \\\${token}\\\`
 ❌ NEVER use quotes: 'Bearer \\\${token}' or "Bearer \\\${token}"
 
+⚠️ YAML SYNTAX AND INDENTATION (CRITICAL - PREVENTS PARSING ERRORS):
+🚨 YAML parsing errors like "bad indentation of a mapping entry" indicate improper indentation
+✅ YAML Indentation Rules:
+   - Use consistent 2-space indentation throughout
+   - NEVER mix spaces and tabs
+   - Parent-child relationships MUST be indented properly
+   - Keys and values at same level MUST have same indentation
+   - Lists items must be indented after the dash
+   - Nested objects must be indented under parent key
+   
+Example CORRECT indentation:
+paths:
+  /api/resource:
+    get:
+      summary: Get resource
+      parameters:
+        - name: id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+
+Example WRONG indentation (causes "bad indentation of a mapping entry"):
+paths:
+  /api/resource:
+    get:
+      summary: Get resource
+      parameters:
+      - name: id        ← Wrong: dash should be indented
+        in: query
+        schema:
+        type: string    ← Wrong: type should be indented under schema
+      responses:
+      '200':           ← Wrong: response code should be indented
+        description: Success
+
+🚨 CRITICAL OUTPUT FORMAT:
+❌ FORBIDDEN - Absolutely NO markdown formatting:
+   ❌ No markdown headers (# Title, ## Subtitle)
+   ❌ No markdown code blocks (three backticks)
+   ❌ No markdown lists, emphasis, or any markdown syntax
+   ❌ No explanatory text before/after the code
+❌ FORBIDDEN - Do NOT copy or include examples
+✅ REQUIRED - Start with EXACTLY: "import"
+✅ REQUIRED - End with the last line of code
+✅ REQUIRED - Be pure, executable TypeScript (no wrappers)
+
 ⚠️ OUTPUT REQUIREMENTS:
-- Do NOT wrap the output in \`\`\`typescript code blocks (Critical)
-- NO explanations  
-- START with "import"
+- Do NOT wrap the output in markdown code blocks (CRITICAL!)
+- NO explanations or markdown formatting
+- START directly with "import"
 - IMPLEMENT EVERY ENDPOINT
 - EVERY REQUEST BODY PROPERTY = SEPARATE ZOD PARAMETER
-- EVERY INPUTSCHEMA PROPERTY = VALID ZOD SCHEMA`,
+- EVERY INPUTSCHEMA PROPERTY = VALID ZOD SCHEMA
+- For YAML output: Use proper 2-space indentation throughout
+- For YAML output: Validate indentation at every nesting level
+
+🚫 FORBIDDEN TEMPLATE SYNTAX:
+❌ NEVER output Jinja2/Handlebars/EJS templates
+❌ Output must be executable TypeScript or parseable YAML
+✅ Use only standard TypeScript or YAML syntax`,
     },
   ];
 
@@ -882,38 +1267,192 @@ export function buildOpenAPIPromptWithExamples(
   apiEndpoints: string,
   inputExample: string,
   outputExample: string,
+  outputExampleReddit?: string,
+  outputExampleTwilio?: string,
 ): ChatMessage[] {
+  // Build the examples section with all available examples
+  let examplesSection = `EXAMPLE 1 - HTTPBin API (Simple GET/POST):
+
+INPUT EXAMPLE:
+${inputExample}
+
+YAML OUTPUT EXAMPLE:
+${outputExample}`;
+
+  // Add Reddit example if available
+  if (outputExampleReddit) {
+    // Extract reddit input from inputExample
+    const redditInputMatch = inputExample.match(
+      /\/\/ Reddit API with OAuth2\s*\nconst redditInput = `([^`]+)`/s,
+    );
+    const redditInput = redditInputMatch
+      ? redditInputMatch[1]
+      : "Reddit API (see input example)";
+
+    examplesSection += `\n\n${"=".repeat(80)}\n\nEXAMPLE 2 - Reddit API (OAuth2 Bearer Token Authentication):
+
+INPUT EXAMPLE:
+${redditInput}
+
+YAML OUTPUT EXAMPLE:
+${outputExampleReddit}`;
+  }
+
+  // Add Twilio example if available
+  if (outputExampleTwilio) {
+    // Extract twilio input from inputExample
+    const twilioInputMatch = inputExample.match(
+      /\/\/ Twilio WhatsApp API with Basic Auth\s*\nconst twilioInput = `([^`]+)`/s,
+    );
+    const twilioInput = twilioInputMatch
+      ? twilioInputMatch[1]
+      : "Twilio WhatsApp API (see input example)";
+
+    examplesSection += `\n\n${"=".repeat(80)}\n\nEXAMPLE 3 - Twilio WhatsApp API (Basic Authentication):
+
+INPUT EXAMPLE:
+${twilioInput}
+
+YAML OUTPUT EXAMPLE:
+${outputExampleTwilio}`;
+  }
+
   const messages: ChatMessage[] = [
     {
-      role: "model",
+      role: "system",
       content: SYSTEM_INSTRUCTION_For_Generating_OPENAPISpec.trim(),
     },
     {
       role: "user",
-      content: `Generate a complete OpenAPI specification following this exact pattern:
+      content: `Generate a complete OpenAPI specification following these exact patterns.
 
-INPUT EXAMPLE (API Endpoints):
-${inputExample}
+You have ${outputExampleReddit && outputExampleTwilio ? "THREE" : outputExampleReddit || outputExampleTwilio ? "TWO" : "ONE"} comprehensive example(s) showing different authentication methods:
 
-YAML OUTPUT EXAMPLE (Generated OpenAPI Spec):
-${outputExample}
+${examplesSection}
 
 🚨 AUTHENTICATION REQUIREMENTS - CRITICAL:
 ${INPUT_FORMAT}
 
+KEY PATTERNS TO FOLLOW:
+1. HTTPBin Example: Simple REST API without authentication
+2. Reddit Example: OAuth2 with Basic Auth for token endpoint + Bearer token for API calls
+3. Twilio Example: Basic Auth with Account_SID:Auth_Token for all endpoints
+
+AUTHENTICATION PATTERNS:
+- Basic Auth: Use "basicAuth" security scheme with http/basic
+- Bearer Token: Use "bearerAuth" security scheme with http/bearer
+- OAuth2: Combine both - Basic Auth for token endpoint, Bearer for protected endpoints
+- Always include detailed descriptions about required parameters
+- Note when parameters are USER-PROVIDED (not from .env files)
+
 NOW GENERATE FOR THESE API ENDPOINTS:
 ${apiEndpoints}
+
+🚨 CRITICAL - SINGLE OUTPUT ONLY:
+❌ DO NOT copy or include the example YAML specs in your output
+❌ DO NOT generate multiple OpenAPI specs in one file
+❌ DO NOT include HTTPBin/Reddit/Twilio examples in output
+✅ Generate ONLY ONE OpenAPI spec for the endpoints provided above
+✅ Use the examples as REFERENCE PATTERNS ONLY
+✅ The output should have EXACTLY ONE "openapi: 3.0.3" declaration
+
+🚨 CRITICAL OUTPUT FORMAT:
+❌ FORBIDDEN - Absolutely NO markdown formatting:
+   ❌ No markdown headers (# Title, ## Subtitle)
+   ❌ No markdown code blocks (three backticks)
+   ❌ No markdown lists, emphasis, or any markdown syntax
+   ❌ No explanatory text before/after the YAML
+❌ FORBIDDEN - Do NOT copy or include examples
+❌ FORBIDDEN - Do NOT include multiple YAML documents
+✅ REQUIRED - Start with EXACTLY: "openapi: 3.0.3"
+✅ REQUIRED - End with the last YAML line (no trailing markers)
+✅ REQUIRED - Be pure, parseable YAML (no wrappers)
+✅ REQUIRED - Have proper 2-space indentation throughout
 
 CRITICAL OUTPUT REQUIREMENTS:
 - Return ONLY the raw OpenAPI YAML specification
 - Do NOT include any comments, headers, or markdown formatting
 - Do NOT include "/** Generated by hiagi-mcp-gen */" or similar comments
-- Do NOT wrap the output in \`\`\`yaml code blocks
+- Do NOT wrap the output in markdown code blocks (CRITICAL!)
 - Start directly with "openapi: 3.0.3"
 - End with the last line of the YAML specification
-- ENSURE client_id and client_secret are included in authentication endpoints
+- ENSURE authentication parameters (like client_id, client_secret, tokens) are properly documented
+- Include security schemes in components/securitySchemes
+- Apply security requirements at operation level where needed
+- Add detailed descriptions for authentication headers and parameters
 
-Follow the exact same patterns, structure, and documentation style as shown in the examples.`,
+🚫 FORBIDDEN SYNTAX (CRITICAL):
+❌ NEVER use template syntax in the output:
+   - NO Jinja2: {%- for ... %}, {{- ... }}, {%- if ... %}
+   - NO Handlebars: {{#each}}, {{#if}}, {{{variable}}}
+   - NO EJS: <% ... %>, <%= ... %>
+   - NO Liquid: {% for %}, {{ variable }}
+   - NO Mustache: {{variable}}, {{#section}}
+❌ NEVER use template variables: loop_messages, bos_token, messages[0]
+❌ Output must be PURE YAML that can be directly parsed
+✅ Use only standard YAML syntax with proper indentation
+
+⚠️ YAML SYNTAX VALIDATION (CRITICAL):
+🚨 YAML parsing errors like "bad indentation of a mapping entry (line:column)" indicate improper syntax
+✅ YAML Indentation Rules:
+   - Use EXACTLY 2 spaces for each indentation level
+   - NEVER use tabs or mix spaces/tabs
+   - All keys at same level MUST have identical indentation
+   - List items (-) must be at parent level, content indented by 2
+   - Colons (:) must be followed by space or newline
+   - Nested structures must be consistently indented
+   
+Example CORRECT YAML structure:
+openapi: 3.0.3
+info:
+  title: API Name
+  version: 1.0.0
+paths:
+  /api/endpoint:
+    post:
+      summary: Create resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Success
+
+Example WRONG (causes parsing error):
+paths:
+  /api/endpoint:
+    post:
+      requestBody:
+        content:
+        application/json:      ← Wrong: should be indented 2 more spaces
+          schema:
+            properties:
+            name:               ← Wrong: should be indented under properties
+              type: string
+          tags:                 ← Wrong: tags at wrong level
+            type: array
+
+🔍 Validation Checklist:
+1. ✅ Every nested level adds exactly 2 spaces
+2. ✅ All sibling keys have same indentation
+3. ✅ List items (-) align with parent key indentation
+4. ✅ List item content is indented 2 spaces after dash
+5. ✅ No trailing spaces on empty lines
+6. ✅ Colon-space after every key: "key: value"
+7. ✅ Multiline values properly indented
+8. ✅ No mixing of inline and block styles inconsistently
+
+Follow the exact same patterns, structure, and documentation style as shown in the examples above.`,
     },
   ];
 
