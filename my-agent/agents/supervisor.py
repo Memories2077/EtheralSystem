@@ -1,9 +1,9 @@
 """
 Supervisor Agent - Coordinates and delegates tasks to sub-agents
 """
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
-from langgraph.prebuilt import create_react_agent
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, BaseMessage
+from langchain.agents import create_agent
 from typing import Dict, Any, Optional, List
 from pydantic import SecretStr
 
@@ -20,16 +20,11 @@ class SupervisorAgent:
         self.prompt = load_prompt(config["prompt_file"])
         
         # Initialize model (streaming=False to avoid 'Invalid diff' error with tool calls)
-        self.model = ChatOpenAI(
-            model=config["model"],
-            temperature=config["temperature"],
-            base_url=API_CONFIG["openai_base_url"],
-            api_key=SecretStr(str(API_CONFIG["openai_api_key"])),
-            streaming=False
-        )
+        api_key = SecretStr(API_CONFIG["gemini_api_key"])
+        self.model = ChatGoogleGenerativeAI(model=config["model"], api_key=api_key)
         
         # Create agent with langgraph
-        self.agent = create_react_agent(
+        self.agent = create_agent(
             model=self.model,
             tools=SUPERVISOR_TOOLS,
             prompt=self.prompt
