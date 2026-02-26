@@ -74,21 +74,9 @@ function convertToLangChainMessages(messages: GenAIChatMessage[]) {
     } else if (m.role === "assistant" || m.role === "model") {
       return new AIMessage(m.content);
     } else {
-      const role =
-        msg.role === "assistant" || msg.role === "model" ? "model" : "user";
-      const parts: Part[] = [{ text: msg.content }];
-
-      // If we have a system instruction and this is the first user message, prepend it
-      if (systemInstruction && role === "user" && contents.length === 0) {
-        parts[0] = { text: systemInstruction + msg.content };
-        systemInstruction = "";
-      }
-
-      contents.push({ role, parts });
+      return new HumanMessage(m.content);
     }
-  }
-
-  return contents;
+  });
 }
 
 // --- OLD Google SDK message converter (COMMENTED OUT) ---
@@ -148,7 +136,9 @@ export async function genaiCompletion({
         : client;
 
     // Call LangChain Google Generative AI API
-    const response = await llm.invoke(langchainMessages);
+    const response = await llm.invoke(langchainMessages, {
+      timeout: geminiConfig.timeoutMs,
+    });
 
     // --- OLD Google SDK code (COMMENTED OUT) ---
     // const geminiContents = convertToGeminiMessages(messages);
@@ -192,7 +182,7 @@ export async function genaiCompletion({
     }
 
     // Trim leading/trailing whitespace from result
-    const result = text.trim();
+    result = result.trim();
 
     const outputTokens = estimateTokens(result);
     console.log(`✅ Received response: ${formatTokenCount(outputTokens)}`);
