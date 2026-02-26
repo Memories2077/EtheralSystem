@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { ExecException } from 'child_process';
 
 const execAsync = promisify(exec);
 
@@ -95,7 +96,7 @@ export async function main(options: Options = {}) {
     console.log("❄️ Referring the output example");
 
     // Gọi hàm generate
-    console.log("🤖 Calling Ollama to generate MCP server...");
+    console.log("🤖 Calling LLM to generate MCP server...");
 
     const MAX_RETRIES = 5;
     let retryCount = 0;
@@ -120,9 +121,12 @@ export async function main(options: Options = {}) {
           `\n🧪 Testing generated MCP server (Attempt ${retryCount + 1})...`,
         );
 
+        // Type definition for execAsync error
+        type ExecError = ExecException & { stdout: string; stderr: string };
+
         try {
           // Try to run the generated TypeScript file with tsx
-          const testResult = await execAsync(`npx tsx ${tsFilePath} --help`, {
+          const testResult = await execAsync(`npx tsx ${tsFilePath}`, {
             timeout: 10000, // 10 seconds timeout
           });
 
@@ -132,22 +136,33 @@ export async function main(options: Options = {}) {
           );
           console.log(`📊 Total retry attempts: ${retryCount + 1}`);
           break; // Success, exit retry loop
-        } catch (testError) {
-          const errorMsg =
-            testError instanceof Error ? testError.message : String(testError);
-          console.error(`❌ Generated MCP server failed to run: ${errorMsg}`);
+        } catch (error: unknown) {
+          const execError = error as ExecError;
+  
+          const stderr = execError.stderr ? execError.stderr.trim() : '';
+          const stdout = execError.stdout ? execError.stdout.trim() : '';
+          const isTimeout = execError.killed;
 
+          // Servers run indefinitely. Timeout without stderr = Success
+          if (isTimeout && !stderr) {
+            console.log(`✅ MCP server is running stably (auto-killed after 10s).`);
+            console.log(`With stdout: ${stdout}`)
+            console.log(`📊 Total LLM calls for this generation: ${result.llmCallCount}`);
+            console.log(`📊 Total retry attempts: ${retryCount + 1}`);
+            break; // Success, exit retry loop
+          }
+
+          // Actual failure (Crash, Syntax Error, etc.)
+          const errorMsg = stderr || execError.message || String(error);
+          console.error(`❌ Generated MCP server failed to run:\n${errorMsg}`);
+
+          // Retry logic
           if (retryCount < MAX_RETRIES - 1) {
-            console.log(
-              `🔄 Retrying generation (${retryCount + 2}/${MAX_RETRIES})...`,
-            );
+            console.log(`🔄 Retrying generation (${retryCount + 2}/${MAX_RETRIES})...`);
             retryCount++;
-            lastError =
-              testError instanceof Error ? testError : new Error(errorMsg);
+            lastError = new Error(errorMsg); 
           } else {
-            throw new Error(
-              `Failed to generate working MCP server after ${MAX_RETRIES} attempts. Last error: ${errorMsg}`,
-            );
+            throw new Error(`Failed to generate working MCP server after ${MAX_RETRIES} attempts. Last error: ${errorMsg}`);
           }
         }
       } catch (genError) {
