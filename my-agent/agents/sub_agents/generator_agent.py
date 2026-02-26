@@ -1,12 +1,11 @@
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
-from langchain_core.tools import tool
-from typing import Dict, Any, Optional, List, TypedDict, Annotated, Sequence, Union
-import operator
+from typing import Dict, Any, Optional, List, Sequence
 from pydantic import SecretStr
 from tools.generator_tools._init_ import create_MCPServer, test_mcp_server
 
 from config import load_prompt, AGENT_CONFIG, API_CONFIG
+from utils.state import AgentState # Import from centralized location
 
 import httpx
 
@@ -15,14 +14,6 @@ custom_client = httpx.Client(
     limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
 )
 
-
-class AgentState(TypedDict):
-    """State for the multi-agent system"""
-    messages: Annotated[Sequence[HumanMessage | AIMessage | SystemMessage | ToolMessage], operator.add]
-    next_agent: str
-    final_response: str
-
-
 async def generator_agent_node(state: AgentState) -> AgentState:
     """Generator agent that handles content generation tasks"""
     messages = state["messages"]
@@ -30,15 +21,10 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     # Initialize LLM for this agent
     config = AGENT_CONFIG["generator_agent"]
     system_prompt = config["prompt_file"]
-    llm = ChatOpenAI(
-        model=config["model"],
-        temperature=config["temperature"],
-        base_url=API_CONFIG["openai_base_url"],
-        api_key=SecretStr(API_CONFIG["openai_api_key"])
-    )
-    
-    # Bind generator tools - only bind create_MCPServer (sync tool)
-    # test_mcp_server is async and will be handled separately if needed
+    # streaming=False to avoid 'Invalid diff' error with tool calls
+    api_key = SecretStr(API_CONFIG["gemini_api_key"])
+    llm = ChatGoogleGenerativeAI(model=config["model"], api_key=api_key)
+
     llm_with_tools = llm.bind_tools([create_MCPServer])
     
     # Find the delegation task
@@ -137,10 +123,16 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     The full API documentation has been prepared for you.
     Just invoke: create_MCPServer(query=[api_doc, userId, email])"""
     
-    # Create generator query
+    # Create generator query - combine system prompt with task to avoid template issues
+    # Some models have issues when SystemMessage is first, so we combine them
+    combined_prompt = f"""[SYSTEM INSTRUCTION]
+{system_prompt}
+
+[USER REQUEST]
+{enhanced_task}"""
+    
     generator_messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=enhanced_task)
+        HumanMessage(content=combined_prompt)
     ]
     
     response = await llm_with_tools.ainvoke(generator_messages)
@@ -201,13 +193,9 @@ class GeneratorAgent:
         self.prompt = load_prompt(config["prompt_file"])
         
         # Initialize model
-        self.model = ChatOpenAI(
-            model=config["model"],
-            temperature=config["temperature"],
-            base_url=API_CONFIG["openai_base_url"],
-            api_key=SecretStr(API_CONFIG["openai_api_key"])
-        )
-    
+        api_key = SecretStr(API_CONFIG["gemini_api_key"])
+        self.model = ChatGoogleGenerativeAI(mode=config["model"], api_key=api_key)
+
     async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Invoke the generator agent (legacy method)
@@ -219,9 +207,13 @@ class GeneratorAgent:
         Returns:
             Generated content
         """
-        messages: List[BaseMessage] = [HumanMessage(content=query)]
+        # Combine context with query to avoid SystemMessage (template issues)
         if context:
-            messages.insert(0, SystemMessage(content=f"Context: {context}"))
+            combined_query = f"[Context: {context}]\\n\\n{query}"
+        else:
+            combined_query = query
+        
+        messages: List[BaseMessage] = [HumanMessage(content=combined_query)]
         
         # Simple generation without tools (using async)
         response = await self.model.ainvoke(messages)

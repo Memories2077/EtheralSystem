@@ -1,0 +1,28 @@
+{
+    "mcpServers": {
+        "mcp_executor": {
+        "command": "npx",
+        "args": [
+            "mcp-remote",
+            "http://localhost:3000/mcp",
+            "--allow-http"
+        ]
+        },
+        "mcp_memory": {
+        "command": "npx",
+        "args": [
+            "mcp-remote",
+            "http://localhost:3001/mcp",
+            "--allow-http"
+        ]
+        },
+        "mcp_web_search": {
+        "command": "npx",
+        "args": [
+            "mcp-remote",
+            "http://localhost:3002/mcp",
+            "--allow-http"
+        ]
+        }
+    }
+}

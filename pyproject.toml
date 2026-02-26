@@ -22,7 +22,8 @@ dependencies = [
     "requests",
     "httpx",
     "tavily-python",
-    "mcp"
+    "mcp",
+    "mcp-use"
 ]
 
 [tool.setuptools.packages.find]

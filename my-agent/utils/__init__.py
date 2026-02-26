@@ -4,6 +4,58 @@ Utilities and Helper Functions
 from typing import Any, Dict, List
 
 
+def extract_content_from_openai_response(response_json: Dict[str, Any]) -> str:
+    """
+    Extract content from OpenAI-style API response
+    
+    Args:
+        response_json: JSON response from OpenAI-compatible API
+        
+    Returns:
+        Extracted content string
+        
+    Example:
+        >>> response = {
+        ...     "choices": [{
+        ...         "message": {
+        ...             "content": "",
+        ...             "reasoning_content": "Hello!"
+        ...         }
+        ...     }]
+        ... }
+        >>> extract_content_from_openai_response(response)
+        'Hello!'
+    """
+    try:
+        # Standard OpenAI response format
+        if "choices" in response_json and len(response_json["choices"]) > 0:
+            choice = response_json["choices"][0]
+            
+            # Check for message.reasoning_content (new model format)
+            if "message" in choice:
+                message = choice["message"]
+                # Priority: reasoning_content > content
+                if "reasoning_content" in message and message["reasoning_content"]:
+                    return message["reasoning_content"].strip()
+                if "content" in message:
+                    return message["content"].strip()
+            
+            # Check for delta.content (streaming)
+            if "delta" in choice and "content" in choice["delta"]:
+                return choice["delta"]["content"].strip()
+            
+            # Fallback to text field
+            if "text" in choice:
+                return choice["text"].strip()
+        
+        # If no standard format found, return the whole response as string
+        return str(response_json)
+    
+    except Exception as e:
+        # Return error message if parsing fails
+        return f"Error parsing response: {str(e)}\nRaw response: {str(response_json)[:500]}"
+
+
 def extract_text_from_content(content: Any) -> str:
     """
     Extract plain text from various content formats

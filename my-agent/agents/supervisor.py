@@ -1,9 +1,9 @@
 """
 Supervisor Agent - Coordinates and delegates tasks to sub-agents
 """
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
-from langgraph.prebuilt import create_react_agent
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, BaseMessage
+from langchain.agents import create_agent
 from typing import Dict, Any, Optional, List
 from pydantic import SecretStr
 
@@ -19,16 +19,12 @@ class SupervisorAgent:
         self.name = config["name"]
         self.prompt = load_prompt(config["prompt_file"])
         
-        # Initialize model
-        self.model = ChatOpenAI(
-            model=config["model"],
-            temperature=config["temperature"],
-            base_url=API_CONFIG["openai_base_url"],
-            api_key=SecretStr(str(API_CONFIG["openai_api_key"]))
-        )
+        # Initialize model (streaming=False to avoid 'Invalid diff' error with tool calls)
+        api_key = SecretStr(API_CONFIG["gemini_api_key"])
+        self.model = ChatGoogleGenerativeAI(model=config["model"], api_key=api_key)
         
         # Create agent with langgraph
-        self.agent = create_react_agent(
+        self.agent = create_agent(
             model=self.model,
             tools=SUPERVISOR_TOOLS,
             prompt=self.prompt
@@ -45,10 +41,13 @@ class SupervisorAgent:
         Returns:
             Agent response
         """
-        messages: List[BaseMessage] = []
+        # Combine context with query to avoid SystemMessage at start (template issues)
         if context:
-            messages.append(SystemMessage(content=f"Context: {context}"))
-        messages.append(HumanMessage(content=query))
+            combined_query = f"[Context: {context}]\n\n{query}"
+        else:
+            combined_query = query
+        
+        messages: List[BaseMessage] = [HumanMessage(content=combined_query)]
         
         result = await self.agent.ainvoke({"messages": messages})
         return result
