@@ -1,5 +1,11 @@
 data/
 
+uv.lock
+
+.python-version
+
+.vscode/
+
 input/
 
 # Logs
