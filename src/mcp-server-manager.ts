@@ -192,17 +192,17 @@ class MCPServerManager {
         dockerfilePath,
       );
 
-      // Update status to running
+      // Update status to created (instead of running, wait for "ready" signal)
       if (this.messageQueue.connected) {
         await this.messageQueue.publishStatusUpdate({
           serverId,
-          status: "running",
+          status: "created",
           containerId,
         });
       } else {
         await this.processStatusUpdate({
           serverId,
-          status: "running",
+          status: "created",
           containerId,
         });
       }
@@ -408,7 +408,7 @@ class MCPServerManager {
 
   private async SaveToDB(
     server: ServerLogEntry,
-    action: "created" | "error" | "deleted" | "running" | "stopped",
+    action: string,
   ) {
     try {
       if (!this.logsCollection) {
@@ -416,22 +416,18 @@ class MCPServerManager {
         return;
       }
 
-      // Always insert a new log entry for audit trail
-      if (action === "created") {
-        await this.logsCollection.insertOne(server);
-      } else {
-        await this.logsCollection.updateOne(
-          { serverId: server.serverId },
-          {
-            $set: {
-              status: server.status,
-              containerId: server.containerId,
-              buildLogs: server.buildLogs,
-              updatedAt: new Date(),
-            },
-          },
-        );
-      }
+      // Create a copy to avoid mutating the original object's _id
+      const dataToSave = { ...server };
+      delete (dataToSave as any)._id; // Mongo doesn't like updating/upserting with _id in the body
+
+      dataToSave.updatedAt = new Date();
+
+      await this.logsCollection.updateOne(
+        { serverId: server.serverId },
+        { $set: dataToSave },
+        { upsert: true }
+      );
+
       console.log(
         `✅ Saved server ${server.serverId} to MongoDB with action: ${action}`,
       );
@@ -648,7 +644,11 @@ class MCPServerManager {
   }
 
   private setupRoutes() {
-    this.app.use(express.json());
+    // Increase payload size limits so large API docs (e.g. ~100KB+) are accepted.
+    // Also accept urlencoded and plain text bodies (for raw OpenAPI/YAML uploads).
+    this.app.use(express.json({ limit: "5mb" }));
+    this.app.use(express.urlencoded({ limit: "5mb", extended: true }));
+    this.app.use(express.text({ limit: "5mb", type: "*/*" }));
 
     // API tạo MCP server mới
     this.app.post("/api/mcp/create", async (req, res) => {
@@ -850,8 +850,8 @@ class MCPServerManager {
           );
 
           serverConfig.containerId = containerId;
-          serverConfig.status = "running";
-          await this.SaveToDB(serverConfig, "running");
+          serverConfig.status = "created";
+          await this.SaveToDB(serverConfig, "created");
 
           res.json({
             serverId: serverId,
@@ -1002,6 +1002,108 @@ class MCPServerManager {
         res.status(500).json({ error: "Failed to get server statistics" });
       }
     });
+
+    // API to inform that server is ready
+    this.app.post("/api/mcp/:serverId/ready", async (req, res) => {
+      try {
+        const { serverId } = req.params;
+        console.log(`📡 Received ready notification for server ${serverId}`);
+
+        const message: StatusUpdateMessage = {
+          serverId,
+          status: "running",
+        };
+
+        if (this.messageQueue.connected) {
+          await this.messageQueue.publishStatusUpdate(message);
+        } else {
+          await this.processStatusUpdate(message);
+        }
+
+        res.json({ success: true, message: "Status updated to running" });
+      } catch (error) {
+        console.error(
+          `Error processing ready notification for ${req.params.serverId}:`,
+          error,
+        );
+        res.status(500).json({ error: "Failed to process ready notification" });
+      }
+    });
+
+    // API to get generated files
+    this.app.get("/api/mcp/:serverId/files", async (req, res) => {
+      try {
+        const { serverId } = req.params;
+
+        // Define paths (using the same logic as in the rest of the application/volumes)
+        const inputDir = path.join(__dirname, "..", "input");
+        const yamlDir = path.join(__dirname, "..", "src-generated-yaml");
+        const tsDir = path.join(__dirname, "..", "src-generated-ts");
+
+        // 1. Find input file
+        const extensions = [".txt", ".json", ".yaml"];
+        let inputPath = "";
+        let inputFileName = "";
+        for (const ext of extensions) {
+          const fileName = `api-input-${serverId}${ext}`;
+          const filePath = path.join(inputDir, fileName);
+          if (fs.existsSync(filePath)) {
+            inputPath = filePath;
+            inputFileName = fileName;
+            break;
+          }
+        }
+
+        // 2. OpenAPI Spec
+        const yamlFileName = `${serverId}.yaml`;
+        const yamlPath = path.join(yamlDir, yamlFileName);
+
+        // 3. TypeScript Server
+        const tsFileName = `${serverId}.ts`;
+        const tsPath = path.join(tsDir, tsFileName);
+
+        // Check for existence
+        if (!inputPath || !fs.existsSync(yamlPath) || !fs.existsSync(tsPath)) {
+          return res.status(404).json({
+            error: "One or more artifacts not found",
+            exists: {
+              input: !!inputPath,
+              openapi: fs.existsSync(yamlPath),
+              typescript: fs.existsSync(tsPath),
+            },
+          });
+        }
+
+        // Read contents
+        const inputContent = fs.readFileSync(inputPath, "utf8");
+        const yamlContent = fs.readFileSync(yamlPath, "utf8");
+        const tsContent = fs.readFileSync(tsPath, "utf8");
+
+        res.json({
+          serverId,
+          files: {
+            input: {
+              name: inputFileName,
+              content: inputContent,
+            },
+            openapi: {
+              name: yamlFileName,
+              content: yamlContent,
+            },
+            typescript: {
+              name: tsFileName,
+              content: tsContent,
+            },
+          },
+        });
+      } catch (error) {
+        console.error(
+          `Error retrieving files for ${req.params.serverId}:`,
+          error,
+        );
+        res.status(500).json({ error: "Failed to retrieve generated files" });
+      }
+    });
   }
 
   private async checkImageExists(imageName: string): Promise<boolean> {
@@ -1077,8 +1179,13 @@ class MCPServerManager {
               ReadOnly: false,
             },
           ],
+          ExtraHosts: ["host.docker.internal:host-gateway"],
         },
-        Env: [`SERVER_ID=${config.serverId}`, `JWT_TOKEN=${config.token}`],
+        Env: [
+          `SERVER_ID=${config.serverId}`,
+          `JWT_TOKEN=${config.token}`,
+          `MANAGER_URL=${process.env.MANAGER_URL || "http://host.docker.internal:8080"}`,
+        ],
       });
 
       config.buildLogs?.push("Starting container...");

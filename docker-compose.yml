@@ -69,6 +69,7 @@ services:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - NODE_ENV=production
       - PORT=8080
+      - MANAGER_URL=http://host.docker.internal:8080
     depends_on:
       mongodb:
         condition: service_healthy
