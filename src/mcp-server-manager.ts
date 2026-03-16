@@ -795,24 +795,30 @@ class MCPServerManager {
         if (inputType !== "json") {
           let retryCount = 0;
           const maxRetries = 5;
+          let lastError = "";
 
-          while (!checking && retryCount < maxRetries) {
+          while (!checking.success && retryCount < maxRetries) {
             console.log(
               `🔄 Retry attempt ${retryCount + 1} of ${maxRetries} for OpenAPI spec generation`,
             );
-            await generateOpenAPISpec(outputPath, serverId, retryCount);
+            await generateOpenAPISpec(
+              outputPath,
+              serverId,
+              retryCount + 1,
+              checking.error,
+            );
             checking = await confirm(openapi_filepath);
             retryCount++;
           }
 
-          if (checking) {
+          if (checking.success) {
             console.log(
-              `✅ OpenAPI spec validated successfully after ${retryCount} attempts (Total LLM calls: ${retryCount})`,
+              `✅ OpenAPI spec validated successfully after ${retryCount} attempts (Total LLM calls: ${retryCount + 1})`,
             );
           }
         }
 
-        if (!checking) {
+        if (!checking.success) {
           console.log("❌ Validation failed after maximum retries");
           // Clean up allocated resources
           this.servers.delete(serverId);
