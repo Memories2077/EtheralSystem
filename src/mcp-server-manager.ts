@@ -9,6 +9,7 @@ import yaml from "js-yaml";
 import { randomBytes } from "crypto";
 import { createServer } from "net";
 import { fileURLToPath } from "url";
+import { EventEmitter } from "events";
 import { MongoClient, Db, Collection } from "mongodb";
 import { writeFileSafe, remove, exists } from "./utils/fs.ts";
 import { confirm } from "./generator/validator.ts";
@@ -66,6 +67,7 @@ class MCPServerManager {
   private usedPorts: Set<number> = new Set();
   private defaultDockerfilePath: string;
   private persistenceFilePath: string;
+  private events: EventEmitter;
 
   // MongoDB properties
   private mongoClient: MongoClient;
@@ -98,8 +100,8 @@ class MCPServerManager {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    // Initialize message queue service
     this.messageQueue = new MessageQueueService();
+    this.events = new EventEmitter();
 
     //this.initializeMongoDB();
     this.initializeData(jwtSecret);
@@ -270,6 +272,9 @@ class MCPServerManager {
       await this.SaveToDB(server, status as any);
 
       console.log(`Status updated for server ${serverId}: ${status}`);
+
+      // Emit status update event
+      this.events.emit(`status:${serverId}`, status);
     } catch (error) {
       console.error(`Failed to process status update for ${serverId}:`, error);
     }
@@ -313,6 +318,29 @@ class MCPServerManager {
     } catch (error) {
       console.error(`Failed to delete the determined MCP server`, error);
     }
+  }
+
+  private waitForStatus(
+    serverId: string,
+    targetStatus: string,
+    timeoutMs: number = 300000,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.events.off(`status:${serverId}`, listener);
+        reject(new Error("Timeout waiting for server status update"));
+      }, timeoutMs);
+
+      const listener = (status: string) => {
+        if (status === targetStatus || status === "error") {
+          clearTimeout(timer);
+          this.events.off(`status:${serverId}`, listener);
+          resolve(status);
+        }
+      };
+
+      this.events.on(`status:${serverId}`, listener);
+    });
   }
 
   private async initializeMongoDB() {
@@ -406,10 +434,7 @@ class MCPServerManager {
     }
   }
 
-  private async SaveToDB(
-    server: ServerLogEntry,
-    action: string,
-  ) {
+  private async SaveToDB(server: ServerLogEntry, action: string) {
     try {
       if (!this.logsCollection) {
         console.warn("MongoDB not initialized, skipping database save");
@@ -425,7 +450,7 @@ class MCPServerManager {
       await this.logsCollection.updateOne(
         { serverId: server.serverId },
         { $set: dataToSave },
-        { upsert: true }
+        { upsert: true },
       );
 
       console.log(
@@ -795,7 +820,7 @@ class MCPServerManager {
         if (inputType !== "json") {
           let retryCount = 0;
           const maxRetries = 5;
-          let lastError = "";
+          //let lastError = "";
 
           while (!checking.success && retryCount < maxRetries) {
             console.log(
@@ -840,14 +865,6 @@ class MCPServerManager {
             hostPort,
             containerPort: serverConfig.containerPort,
           });
-
-          res.json({
-            serverId: serverId,
-            publicUrl: serverConfig.publicUrl,
-            claudeConfig: this.generateClaudeConfig(serverId, serverConfig),
-            status: "building",
-            message: "Server creation queued successfully",
-          });
         } else {
           // Fallback to synchronous processing
           const containerId = await this.buildAndRunContainer(
@@ -858,12 +875,35 @@ class MCPServerManager {
           serverConfig.containerId = containerId;
           serverConfig.status = "created";
           await this.SaveToDB(serverConfig, "created");
+        }
 
-          res.json({
+        // Final Wait for "running" status before returning response to client
+        try {
+          console.log(`⏳ Waiting for server ${serverId} to be running...`);
+          const finalStatus = await this.waitForStatus(serverId, "running");
+
+          if (finalStatus === "running") {
+            const updatedServer = this.servers.get(serverId) || serverConfig;
+            res.json({
+              serverId: serverId,
+              publicUrl: updatedServer.publicUrl,
+              claudeConfig: this.generateClaudeConfig(serverId, updatedServer),
+              status: "running",
+              message: "Server created and running successfully",
+            });
+          } else {
+            res.status(500).json({
+              error: "Server encountered an error during startup",
+              serverId: serverId,
+              status: "error",
+            });
+          }
+        } catch (waitError: any) {
+          console.error(`Error waiting for server ${serverId}:`, waitError);
+          res.status(504).json({
+            error: "Timeout waiting for server to be ready",
             serverId: serverId,
-            publicUrl: serverConfig.publicUrl,
-            claudeConfig: this.generateClaudeConfig(serverId, serverConfig),
-            status: serverConfig.status,
+            message: waitError.message,
           });
         }
       } catch (error) {
