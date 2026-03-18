@@ -38,14 +38,16 @@ export function validateYAML(specPath: string): Promise<string> {
   });
 }
 
-export async function confirm(specPath: string): Promise<boolean> {
+export async function confirm(
+  specPath: string,
+): Promise<{ success: boolean; error?: string }> {
   try {
     console.log(`🔎 Starting validation for: ${specPath}`);
     await validateYAML(specPath);
     console.log(`✅ Validation completed successfully!`);
-    return true;
-  } catch (error) {
+    return { success: true };
+  } catch (error: any) {
     console.error(`❌ Validation failed:`, error);
-    return false;
+    return { success: false, error: error.message || String(error) };
   }
 }

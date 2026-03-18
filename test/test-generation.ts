@@ -113,6 +113,7 @@ export async function main(options: Options = {}) {
           outputDir_ts,
           serverId,
           retryCount,
+          lastError?.message,
         );
 
         // Test if generated server can run

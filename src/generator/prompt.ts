@@ -1091,6 +1091,7 @@ export function buildPromptWithExamples(
   inputExample: string,
   outputExample: string,
   authExample?: string,
+  lastError?: string,
 ): ChatMessage[] {
   // Build examples section
   let examplesSection = `YAML INPUT EXAMPLE (OpenAPI Spec):
@@ -1111,7 +1112,7 @@ ${outputExample}`;
     },
     {
       role: "user",
-      content: `Generate a complete MCP server following this exact pattern:
+      content: `${lastError ? `the mcp server has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n` : ""}Generate a complete MCP server following this exact pattern:
 
 TYPESCRIPT REFERENCE STRUCTURE (ONLY FOR REFERENCING):
 ${referenceStructure}
@@ -1270,6 +1271,7 @@ export function buildOpenAPIPromptWithExamples(
   outputExample: string,
   outputExampleReddit?: string,
   outputExampleTwilio?: string,
+  lastError?: string,
 ): ChatMessage[] {
   // Build the examples section with all available examples
   let examplesSection = `EXAMPLE 1 - HTTPBin API (Simple GET/POST):
@@ -1325,7 +1327,7 @@ ${outputExampleTwilio}`;
     },
     {
       role: "user",
-      content: `Generate a complete OpenAPI specification following these exact patterns.
+      content: `${lastError ? `the yaml file has been generated succesfully but there are errors and need to be generated again:\n${lastError}\n\n` : ""}Generate a complete OpenAPI specification following these exact patterns:
 
 You have ${outputExampleReddit && outputExampleTwilio ? "THREE" : outputExampleReddit || outputExampleTwilio ? "TWO" : "ONE"} comprehensive example(s) showing different authentication methods:
 
