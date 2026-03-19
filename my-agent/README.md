@@ -90,6 +90,7 @@ pip install -e .
 
 ```env
 GOOGLE_API_KEY=your_google_api_key
+GROQ_API_KEY=your_groq_api_key
 TAVILY_API_KEY=your_tavily_api_key
 MCP_BASE_URL=http://localhost:8000
 MCP_API_KEY=your_mcp_api_key
