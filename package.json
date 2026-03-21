@@ -33,6 +33,7 @@
     "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^1.1.28",
     "@langchain/google-genai": "^2.1.20",
+    "@langchain/groq": "^1.1.5",
     "@modelcontextprotocol/sdk": "^1.16.0",
     "@redocly/cli": "^1.31.0",
     "@types/commander": "^2.12.5",
