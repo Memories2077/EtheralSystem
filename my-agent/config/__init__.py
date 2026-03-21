@@ -54,7 +54,7 @@ API_CONFIG = {
 
 # LLM Provider Configuration
 PROVIDER_CONFIG = {
-    "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
-    "groq": ["llama-3.3-70b-versatile", "qwen/qwen3-32b"]
+    "gemini": get_env_var("GEMINI_MODEL"),
+    "groq": get_env_var("GROQ_MODEL")
 }
 

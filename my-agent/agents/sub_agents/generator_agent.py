@@ -28,9 +28,9 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     groq_api_key = SecretStr(API_CONFIG["groq_api_key"])
 
     if gemini_api_key:
-        llm = ChatGoogleGenerativeAI(model=PROVIDER_CONFIG["gemini"][0], api_key=gemini_api_key) # gemini-2.5-flash
+        llm = ChatGoogleGenerativeAI(model=PROVIDER_CONFIG["gemini"], api_key=gemini_api_key)
     elif groq_api_key:
-        llm = ChatGroq(model_name=PROVIDER_CONFIG["groq"][0], api_key=groq_api_key)
+        llm = ChatGroq(model_name=PROVIDER_CONFIG["groq"], api_key=groq_api_key)
 
     llm_with_tools = llm.bind_tools([create_MCPServer])
     
