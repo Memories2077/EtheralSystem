@@ -69,12 +69,18 @@ services:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - NODE_ENV=production
       - PORT=8080
+      - MANAGER_URL=http://host.docker.internal:8080
     depends_on:
       mongodb:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/data/persistence.json"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -94,9 +100,12 @@ services:
     volumes:
       - jwt_data:/app/data
     depends_on:
-      - docker-manager
-      - mongodb
-      - rabbitmq
+      docker-manager:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

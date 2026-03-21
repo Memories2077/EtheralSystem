@@ -60,6 +60,7 @@ export async function generateOpenAPISpec(
   input: string,
   name: string,
   retryCount: number = 0,
+  lastError?: string,
 ) {
   try {
     console.log("📖 Reading Input...");
@@ -99,6 +100,7 @@ export async function generateOpenAPISpec(
       output_Example,
       output_Example_Reddit,
       output_Example_Twilio,
+      lastError,
     );
 
     console.log(
@@ -289,6 +291,7 @@ export async function generateMCP(
   outDir: string,
   name: string | undefined,
   retryCount: number = 0,
+  lastError?: string,
 ): Promise<GenerationResult> {
   try {
     console.log("📖 Reading OpenAPI spec...");
@@ -296,9 +299,8 @@ export async function generateMCP(
 
     console.log("✅ Validating OpenAPI spec");
     const result = await confirm(specPath);
-    if (!result) {
-      const errorMsg =
-        "❌ Invalid OpenAPI spec. Cannot proceed with MCP server generation.";
+    if (!result.success) {
+      const errorMsg = `❌ Invalid OpenAPI spec: ${result.error || "Unknown error"}. Cannot proceed with MCP server generation.`;
       console.error(errorMsg);
       throw new Error(errorMsg);
     }
@@ -336,6 +338,7 @@ export async function generateMCP(
       inputExample,
       outputExample,
       authExample,
+      lastError,
     );
 
     // Gọi GenAI với messages thay vì prompt đơn giản

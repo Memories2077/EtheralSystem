@@ -1091,6 +1091,7 @@ export function buildPromptWithExamples(
   inputExample: string,
   outputExample: string,
   authExample?: string,
+  lastError?: string,
 ): ChatMessage[] {
   // Build examples section
   let examplesSection = `YAML INPUT EXAMPLE (OpenAPI Spec):
@@ -1111,7 +1112,7 @@ ${outputExample}`;
     },
     {
       role: "user",
-      content: `Generate a complete MCP server following this exact pattern:
+      content: `${lastError ? `the mcp server has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n` : ""}Generate a complete MCP server following this exact pattern:
 
 TYPESCRIPT REFERENCE STRUCTURE (ONLY FOR REFERENCING):
 ${referenceStructure}
@@ -1144,6 +1145,7 @@ Step 8: Write main execution (main().catch(...))
 6. NEVER use undefined, null, or raw literals in inputSchema
 7. ALWAYS use z.record(z.any()) for free-form objects
 8. ALWAYS check !== undefined before adding to request body
+9. ⚠️ DO NOT CREATE UNNECESSARY PARAMETERS - Only add parameters that are explicitly defined in the OpenAPI spec. DO NOT invent extra parameters like "bearer_token", "api_key", or other authentication fields if they are NOT specified in the spec's securitySchemes or requestBody
 
 🔐 AUTHENTICATION REQUIREMENTS (IF SPEC HAS SECURITY):
 1. Check components.securitySchemes for authentication types
@@ -1269,6 +1271,7 @@ export function buildOpenAPIPromptWithExamples(
   outputExample: string,
   outputExampleReddit?: string,
   outputExampleTwilio?: string,
+  lastError?: string,
 ): ChatMessage[] {
   // Build the examples section with all available examples
   let examplesSection = `EXAMPLE 1 - HTTPBin API (Simple GET/POST):
@@ -1324,7 +1327,7 @@ ${outputExampleTwilio}`;
     },
     {
       role: "user",
-      content: `Generate a complete OpenAPI specification following these exact patterns.
+      content: `${lastError ? `the yaml file has been generated succesfully but there are errors and need to be generated again:\n${lastError}\n\n` : ""}Generate a complete OpenAPI specification following these exact patterns:
 
 You have ${outputExampleReddit && outputExampleTwilio ? "THREE" : outputExampleReddit || outputExampleTwilio ? "TWO" : "ONE"} comprehensive example(s) showing different authentication methods:
 
@@ -1344,6 +1347,7 @@ AUTHENTICATION PATTERNS:
 - OAuth2: Combine both - Basic Auth for token endpoint, Bearer for protected endpoints
 - Always include detailed descriptions about required parameters
 - Note when parameters are USER-PROVIDED (not from .env files)
+- ⚠️ DO NOT CREATE UNNECESSARY PARAMETERS - Only add authentication parameters that are explicitly defined in the spec's securitySchemes. DO NOT invent extra parameters like "bearer_token", "api_key", or other authentication fields if they are NOT specified in the spec
 
 NOW GENERATE FOR THESE API ENDPOINTS:
 ${apiEndpoints}
@@ -1376,6 +1380,7 @@ CRITICAL OUTPUT REQUIREMENTS:
 - Do NOT wrap the output in markdown code blocks (CRITICAL!)
 - Start directly with "openapi: 3.0.3"
 - End with the last line of the YAML specification
+- ⚠️ DO NOT CREATE UNNECESSARY PARAMETERS - Only include parameters that are explicitly defined in the OpenAPI spec. DO NOT invent authentication parameters like "bearer_token", "api_key", or other fields if they are NOT in the original specification
 - ENSURE authentication parameters (like client_id, client_secret, tokens) are properly documented
 - Include security schemes in components/securitySchemes
 - Apply security requirements at operation level where needed

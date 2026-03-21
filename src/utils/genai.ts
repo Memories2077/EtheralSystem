@@ -1,17 +1,12 @@
-// --- OLD OpenAI imports (COMMENTED OUT) ---
-// import { ChatOpenAI } from "@langchain/openai";
-
-// --- OLD Google SDK imports (COMMENTED OUT) ---
-// import { GoogleGenerativeAI, Content, Part } from "@google/generative-ai";
-
 // --- NEW LangChain Google Generative AI imports ---
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatGroq } from "@langchain/groq"
 import {
   HumanMessage,
   SystemMessage,
   AIMessage,
 } from "@langchain/core/messages";
-import { geminiConfig } from "./config.js";
+import { geminiConfig, groqConfig } from "./config.js";
 import { estimateTokens, formatTokenCount } from "./token-counter.js";
 
 export interface GenAIChatMessage {
@@ -43,29 +38,6 @@ export interface GenAICompletionParams {
   temperature?: number;
 }
 
-// --- OLD LangChain OpenAI client (COMMENTED OUT) ---
-// const client = new ChatOpenAI({
-//   configuration: {
-//     baseURL: openaiConfig.baseUrl,
-//   },
-//   apiKey: openaiConfig.apiKey,
-//   model: openaiConfig.model,
-//   temperature: openaiConfig.temperature,
-//   timeout: openaiConfig.timeoutMs,
-//   maxRetries: 2,
-// });
-
-// --- OLD Google SDK client (COMMENTED OUT) ---
-// const genAI = new GoogleGenerativeAI(geminiConfig.apiKey);
-
-// --- NEW LangChain Google Generative AI client ---
-const client = new ChatGoogleGenerativeAI({
-  apiKey: geminiConfig.apiKey,
-  model: geminiConfig.model,
-  temperature: geminiConfig.temperature,
-  maxRetries: 2,
-});
-
 // Convert GenAIChatMessage to LangChain message format
 function convertToLangChainMessages(messages: GenAIChatMessage[]) {
   return messages.map((m) => {
@@ -79,37 +51,27 @@ function convertToLangChainMessages(messages: GenAIChatMessage[]) {
   });
 }
 
-// --- OLD Google SDK message converter (COMMENTED OUT) ---
-// function convertToGeminiMessages(messages: GenAIChatMessage[]): Content[] {
-//   const contents: Content[] = [];
-//   let systemInstruction = "";
-//
-//   for (const msg of messages) {
-//     if (msg.role === "system") {
-//       systemInstruction += msg.content + "\n\n";
-//     } else {
-//       const role =
-//         msg.role === "assistant" || msg.role === "model" ? "model" : "user";
-//       const parts: Part[] = [{ text: msg.content }];
-//
-//       if (systemInstruction && role === "user" && contents.length === 0) {
-//         parts[0] = { text: systemInstruction + msg.content };
-//         systemInstruction = "";
-//       }
-//
-//       contents.push({ role, parts });
-//     }
-//   }
-//
-//   return contents;
-// }
-
 // --- Original function for single API calls ---
 export async function genaiCompletion({
   messages,
   temperature,
   maxTokens,
 }: GenAICompletionParams): Promise<string> {
+  // 1. Auto-detect available provider
+  let selectedProvider: "gemini" | "groq";
+  
+  if (geminiConfig.apiKey) {
+    selectedProvider = "gemini";
+  } else if (groqConfig.apiKey) {
+    selectedProvider = "groq";
+  } else {
+    throw new Error("No API keys found for Gemini or Groq. Please check your .env file.");
+  }
+
+  const isGroq = selectedProvider === "groq";
+  const currentConfig = isGroq ? groqConfig : geminiConfig;
+  const selectedModel = currentConfig.model;
+
   try {
     // Log context usage
     const totalTokens = messages.reduce(
@@ -117,47 +79,36 @@ export async function genaiCompletion({
       0,
     );
     console.log(
-      `🤖 Sending request to Gemini (LangChain): ${formatTokenCount(totalTokens)}`,
+      `🤖 Sending request to ${selectedProvider} (auto-selected) (${selectedModel}): ${formatTokenCount(totalTokens)}`,
     );
 
     // Convert messages to LangChain format
     const langchainMessages = convertToLangChainMessages(messages);
 
-    // Create a new client instance with custom parameters if needed
-    const llm =
-      temperature !== undefined || maxTokens !== undefined
-        ? new ChatGoogleGenerativeAI({
-            apiKey: geminiConfig.apiKey,
-            model: geminiConfig.model,
-            temperature: temperature ?? geminiConfig.temperature,
-            maxOutputTokens: maxTokens,
-            maxRetries: 2,
-          })
-        : client;
+    // 2. Lazy initialization of the LLM client
+    let llm;
+    if (isGroq) {
+      llm = new ChatGroq({
+        apiKey: groqConfig.apiKey,
+        model: selectedModel,
+        temperature: temperature ?? groqConfig.temperature,
+        maxTokens: maxTokens,
+        maxRetries: 2,
+      });
+    } else {
+      llm = new ChatGoogleGenerativeAI({
+        apiKey: geminiConfig.apiKey,
+        model: selectedModel,
+        temperature: temperature ?? geminiConfig.temperature,
+        maxOutputTokens: maxTokens,
+        maxRetries: 2,
+      });
+    }
 
-    // Call LangChain Google Generative AI API
+    // Call LangChain API
     const response = await llm.invoke(langchainMessages, {
-      timeout: geminiConfig.timeoutMs,
+      timeout: currentConfig.timeoutMs,
     });
-
-    // --- OLD Google SDK code (COMMENTED OUT) ---
-    // const geminiContents = convertToGeminiMessages(messages);
-    // const model = genAI.getGenerativeModel({
-    //   model: geminiConfig.model,
-    //   generationConfig: {
-    //     temperature: temperature ?? geminiConfig.temperature,
-    //     maxOutputTokens: maxTokens,
-    //   },
-    // });
-    // const chat = model.startChat({
-    //   history: geminiContents.slice(0, -1),
-    // });
-    // const lastMessage = geminiContents[geminiContents.length - 1];
-    // const geminiResult = await chat.sendMessage(
-    //   lastMessage.parts.map((p) => (p as any).text).join(""),
-    // );
-    // const response = await geminiResult.response;
-    // const text = response.text();
 
     // Debug: Log response structure in development mode
     if (process.env.DEBUG_GENAI === "true") {
@@ -192,11 +143,11 @@ export async function genaiCompletion({
 
     return result;
   } catch (error: any) {
-    console.error("Error calling Gemini API:", error);
+    console.error(`Error calling ${selectedProvider} API:`, error);
     if (error.message) {
-      return `Error from Gemini service: ${error.message}`;
+      return `Error from ${selectedProvider} service: ${error.message}`;
     } else {
-      return "An unknown error occurred while contacting the Gemini service.";
+      return `An unknown error occurred while contacting the ${selectedProvider} service.`;
     }
   }
 }

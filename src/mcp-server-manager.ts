@@ -9,6 +9,7 @@ import yaml from "js-yaml";
 import { randomBytes } from "crypto";
 import { createServer } from "net";
 import { fileURLToPath } from "url";
+import { EventEmitter } from "events";
 import { MongoClient, Db, Collection } from "mongodb";
 import { writeFileSafe, remove, exists } from "./utils/fs.ts";
 import { confirm } from "./generator/validator.ts";
@@ -66,6 +67,7 @@ class MCPServerManager {
   private usedPorts: Set<number> = new Set();
   private defaultDockerfilePath: string;
   private persistenceFilePath: string;
+  private events: EventEmitter;
 
   // MongoDB properties
   private mongoClient: MongoClient;
@@ -98,8 +100,8 @@ class MCPServerManager {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    // Initialize message queue service
     this.messageQueue = new MessageQueueService();
+    this.events = new EventEmitter();
 
     //this.initializeMongoDB();
     this.initializeData(jwtSecret);
@@ -192,17 +194,17 @@ class MCPServerManager {
         dockerfilePath,
       );
 
-      // Update status to running
+      // Update status to created (instead of running, wait for "ready" signal)
       if (this.messageQueue.connected) {
         await this.messageQueue.publishStatusUpdate({
           serverId,
-          status: "running",
+          status: "created",
           containerId,
         });
       } else {
         await this.processStatusUpdate({
           serverId,
-          status: "running",
+          status: "created",
           containerId,
         });
       }
@@ -270,6 +272,9 @@ class MCPServerManager {
       await this.SaveToDB(server, status as any);
 
       console.log(`Status updated for server ${serverId}: ${status}`);
+
+      // Emit status update event
+      this.events.emit(`status:${serverId}`, status);
     } catch (error) {
       console.error(`Failed to process status update for ${serverId}:`, error);
     }
@@ -313,6 +318,29 @@ class MCPServerManager {
     } catch (error) {
       console.error(`Failed to delete the determined MCP server`, error);
     }
+  }
+
+  private waitForStatus(
+    serverId: string,
+    targetStatus: string,
+    timeoutMs: number = 300000,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.events.off(`status:${serverId}`, listener);
+        reject(new Error("Timeout waiting for server status update"));
+      }, timeoutMs);
+
+      const listener = (status: string) => {
+        if (status === targetStatus || status === "error") {
+          clearTimeout(timer);
+          this.events.off(`status:${serverId}`, listener);
+          resolve(status);
+        }
+      };
+
+      this.events.on(`status:${serverId}`, listener);
+    });
   }
 
   private async initializeMongoDB() {
@@ -406,32 +434,25 @@ class MCPServerManager {
     }
   }
 
-  private async SaveToDB(
-    server: ServerLogEntry,
-    action: "created" | "error" | "deleted" | "running" | "stopped",
-  ) {
+  private async SaveToDB(server: ServerLogEntry, action: string) {
     try {
       if (!this.logsCollection) {
         console.warn("MongoDB not initialized, skipping database save");
         return;
       }
 
-      // Always insert a new log entry for audit trail
-      if (action === "created") {
-        await this.logsCollection.insertOne(server);
-      } else {
-        await this.logsCollection.updateOne(
-          { serverId: server.serverId },
-          {
-            $set: {
-              status: server.status,
-              containerId: server.containerId,
-              buildLogs: server.buildLogs,
-              updatedAt: new Date(),
-            },
-          },
-        );
-      }
+      // Create a copy to avoid mutating the original object's _id
+      const dataToSave = { ...server };
+      delete (dataToSave as any)._id; // Mongo doesn't like updating/upserting with _id in the body
+
+      dataToSave.updatedAt = new Date();
+
+      await this.logsCollection.updateOne(
+        { serverId: server.serverId },
+        { $set: dataToSave },
+        { upsert: true },
+      );
+
       console.log(
         `✅ Saved server ${server.serverId} to MongoDB with action: ${action}`,
       );
@@ -648,7 +669,11 @@ class MCPServerManager {
   }
 
   private setupRoutes() {
-    this.app.use(express.json());
+    // Increase payload size limits so large API docs (e.g. ~100KB+) are accepted.
+    // Also accept urlencoded and plain text bodies (for raw OpenAPI/YAML uploads).
+    this.app.use(express.json({ limit: "5mb" }));
+    this.app.use(express.urlencoded({ limit: "5mb", extended: true }));
+    this.app.use(express.text({ limit: "5mb", type: "*/*" }));
 
     // API tạo MCP server mới
     this.app.post("/api/mcp/create", async (req, res) => {
@@ -795,24 +820,30 @@ class MCPServerManager {
         if (inputType !== "json") {
           let retryCount = 0;
           const maxRetries = 5;
+          //let lastError = "";
 
-          while (!checking && retryCount < maxRetries) {
+          while (!checking.success && retryCount < maxRetries) {
             console.log(
               `🔄 Retry attempt ${retryCount + 1} of ${maxRetries} for OpenAPI spec generation`,
             );
-            await generateOpenAPISpec(outputPath, serverId, retryCount);
+            await generateOpenAPISpec(
+              outputPath,
+              serverId,
+              retryCount + 1,
+              checking.error,
+            );
             checking = await confirm(openapi_filepath);
             retryCount++;
           }
 
-          if (checking) {
+          if (checking.success) {
             console.log(
-              `✅ OpenAPI spec validated successfully after ${retryCount} attempts (Total LLM calls: ${retryCount})`,
+              `✅ OpenAPI spec validated successfully after ${retryCount} attempts (Total LLM calls: ${retryCount + 1})`,
             );
           }
         }
 
-        if (!checking) {
+        if (!checking.success) {
           console.log("❌ Validation failed after maximum retries");
           // Clean up allocated resources
           this.servers.delete(serverId);
@@ -834,14 +865,6 @@ class MCPServerManager {
             hostPort,
             containerPort: serverConfig.containerPort,
           });
-
-          res.json({
-            serverId: serverId,
-            publicUrl: serverConfig.publicUrl,
-            claudeConfig: this.generateClaudeConfig(serverId, serverConfig),
-            status: "building",
-            message: "Server creation queued successfully",
-          });
         } else {
           // Fallback to synchronous processing
           const containerId = await this.buildAndRunContainer(
@@ -850,14 +873,37 @@ class MCPServerManager {
           );
 
           serverConfig.containerId = containerId;
-          serverConfig.status = "running";
-          await this.SaveToDB(serverConfig, "running");
+          serverConfig.status = "created";
+          await this.SaveToDB(serverConfig, "created");
+        }
 
-          res.json({
+        // Final Wait for "running" status before returning response to client
+        try {
+          console.log(`⏳ Waiting for server ${serverId} to be running...`);
+          const finalStatus = await this.waitForStatus(serverId, "running");
+
+          if (finalStatus === "running") {
+            const updatedServer = this.servers.get(serverId) || serverConfig;
+            res.json({
+              serverId: serverId,
+              publicUrl: updatedServer.publicUrl,
+              claudeConfig: this.generateClaudeConfig(serverId, updatedServer),
+              status: "running",
+              message: "Server created and running successfully",
+            });
+          } else {
+            res.status(500).json({
+              error: "Server encountered an error during startup",
+              serverId: serverId,
+              status: "error",
+            });
+          }
+        } catch (waitError: any) {
+          console.error(`Error waiting for server ${serverId}:`, waitError);
+          res.status(504).json({
+            error: "Timeout waiting for server to be ready",
             serverId: serverId,
-            publicUrl: serverConfig.publicUrl,
-            claudeConfig: this.generateClaudeConfig(serverId, serverConfig),
-            status: serverConfig.status,
+            message: waitError.message,
           });
         }
       } catch (error) {
@@ -1002,6 +1048,108 @@ class MCPServerManager {
         res.status(500).json({ error: "Failed to get server statistics" });
       }
     });
+
+    // API to inform that server is ready
+    this.app.post("/api/mcp/:serverId/ready", async (req, res) => {
+      try {
+        const { serverId } = req.params;
+        console.log(`📡 Received ready notification for server ${serverId}`);
+
+        const message: StatusUpdateMessage = {
+          serverId,
+          status: "running",
+        };
+
+        if (this.messageQueue.connected) {
+          await this.messageQueue.publishStatusUpdate(message);
+        } else {
+          await this.processStatusUpdate(message);
+        }
+
+        res.json({ success: true, message: "Status updated to running" });
+      } catch (error) {
+        console.error(
+          `Error processing ready notification for ${req.params.serverId}:`,
+          error,
+        );
+        res.status(500).json({ error: "Failed to process ready notification" });
+      }
+    });
+
+    // API to get generated files
+    this.app.get("/api/mcp/:serverId/files", async (req, res) => {
+      try {
+        const { serverId } = req.params;
+
+        // Define paths (using the same logic as in the rest of the application/volumes)
+        const inputDir = path.join(__dirname, "..", "input");
+        const yamlDir = path.join(__dirname, "..", "src-generated-yaml");
+        const tsDir = path.join(__dirname, "..", "src-generated-ts");
+
+        // 1. Find input file
+        const extensions = [".txt", ".json", ".yaml"];
+        let inputPath = "";
+        let inputFileName = "";
+        for (const ext of extensions) {
+          const fileName = `api-input-${serverId}${ext}`;
+          const filePath = path.join(inputDir, fileName);
+          if (fs.existsSync(filePath)) {
+            inputPath = filePath;
+            inputFileName = fileName;
+            break;
+          }
+        }
+
+        // 2. OpenAPI Spec
+        const yamlFileName = `${serverId}.yaml`;
+        const yamlPath = path.join(yamlDir, yamlFileName);
+
+        // 3. TypeScript Server
+        const tsFileName = `${serverId}.ts`;
+        const tsPath = path.join(tsDir, tsFileName);
+
+        // Check for existence
+        if (!inputPath || !fs.existsSync(yamlPath) || !fs.existsSync(tsPath)) {
+          return res.status(404).json({
+            error: "One or more artifacts not found",
+            exists: {
+              input: !!inputPath,
+              openapi: fs.existsSync(yamlPath),
+              typescript: fs.existsSync(tsPath),
+            },
+          });
+        }
+
+        // Read contents
+        const inputContent = fs.readFileSync(inputPath, "utf8");
+        const yamlContent = fs.readFileSync(yamlPath, "utf8");
+        const tsContent = fs.readFileSync(tsPath, "utf8");
+
+        res.json({
+          serverId,
+          files: {
+            input: {
+              name: inputFileName,
+              content: inputContent,
+            },
+            openapi: {
+              name: yamlFileName,
+              content: yamlContent,
+            },
+            typescript: {
+              name: tsFileName,
+              content: tsContent,
+            },
+          },
+        });
+      } catch (error) {
+        console.error(
+          `Error retrieving files for ${req.params.serverId}:`,
+          error,
+        );
+        res.status(500).json({ error: "Failed to retrieve generated files" });
+      }
+    });
   }
 
   private async checkImageExists(imageName: string): Promise<boolean> {
@@ -1077,8 +1225,13 @@ class MCPServerManager {
               ReadOnly: false,
             },
           ],
+          ExtraHosts: ["host.docker.internal:host-gateway"],
         },
-        Env: [`SERVER_ID=${config.serverId}`, `JWT_TOKEN=${config.token}`],
+        Env: [
+          `SERVER_ID=${config.serverId}`,
+          `JWT_TOKEN=${config.token}`,
+          `MANAGER_URL=${process.env.MANAGER_URL || "http://host.docker.internal:8080"}`,
+        ],
       });
 
       config.buildLogs?.push("Starting container...");

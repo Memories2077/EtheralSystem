@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { ExecException } from 'child_process';
+import { ExecException } from "child_process";
 
 const execAsync = promisify(exec);
 
@@ -113,6 +113,7 @@ export async function main(options: Options = {}) {
           outputDir_ts,
           serverId,
           retryCount,
+          lastError?.message,
         );
 
         // Test if generated server can run
@@ -138,16 +139,20 @@ export async function main(options: Options = {}) {
           break; // Success, exit retry loop
         } catch (error: unknown) {
           const execError = error as ExecError;
-  
-          const stderr = execError.stderr ? execError.stderr.trim() : '';
-          const stdout = execError.stdout ? execError.stdout.trim() : '';
+
+          const stderr = execError.stderr ? execError.stderr.trim() : "";
+          const stdout = execError.stdout ? execError.stdout.trim() : "";
           const isTimeout = execError.killed;
 
           // Servers run indefinitely. Timeout without stderr = Success
           if (isTimeout && !stderr) {
-            console.log(`✅ MCP server is running stably (auto-killed after 10s).`);
-            console.log(`With stdout: ${stdout}`)
-            console.log(`📊 Total LLM calls for this generation: ${result.llmCallCount}`);
+            console.log(
+              `✅ MCP server is running stably (auto-killed after 10s).`,
+            );
+            console.log(`With stdout: ${stdout}`);
+            console.log(
+              `📊 Total LLM calls for this generation: ${result.llmCallCount}`,
+            );
             console.log(`📊 Total retry attempts: ${retryCount + 1}`);
             break; // Success, exit retry loop
           }
@@ -158,11 +163,15 @@ export async function main(options: Options = {}) {
 
           // Retry logic
           if (retryCount < MAX_RETRIES - 1) {
-            console.log(`🔄 Retrying generation (${retryCount + 2}/${MAX_RETRIES})...`);
+            console.log(
+              `🔄 Retrying generation (${retryCount + 2}/${MAX_RETRIES})...`,
+            );
             retryCount++;
-            lastError = new Error(errorMsg); 
+            lastError = new Error(errorMsg);
           } else {
-            throw new Error(`Failed to generate working MCP server after ${MAX_RETRIES} attempts. Last error: ${errorMsg}`);
+            throw new Error(
+              `Failed to generate working MCP server after ${MAX_RETRIES} attempts. Last error: ${errorMsg}`,
+            );
           }
         }
       } catch (genError) {
@@ -198,6 +207,27 @@ export async function main(options: Options = {}) {
       "📄 Generated file:",
       path.join(outputDir_ts, `${serverId}.ts`),
     );
+
+    // Notify manager that the server is ready
+    const managerUrl = process.env.MANAGER_URL || "http://localhost:8080";
+    try {
+      console.log(`📡 Notifying manager at ${managerUrl}...`);
+      const response = await fetch(`${managerUrl}/api/mcp/${serverId}/ready`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (response.ok) {
+        console.log("✅ Manager notified successfully!");
+      } else {
+        console.error(`⚠️ Failed to notify manager: ${response.statusText}`);
+      }
+    } catch (notifyError) {
+      console.error(`❌ Error notifying manager: ${notifyError}`);
+    }
+
     if (result && result.code) {
       console.log("📊 Generated code preview:");
       console.log("─".repeat(50));
