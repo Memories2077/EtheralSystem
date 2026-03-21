@@ -21,6 +21,15 @@ export const geminiConfig = {
   timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 300000),
 };
 
+// Groq Configuration
+export const groqConfig = {
+  apiKey: process.env.GROQ_API_KEY || "",
+  model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+  temperature: Number(process.env.OPENAI_TEMPERATURE || 0.2),
+  timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 300000),
+};
+
+
 // Keep backward compatibility - point to Gemini now
 export const openaiConfig = geminiConfig;
 export const ollamaConfig = geminiConfig;
