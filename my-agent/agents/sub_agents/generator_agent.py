@@ -1,11 +1,12 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
 from typing import Dict, Any, Optional, List, Sequence
 from pydantic import SecretStr
 from tools.generator_tools._init_ import create_MCPServer, test_mcp_server
 from utils.vector_db import save_mcp_artifacts
 
-from config import load_prompt, AGENT_CONFIG, API_CONFIG
+from config import load_prompt, AGENT_CONFIG, API_CONFIG, PROVIDER_CONFIG
 from utils.state import AgentState # Import from centralized location
 
 import httpx
@@ -22,9 +23,15 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     # Initialize LLM for this agent
     config = AGENT_CONFIG["generator_agent"]
     system_prompt = config["prompt_file"]
-    # streaming=False to avoid 'Invalid diff' error with tool calls
-    api_key = SecretStr(API_CONFIG["gemini_api_key"])
-    llm = ChatGoogleGenerativeAI(model=config["model"], api_key=api_key)
+
+    # Initialize LLM (streaming=False to avoid 'Invalid diff' error with tool calls)
+    gemini_api_key = SecretStr(API_CONFIG["gemini_api_key"])
+    groq_api_key = SecretStr(API_CONFIG["groq_api_key"])
+
+    if gemini_api_key:
+        llm = ChatGoogleGenerativeAI(model=PROVIDER_CONFIG["gemini"], api_key=gemini_api_key)
+    elif groq_api_key:
+        llm = ChatGroq(model_name=PROVIDER_CONFIG["groq"], api_key=groq_api_key)
 
     llm_with_tools = llm.bind_tools([create_MCPServer])
     

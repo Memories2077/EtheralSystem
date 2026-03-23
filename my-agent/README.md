@@ -56,11 +56,13 @@ Hệ thống sử dụng **LlamaIndex** để triển khai kỹ thuật RAG tiê
 ## ⚙️ Cài đặt
 
 1. **Cài đặt môi trường**:
-Project sử dụng virtual environment tại thư mục gốc `.venv`.
+   Project sử dụng virtual environment tại thư mục gốc `.venv`.
 
 2. **Cấu hình file `.env`**:
+
 ```env
 GEMINI_API_KEY=your_gemini_api_key
+GROQ_API_KEY=your_groq_api_key
 TAVILY_API_KEY=your_tavily_api_key
 MCP_BASE_URL=http://localhost:8000
 ```
@@ -68,6 +70,7 @@ MCP_BASE_URL=http://localhost:8000
 ## 🚀 Kiểm tra và Chạy thử
 
 ### Kiểm tra RAG và Embeddings:
+
 ```bash
 # Trong thư mục my-agent/
 ..\.venv\Scripts\python.exe tests/verify_embeddings.py
@@ -75,15 +78,18 @@ MCP_BASE_URL=http://localhost:8000
 ```
 
 ### Chạy hệ thống (Interactive Mode):
+
 ```bash
 ..\.venv\Scripts\python.exe tests/test_with_examiner.py
 ```
 
 ## 🛡️ Best Practices
+
 1. **Dữ liệu Lịch sử**: Luôn cho phép Examiner Agent chạy trước để tìm kiếm các pattern cũ, giúp Generator Agent hoạt động hiệu quả hơn.
 2. **Context merging**: Tính năng Auto-merging được bật mặc định, giúp các đoạn code dài không bị mất ngữ cảnh khi truy xuất.
 
 ## 📚 Tài liệu tham khảo
+
 - LangChain: https://python.langchain.com/
 - LlamaIndex: https://www.llamaindex.ai/
 - LangGraph: https://langchain-ai.github.io/langgraph/
