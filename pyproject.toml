@@ -24,7 +24,9 @@ dependencies = [
     "httpx",
     "tavily-python",
     "mcp",
-    "mcp-use"
+    "mcp-use",
+    "llama-index",
+    "llama-index-vector-stores-chroma"
 ]
 
 [tool.setuptools.packages.find]

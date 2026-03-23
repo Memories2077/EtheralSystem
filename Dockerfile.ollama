@@ -1,0 +1,8 @@
+FROM ollama/ollama:latest
+
+# Copy script khởi động vào container
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Chạy script khi container bắt đầu
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,5 +1,7 @@
 .langgraph_api
 
+ollama_data/
+
 # Python
 __pycache__/
 *.py[cod]
