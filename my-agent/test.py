@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, END
@@ -18,12 +19,17 @@ import os
 from pydantic import SecretStr
 from prompts import supervisor
 
-from config import API_CONFIG, AGENT_CONFIG
+from config import API_CONFIG, AGENT_CONFIG, PROVIDER_CONFIG
 
 
 # Initialize LLM (streaming=False to avoid 'Invalid diff' error with tool calls)
-api_key = SecretStr(API_CONFIG["gemini_api_key"])
-llm = ChatGoogleGenerativeAI(model=AGENT_CONFIG["supervisor"]["model"], api_key=api_key)
+gemini_api_key = SecretStr(API_CONFIG["gemini_api_key"])
+groq_api_key = SecretStr(API_CONFIG["groq_api_key"])
+
+if gemini_api_key:
+    llm = ChatGoogleGenerativeAI(model=PROVIDER_CONFIG["gemini"], api_key=gemini_api_key)
+elif groq_api_key:
+    llm = ChatGroq(model_name=PROVIDER_CONFIG["groq"], api_key=groq_api_key)
 
 # ============================================================================
 # LLM-BASED REQUEST ANALYZER
