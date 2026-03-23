@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, Tool
 from typing import Dict, Any, Optional, List, Sequence
 from pydantic import SecretStr
 from tools.generator_tools._init_ import create_MCPServer, test_mcp_server
+from utils.vector_db import save_mcp_artifacts
 
 from config import load_prompt, AGENT_CONFIG, API_CONFIG
 from utils.state import AgentState # Import from centralized location
@@ -126,10 +127,10 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     # Create generator query - combine system prompt with task to avoid template issues
     # Some models have issues when SystemMessage is first, so we combine them
     combined_prompt = f"""[SYSTEM INSTRUCTION]
-{system_prompt}
+        {system_prompt}
 
-[USER REQUEST]
-{enhanced_task}"""
+        [USER REQUEST]
+        {enhanced_task}"""
     
     generator_messages = [
         HumanMessage(content=combined_prompt)
@@ -154,6 +155,37 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                 # Properly await the async tool
                 result = await create_MCPServer.ainvoke({"query": query})
                 tool_results.append(result)
+
+                # --- RAG INTEGRATION ---
+                # 1. Extract serverId from result
+                # Expected result contains "Server ID: [id]"
+                import re
+                server_id_match = re.search(r"Server ID: ([\w-]+)", str(result))
+                if server_id_match:
+                    server_id = server_id_match.group(1)
+                    print(f"[Generator] 🔄 Server created with ID: {server_id}. Indexing for RAG...")
+                    
+                    try:
+                        # 2. Fetch generated files from manager
+                        manager_url = "http://localhost:8080"
+                        async with httpx.AsyncClient(timeout=30.0) as client:
+                            files_response = await client.get(f"{manager_url}/api/mcp/{server_id}/files")
+                            if files_response.status_code == 200:
+                                artifacts_data = files_response.json().get("files", {})
+                                
+                                # 3. Save to Vector DB
+                                await save_mcp_artifacts(
+                                    server_id=server_id,
+                                    user_id=user_id,
+                                    email=email,
+                                    artifacts=artifacts_data
+                                )
+                                print(f"[Generator] ✅ Artifacts indexed in vector database successfully")
+                            else:
+                                print(f"[Generator] ⚠️ Failed to fetch files for indexing: {files_response.status_code}")
+                    except Exception as rag_error:
+                        print(f"[Generator] ❌ RAG Integration Error: {rag_error}")
+                # -----------------------
             
             elif tool_call["name"] == "test_mcp_server":
                 mcp_link = tool_call["args"].get("MCPLink", "")

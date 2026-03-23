@@ -1,201 +1,90 @@
-# Multi-Agent System
+# Multi-Agent System (MCP Server Generator)
 
-Hệ thống đa agent với kiến trúc Supervisor-SubAgent, được xây dựng bằng LangChain và LangGraph.
+Hệ thống đa agent với kiến trúc Supervisor-SubAgent, được xây dựng bằng LangChain, LangGraph và LlamaIndex. Hệ thống chuyên dụng để tạo và quản lý các MCP (Model Context Protocol) Servers.
 
 ## 🏗️ Cấu trúc
 
 ```
 my-agent/
-├── config/                      # Cấu hình hệ thống
-│   └── __init__.py             # Agent config, API config
-│
-├── prompts/                     # Prompts cho từng agent
-│   ├── supervisor_prompt.txt   # Prompt cho Supervisor
-│   ├── research_agent_prompt.txt
-│   ├── analysis_agent_prompt.txt
-│   └── execution_agent_prompt.txt
-│
-├── agents/                      # Agent implementations
-│   ├── __init__.py
-│   ├── supervisor.py           # Supervisor Agent
-│   └── sub_agents/
-│       ├── __init__.py
-│       ├── research_agent.py   # Research Agent
-│       ├── analysis_agent.py   # Analysis Agent
-│       └── execution_agent.py  # Execution Agent
-│
-├── tools/                       # Tools cho từng agent
-│   ├── supervisor_tools/       # Tools cho Supervisor
-│   │   └── __init__.py        # Delegation, coordination
-│   ├── research_tools/         # Tools cho Research
-│   │   └── __init__.py        # Web search, data gathering
-│   ├── analysis_tools/         # Tools cho Analysis
-│   │   └── __init__.py        # Data analysis, reporting
-│   └── execution_tools/        # Tools cho Execution
-│       └── __init__.py        # API calls, MCP operations
-│
-├── utils/                       # Utilities
-│   └── __init__.py
-│
-└── main.py                      # Entry point
+├── agents/                      # Triển khai các Agent (Supervisor, Generator, Examiner)
+│   ├── sub_agents/              # Các sub-agents chuyên biệt
+├── config/                      # Cấu hình hệ thống (API keys, model settings)
+├── data/                        # Dữ liệu lưu trữ (LlamaIndex storage, ChromaDB)
+├── prompts/                     # Prompt cho các agent
+├── scripts/                     # Script tiện ích
+├── tests/                       # Bộ test suite và script kiểm tra RAG
+├── tools/                       # Định nghĩa các tool cho agent
+├── utils/                       # Các hàm tiện ích (Vector DB, State management)
+└── README.md                    # Tài liệu hướng dẫn chính
 ```
 
 ## 🤖 Các Agent
 
-### 1. Supervisor Agent
+### 1. Supervisor Agent (Agent Giám sát)
 
-- **Vai trò**: Điều phối và phân công công việc
-- **Tools**: Delegation, status checking, result synthesis
+- **Vai trò**: Phân tích yêu cầu và điều phối.
 - **Nhiệm vụ**:
-  - Phân tích yêu cầu của người dùng
-  - Phân công công việc cho sub-agents
-  - Tổng hợp kết quả
+  - Nhận yêu cầu từ người dùng (ví dụ: "Tạo MCP Server cho API này").
+  - Ủy thác công việc cho `Generator Agent` hoặc `Examiner Agent`.
+  - Tổng hợp kết quả cuối cùng để phản hồi người dùng.
 
-### 2. Research Agent
+### 2. Generator Agent (Agent Tạo mã)
 
-- **Vai trò**: Thu thập thông tin
-- **Tools**: Web search (Tavily), news search, document retrieval
+- **Vai trò**: Tạo mã nguồn cho MCP Server.
+- **Tools**: `create_MCPServer`, `test_mcp_server`.
 - **Nhiệm vụ**:
-  - Tìm kiếm thông tin trên web
-  - Thu thập dữ liệu từ nhiều nguồn
-  - Tóm tắt và tổ chức findings
+  - Dựa trên tài liệu API, tạo mã nguồn TypeScript cho MCP Server.
+  - Tự động cài đặt và kiểm tra server sau khi tạo.
+  - Lưu trữ kết quả (code, specs) vào Vector DB để tham khảo trong tương lai.
 
-### 3. Analysis Agent
+### 3. Examiner Agent (Agent Kiểm tra)
 
-- **Vai trò**: Phân tích dữ liệu
-- **Tools**: Data analysis, comparison, report generation, statistics
+- **Vai trò**: Phân tích và làm phong phú ngữ cảnh (RAG).
 - **Nhiệm vụ**:
-  - Phân tích dữ liệu
-  - Tạo báo cáo
-  - Đưa ra insights và recommendations
+  - Trích xuất thông tin quan trọng từ tài liệu API hoặc yêu cầu.
+  - Sử dụng **Hierarchical RAG** để tìm kiếm các mã nguồn hoặc tài liệu cũ liên quan.
+  - Cung cấp ngữ cảnh phong phú (Enriched Context) cho Generator Agent để tăng độ chính xác.
 
-### 4. Execution Agent
+## 🧠 Advanced RAG (Hierarchical & Auto-Merging)
 
-- **Vai trò**: Thực thi hành động
-- **Tools**: MCP API calls, CRUD operations, resource management
-- **Nhiệm vụ**:
-  - Gọi API đến MCP Server
-  - Tạo/đọc/cập nhật/xóa resources
-  - Thực hiện các tác vụ cụ thể
+Hệ thống sử dụng **LlamaIndex** để triển khai kỹ thuật RAG tiên tiến:
+
+- **Hierarchical Indexing**: Tài liệu được chia thành nhiều cấp độ (Nodes) từ lớn đến nhỏ (2048, 512, 128 bytes).
+- **Auto-Merging Retriever**: Khi các node con nhỏ được tìm thấy, hệ thống sẽ tự động hợp nhất chúng thành node cha lớn hơn để cung cấp ngữ cảnh đầy đủ, tránh việc thông tin bị cắt vụn.
+- **LangChain Integration**: Sử dụng `LangChainLLM` để tích hợp LLM từ LangChain vào quy trình xử lý của LlamaIndex.
 
 ## ⚙️ Cài đặt
 
-1. **Cài đặt dependencies**:
+1. **Cài đặt môi trường**:
+Project sử dụng virtual environment tại thư mục gốc `.venv`.
 
-```bash
-pip install -e .
-```
-
-2. **Cấu hình môi trường** (tạo file `.env`):
-
+2. **Cấu hình file `.env`**:
 ```env
-GOOGLE_API_KEY=your_google_api_key
+GEMINI_API_KEY=your_gemini_api_key
 TAVILY_API_KEY=your_tavily_api_key
 MCP_BASE_URL=http://localhost:8000
-MCP_API_KEY=your_mcp_api_key
 ```
 
-## 🚀 Sử dụng
+## 🚀 Kiểm tra và Chạy thử
 
-### Chạy ví dụ mẫu:
-
+### Kiểm tra RAG và Embeddings:
 ```bash
-python my-agent/main.py
+# Trong thư mục my-agent/
+..\.venv\Scripts\python.exe tests/verify_embeddings.py
+..\.venv\Scripts\python.exe tests/test_hierarchical_rag.py
 ```
 
-### Interactive Mode:
-
-Uncomment dòng `system.interactive_mode()` trong `main.py` và chạy:
-
+### Chạy hệ thống (Interactive Mode):
 ```bash
-python my-agent/main.py
+..\.venv\Scripts\python.exe tests/test_with_examiner.py
 ```
 
-### Sử dụng từng agent riêng:
+## 🛡️ Best Practices
+1. **Dữ liệu Lịch sử**: Luôn cho phép Examiner Agent chạy trước để tìm kiếm các pattern cũ, giúp Generator Agent hoạt động hiệu quả hơn.
+2. **Context merging**: Tính năng Auto-merging được bật mặc định, giúp các đoạn code dài không bị mất ngữ cảnh khi truy xuất.
 
-```python
-from agents import SupervisorAgent, ResearchAgent, AnalysisAgent, ExecutionAgent
-
-# Research Agent
-research = ResearchAgent()
-result = research.invoke("Find information about AI trends")
-
-# Analysis Agent
-analysis = AnalysisAgent()
-result = analysis.invoke("Analyze this data: [1, 2, 3, 4, 5]")
-
-# Execution Agent
-execution = ExecutionAgent()
-result = execution.invoke("List all resources from MCP server")
-
-# Supervisor (tự động phân công)
-supervisor = SupervisorAgent()
-result = supervisor.invoke("Research AI trends and create a report")
-```
-
-## 🔧 Tùy chỉnh
-
-### Thêm tools mới:
-
-1. Tạo function trong thư mục `tools/` tương ứng
-2. Thêm vào list tools (ví dụ: `RESEARCH_TOOLS`)
-
-### Chỉnh sửa prompts:
-
-- Edit các file `.txt` trong thư mục `prompts/`
-
-### Thay đổi cấu hình:
-
-- Chỉnh sửa `config/__init__.py`
-
-## 📝 Ví dụ
-
-### Supervisor phân công công việc:
-
-```python
-system = MultiAgentSystem()
-system.run(
-    "Research the latest AI developments and create an analysis report",
-    agent_type="supervisor"
-)
-```
-
-### Research Agent:
-
-```python
-system.run(
-    "Find information about LangGraph framework",
-    agent_type="research"
-)
-```
-
-### Analysis Agent:
-
-```python
-system.run(
-    "Analyze sales data: [100, 150, 200, 180, 220]",
-    agent_type="analysis"
-)
-```
-
-### Execution Agent:
-
-```python
-system.run(
-    "Create a new resource named 'test' in the MCP server",
-    agent_type="execution"
-)
-```
-
-## 🎯 Best Practices
-
-1. **Supervisor Agent**: Sử dụng cho các tác vụ phức tạp cần nhiều bước
-2. **Direct Agent**: Gọi trực tiếp agent cụ thể khi biết rõ loại tác vụ
-3. **Error Handling**: Agents tự động xử lý lỗi và retry khi cần
-4. **Context**: Truyền context khi cần chia sẻ thông tin giữa các agents
-
-## 📚 Tài liệu
-
+## 📚 Tài liệu tham khảo
 - LangChain: https://python.langchain.com/
+- LlamaIndex: https://www.llamaindex.ai/
 - LangGraph: https://langchain-ai.github.io/langgraph/
 - Tavily API: https://tavily.com/

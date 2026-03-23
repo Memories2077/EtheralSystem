@@ -2,23 +2,29 @@
 Multi-Agent System with LangGraph
 Implements Supervisor and Generator Agent with delegation
 """
+import os
+import sys
+# Add parent directory to path so we can import agents, config, prompts, utils
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from dotenv import load_dotenv
 load_dotenv()
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from typing import Literal
+from typing import TypedDict, Annotated, Sequence, Literal
+import operator
 import json
-from agents.sub_agents.examiner import examiner_node
 from agents.sub_agents.generator_agent import generator_agent_node
+from agents.sub_agents.examiner_agent import examiner_agent_node
 import os
 from pydantic import SecretStr
 from prompts import supervisor
 
-from config import AGENT_CONFIG, API_CONFIG
+from config import API_CONFIG, AGENT_CONFIG
 
 
 # Initialize LLM (streaming=False to avoid 'Invalid diff' error with tool calls)
@@ -111,7 +117,15 @@ IMPORTANT:
 # STATE DEFINITION
 # ============================================================================
 
-from utils.state import AgentState, InputState
+class InputState(TypedDict):
+    """User-facing input state - only requires messages"""
+    messages: Annotated[Sequence[HumanMessage | AIMessage | SystemMessage | ToolMessage], operator.add]
+
+class AgentState(TypedDict):
+    """Internal overall state for the multi-agent system"""
+    messages: Annotated[Sequence[HumanMessage | AIMessage | SystemMessage | ToolMessage], operator.add]
+    next_agent: str
+    final_response: str
 
 # ============================================================================
 # TOOLS DEFINITION
@@ -119,49 +133,42 @@ from utils.state import AgentState, InputState
 
 
 @tool
-def delegate_to_generator_agent(task: str) -> str:
-    """Delegate a content generation task to the Generator Agent.
+def delegate_to_examiner_agent(task: str) -> str:
+    """Delegate a documentation analysis or RAG enrichment task to the Examiner Agent.
     
-    This tool is used to delegate MCP Server creation and other content generation tasks
-    to the specialized Generator Agent. Always provide the complete task description
+    This tool is used to delegate MCP Server creation requests to the Examiner Agent
+    for RAG enrichment and context building. Always provide the complete task description
     including all API specifications, endpoints, and requirements.
     
     Args:
-        task (str): The complete content generation task description with all API details
+        task (str): The complete API documentation/task description from the user
         
     Returns:
-        str: Result from generator agent
-    """
-    if not task or not isinstance(task, str):
-        return "Error: task parameter must be a non-empty string"
-    
-    if len(task.strip()) < 10:
-        return "Error: task description is too short, please provide complete details"
-    
-    return f"DELEGATE_TO_GENERATOR: {task}"
-
-
-@tool
-def delegate_to_examiner_agent(task: str) -> str:
-    """Delegate a task to the Examiner Agent.
-    
-    This tool is used to delegate tasks that require interacting with or examining
-    an existing MCP Server. Use this for queries like "what tools are available",
-    "examine the server", or any other interaction with a live MCP server.
-    
-    Args:
-        task (str): The task description for the examiner agent.
-        
-    Returns:
-        str: Result from the examiner agent
+        str: Message for the examiner agent
     """
     if not task or not isinstance(task, str):
         return "Error: task parameter must be a non-empty string"
     
     return f"DELEGATE_TO_EXAMINER: {task}"
 
-
-supervisor_tools = [delegate_to_generator_agent, delegate_to_examiner_agent]
+@tool
+def delegate_to_generator_agent(task: str) -> str:
+    """Delegate a documentation analysis or RAG enrichment task to the Generator Agent.
+    
+    This tool is used by the Examiner Agent to pass the enriched context
+    to the Generator Agent for final MCP Server creation.
+    
+    Args:
+        task (str): The enriched API documentation/context
+        
+    Returns:
+        str: Message for the generator agent
+    """
+    if not task or not isinstance(task, str):
+        return "Error: task parameter must be a non-empty string"
+    
+    return f"DELEGATE_TO_GENERATOR: {task}"
+supervisor_tools = [delegate_to_examiner_agent, delegate_to_generator_agent]
 
 
 # Custom tool node wrapper - uses LLM to analyze and fix empty args
@@ -334,24 +341,26 @@ async def supervisor_node(state: AgentState) -> AgentState:
     else:
         # Check if this is an MCP Server creation request
         is_mcp_request = False
-        user_query_lower = ""
-        if messages:
-            if isinstance(messages[-1], HumanMessage):
-                user_query_lower = str(messages[-1].content).lower()
-
-        if any(keyword in user_query_lower for keyword in ['mcp server', 'create a mcp', 'api description', 'api documentation']):
-            is_mcp_request = True
-
-        # Force tool call for MCP requests, otherwise use auto
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                content = str(msg.content).lower()
+                if any(keyword in content for keyword in ['mcp server', 'create a mcp', 'api description', 'api documentation']):
+                    is_mcp_request = True
+                    break
+        
+        # Force tool call for MCP requests
         if is_mcp_request:
-            print(f"[Supervisor] 🎯 Detected MCP Server request - forcing 'delegate_to_generator_agent' tool call")
-            llm_with_tools = llm.bind_tools(
-                supervisor_tools, 
-                tool_choice={"type": "function", "function": {"name": "delegate_to_generator_agent"}}
-            )
+            print(f"[Supervisor] 🎯 Detected MCP Server request - forcing tool call: delegate_to_examiner_agent")
+            try:
+                llm_with_tools = llm.bind_tools(
+                    supervisor_tools, 
+                    tool_choice="delegate_to_examiner_agent"
+                )
+            except Exception as e:
+                print(f"[Supervisor] ❌ Error binding tools: {e}")
+                llm_with_tools = llm.bind_tools(supervisor_tools)
         else:
-            # Auto mode for other requests (e.g., examiner)
-            print(f"[Supervisor] 🕵️ Defaulting to 'auto' tool choice for non-generator queries.")
+            # Auto mode for other requests
             llm_with_tools = llm.bind_tools(supervisor_tools, tool_choice="auto")
         
         # Combine system prompt with messages to avoid template issues
@@ -375,7 +384,7 @@ async def supervisor_node(state: AgentState) -> AgentState:
     if not has_tool_calls and hasattr(response, 'content'):
         content = str(response.content)
         # Check if response contains tool-related keywords
-        if 'delegate_to_generator_agent' in content or 'delegate_to_examiner_agent' in content:
+        if 'delegate_to_generator_agent' in content:
             try:
                 import re
                 
@@ -416,10 +425,9 @@ async def supervisor_node(state: AgentState) -> AgentState:
                     # Clean up escaped characters
                     task_value = task_value.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
                     
-                    if task_value and len(task_value) > 10:  # Ensure we got meaningful content
-                        tool_name = "delegate_to_generator_agent" if "api" in task_value.lower() else "delegate_to_examiner_agent"
+                    if task_value and len(task_value) > 50:  # Ensure we got meaningful content
                         response.tool_calls = [{
-                            'name': tool_name,
+                            'name': 'delegate_to_examiner_agent',
                             'args': {'task': task_value},
                             'id': 'call_fallback_001'
                         }]
@@ -427,11 +435,14 @@ async def supervisor_node(state: AgentState) -> AgentState:
                         print(f"[Supervisor] ✅ Parsed tool_call from text response (extracted {len(task_value)} chars)")
                 else:
                     # Fallback: Pass the entire content as task
-                    clean_content = re.sub(r'```json\s*|\s*```', '', content)
-                    tool_name = "delegate_to_generator_agent" if "api" in content.lower() else "delegate_to_examiner_agent"
+                    # Remove the JSON wrapper and markdown blocks
+                    clean_content = re.sub(r'```json\s*', '', content)
+                    clean_content = re.sub(r'```', '', clean_content)
+                    clean_content = re.sub(r'\{\s*"tool_calls".*?"task"\s*:\s*"?', '', clean_content, flags=re.DOTALL)
+                    
                     response.tool_calls = [{
-                        'name': tool_name,
-                        'args': {'task': clean_content},
+                        'name': 'delegate_to_examiner_agent',
+                        'args': {'task': content},  # Pass original content
                         'id': 'call_fallback_001'
                     }]
                     has_tool_calls = True
@@ -442,6 +453,24 @@ async def supervisor_node(state: AgentState) -> AgentState:
     
     next_agent = "tools" if has_tool_calls else "end"
     
+    # Debug: Log if no tool_calls when MCP keywords detected (but NOT for completed requests)
+    if not request_completed and not has_tool_calls:
+        if messages:
+            last_msg = messages[-1]
+            # Handle both dict and Message object
+            if isinstance(last_msg, dict):
+                user_query = str(last_msg.get("content", "")).lower()
+            else:
+                user_query = str(getattr(last_msg, "content", "")).lower()
+        else:
+            user_query = ""
+        
+        if any(keyword in user_query for keyword in ["mcp", "server", "api"]):
+            print(f"⚠️  WARNING: MCP-related query detected but LLM didn't create tool_calls!")
+            print(f"   Query: {user_query[:100]}...")
+            resp_content = str(getattr(response, "content", response))[:200]
+            print(f"   LLM Response: {resp_content}...")
+    
     return {
         "messages": [response],
         "next_agent": next_agent,
@@ -449,7 +478,7 @@ async def supervisor_node(state: AgentState) -> AgentState:
     }
 
 
-def should_continue_after_tools(state: AgentState) -> Literal["generator", "examiner", "end"]:
+def should_continue_after_tools(state: AgentState) -> Literal["examiner", "generator", "end"]:
     """Determine next step after tools execution"""
     messages = state["messages"]
     
@@ -457,29 +486,26 @@ def should_continue_after_tools(state: AgentState) -> Literal["generator", "exam
     for msg in reversed(messages):
         if isinstance(msg, ToolMessage):
             content = str(msg.content)
-            if "DELEGATE_TO_GENERATOR" in content:
-                print("[Router] Routing to Generator")
-                return "generator"
             if "DELEGATE_TO_EXAMINER" in content:
-                print("[Router] Routing to Examiner")
                 return "examiner"
+            if "DELEGATE_TO_GENERATOR" in content:
+                return "generator"
     
-    print("[Router] No delegation found, ending.")
     return "end"
 
 
 async def supervisor_final_node(state: AgentState) -> AgentState:
-    """Supervisor reviews agent results and creates final response"""
+    """Supervisor reviews generator results and creates final response"""
     messages = state["messages"]
     
-    # Get the agent's output
+    # Get the generator's output
     last_content = str(messages[-1].content) if messages else ""
     
     # Create final summary (using async) - combine system prompt with content
     combined_prompt = f"""[SYSTEM INSTRUCTION]
-Summarize the results from the sub-agent into a cohesive, final response for the user.
+Summarize the results from the generator agent into a cohesive response.
 
-[AGENT RESULTS TO SUMMARIZE]
+[RESULTS TO SUMMARIZE]
 {last_content}"""
     
     summary_response = await llm.ainvoke([
@@ -513,15 +539,21 @@ def create_multi_agent_graph():
     """Create the multi-agent workflow graph
     
     Flow:
-    User Query -> Supervisor -> Tools -> [Generator | Examiner] -> Supervisor Final -> End
+    User Query -> Supervisor Agent -> Tools (if needed) -> Generator Agent -> Supervisor Final -> End
+    
+    The Supervisor delegates content generation tasks to the Generator Agent:
+    - Generator Agent: Handles content generation, MCP server creation, and related tasks
+    
+    After Generator completion, flow returns to Supervisor Final which creates
+    the final summary response.
     """
     workflow = StateGraph(AgentState, input_schema=InputState)
     
     # Add nodes
     workflow.add_node("supervisor", supervisor_node)
     workflow.add_node("tools", tools_node_wrapper)
+    workflow.add_node("examiner", examiner_agent_node)
     workflow.add_node("generator", generator_agent_node)
-    workflow.add_node("examiner", examiner_node)
     workflow.add_node("supervisor_final", supervisor_final_node)
     
     # Set entry point
@@ -542,15 +574,18 @@ def create_multi_agent_graph():
         "tools",
         should_continue_after_tools,
         {
-            "generator": "generator",
             "examiner": "examiner",
+            "generator": "generator",
             "end": END
         }
     )
     
-    # Both Generator and Examiner go back to the supervisor for final review
+    # Examiner goes back to tools if it wants to delegate to generator
+    # Or we can link it directly
+    workflow.add_edge("examiner", "generator")
+    
+    # Generator agent goes back to supervisor final
     workflow.add_edge("generator", "supervisor_final")
-    workflow.add_edge("examiner", "supervisor_final")
     
     # Supervisor final ends the workflow
     workflow.add_edge("supervisor_final", END)
@@ -569,7 +604,6 @@ class MultiAgentSystem:
         self.graph = create_multi_agent_graph()
         print("✓ Supervisor Agent")
         print("✓ Generator Agent")
-        print("✓ Examiner Agent")
         print("\nMulti-Agent System Ready!\n")
     
     async def run(self, query: str) -> str:
