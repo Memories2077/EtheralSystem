@@ -13,6 +13,7 @@ import logging
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from utils.vector_db import search_mcp_artifacts
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -147,11 +148,16 @@ async def create_MCPServer(query: List[str]) -> str:
     # sanitized_request = base64.b64encode(request_data.encode('utf-8')).decode('ascii')
     # logger.info(f"Encoded API doc to base64: {len(sanitized_request)} characters")
     
+    # Fetch RAG context related to the request
+    logger.info(f"Searching RAG context for request: {sanitized_request[:100]}...")
+    rag_context = await search_mcp_artifacts(sanitized_request, n_results=5)
+    
     # Prepare the payload
     payload = {
         "request": sanitized_request,
         "userId": user_id,
-        "email": email
+        "email": email,
+        "rag_context": rag_context
     }
     
     try:
