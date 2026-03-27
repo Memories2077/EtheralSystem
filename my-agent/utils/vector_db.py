@@ -114,7 +114,7 @@ async def save_mcp_artifacts(server_id: str, user_id: str, email: str, artifacts
 
         # 1. Create hierarchical nodes
         node_parser = HierarchicalNodeParser.from_defaults(
-            chunk_sizes=[2048, 512, 128] # Hierarchy: Large -> Medium -> Small
+            chunk_sizes=[2048, 512, 256] # Hierarchy: Large -> Medium -> Small (increased from 128)
         )
         nodes = node_parser.get_nodes_from_documents(documents)
         leaf_nodes = get_leaf_nodes(nodes)
@@ -153,7 +153,7 @@ async def search_mcp_artifacts(query_text: str, n_results: int = 3) -> List[Dict
         )
         
         # 2. Create Base Retriever (fetches leaf nodes)
-        base_retriever = index.as_retriever(similarity_top_k=n_results * 2) # Fetch more to allow merging
+        base_retriever = index.as_retriever(similarity_top_k=n_results * 5) # Fetch more to allow merging (increased from * 2)
         
         # 3. Create AutoMergingRetriever
         retriever = AutoMergingRetriever(

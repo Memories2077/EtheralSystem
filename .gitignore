@@ -1,6 +1,8 @@
 .langgraph_api
 
 ollama_data/
+chroma_data/
+tmp/
 
 # Python
 __pycache__/
