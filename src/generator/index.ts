@@ -61,6 +61,7 @@ export async function generateOpenAPISpec(
   name: string,
   retryCount: number = 0,
   lastError?: string,
+  ragContext?: string,
 ) {
   try {
     console.log("📖 Reading Input...");
@@ -101,6 +102,7 @@ export async function generateOpenAPISpec(
       output_Example_Reddit,
       output_Example_Twilio,
       lastError,
+      ragContext,
     );
 
     console.log(
@@ -292,6 +294,7 @@ export async function generateMCP(
   name: string | undefined,
   retryCount: number = 0,
   lastError?: string,
+  ragContext?: string,
 ): Promise<GenerationResult> {
   try {
     console.log("📖 Reading OpenAPI spec...");
@@ -339,6 +342,7 @@ export async function generateMCP(
       outputExample,
       authExample,
       lastError,
+      ragContext,
     );
 
     // Gọi GenAI với messages thay vì prompt đơn giản

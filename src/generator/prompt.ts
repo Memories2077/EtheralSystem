@@ -1092,6 +1092,7 @@ export function buildPromptWithExamples(
   outputExample: string,
   authExample?: string,
   lastError?: string,
+  ragContext?: string,
 ): ChatMessage[] {
   // Build examples section
   let examplesSection = `YAML INPUT EXAMPLE (OpenAPI Spec):
@@ -1121,6 +1122,14 @@ ${examplesSection}
 
 NOW GENERATE FOR THIS YAML OPENAPI SPEC:
 ${openApiSpec}
+
+${
+  ragContext
+    ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):
+${ragContext}
+`
+    : ""
+}
 
 🚨 CRITICAL CODE STRUCTURE - MUST FOLLOW THIS ORDER:
 Step 1: Write ALL imports
@@ -1272,6 +1281,7 @@ export function buildOpenAPIPromptWithExamples(
   outputExampleReddit?: string,
   outputExampleTwilio?: string,
   lastError?: string,
+  ragContext?: string,
 ): ChatMessage[] {
   // Build the examples section with all available examples
   let examplesSection = `EXAMPLE 1 - HTTPBin API (Simple GET/POST):
@@ -1351,6 +1361,14 @@ AUTHENTICATION PATTERNS:
 
 NOW GENERATE FOR THESE API ENDPOINTS:
 ${apiEndpoints}
+
+${
+  ragContext
+    ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):
+${ragContext}
+`
+    : ""
+}
 
 🚨 CRITICAL - SINGLE OUTPUT ONLY:
 ❌ DO NOT copy or include the example YAML specs in your output
