@@ -46,6 +46,7 @@ interface ServerLogEntry {
   buildLogs?: string[];
   inputContent: string;
   action: "created" | "error" | "deleted" | "started" | "stopped";
+  ragContext?: string;
 }
 
 interface PersistedData {
@@ -574,6 +575,9 @@ class MCPServerManager {
                 },
               );
 
+              // ✅ Populate in-memory map
+              this.servers.set(serverId, config as ServerLogEntry);
+
               console.log(`Recovered running container for server ${serverId}`);
             } else {
               // Container is stopped, paused, or in another non-running state
@@ -594,6 +598,9 @@ class MCPServerManager {
               console.log(
                 `Container for server ${serverId} is ${containerStatus}`,
               );
+
+              // ✅ Populate in-memory map even if stopped
+              this.servers.set(serverId, config as ServerLogEntry);
             }
           } else {
             console.log(
@@ -678,7 +685,7 @@ class MCPServerManager {
     // API tạo MCP server mới
     this.app.post("/api/mcp/create", async (req, res) => {
       try {
-        const { request, name, dockerImage, userId, email } = req.body;
+        const { request, name, dockerImage, userId, email, rag_context } = req.body;
 
         // ✅ Validate required fields
         if (!request || !userId || !email) {
@@ -720,6 +727,7 @@ class MCPServerManager {
           buildLogs: [],
           inputContent: request,
           action: "created",
+          ragContext: rag_context,
         };
 
         this.servers.set(serverId, serverConfig);
@@ -811,7 +819,7 @@ class MCPServerManager {
           );
         } else if (inputType === "text") {
           console.log("🤖 Calling Gemini to generate OpenAPI spec...");
-          await generateOpenAPISpec(outputPath, serverId, 0);
+          await generateOpenAPISpec(outputPath, serverId, 0, undefined, rag_context);
         }
 
         console.log("📍 Using OpenAPI spec:", openapi_filepath);
@@ -831,6 +839,7 @@ class MCPServerManager {
               serverId,
               retryCount + 1,
               checking.error,
+              rag_context,
             );
             checking = await confirm(openapi_filepath);
             retryCount++;
@@ -1049,11 +1058,14 @@ class MCPServerManager {
       }
     });
 
-    // API to inform that server is ready
     this.app.post("/api/mcp/:serverId/ready", async (req, res) => {
+      const { serverId } = req.params;
       try {
-        const { serverId } = req.params;
         console.log(`📡 Received ready notification for server ${serverId}`);
+
+        // If not in memory but we have high confidence it exists (e.g. from DB)
+        // processStatusUpdate will handle the missing server case by logging a warning.
+        // However, we want to be more proactive here.
 
         const message: StatusUpdateMessage = {
           serverId,
@@ -1066,13 +1078,22 @@ class MCPServerManager {
           await this.processStatusUpdate(message);
         }
 
+        // Deep check if it survived processStatusUpdate
+        if (!this.servers.has(serverId)) {
+          console.warn(`⚠️ Server ${serverId} still not found in memory after update attempt.`);
+          // We still return true because it might be being processed via RabbitMQ
+        }
+
         res.json({ success: true, message: "Status updated to running" });
       } catch (error) {
         console.error(
-          `Error processing ready notification for ${req.params.serverId}:`,
+          `❌ Error processing ready notification for ${serverId}:`,
           error,
         );
-        res.status(500).json({ error: "Failed to process ready notification" });
+        res.status(500).json({ 
+          error: "Failed to process ready notification",
+          details: error instanceof Error ? error.message : String(error)
+        });
       }
     });
 
@@ -1231,6 +1252,7 @@ class MCPServerManager {
           `SERVER_ID=${config.serverId}`,
           `JWT_TOKEN=${config.token}`,
           `MANAGER_URL=${process.env.MANAGER_URL || "http://host.docker.internal:8080"}`,
+          `RAG_CONTEXT=${(config as any).ragContext || ""}`,
         ],
       });
 
@@ -1500,15 +1522,16 @@ class MCPServerManager {
       this.usedPorts.add(hostPorts[i].hostPort);
     }
 
-    // ✅ Check dependencies first
-    await this.checkDependencies();
-
+    // ✅ Check for port availability first
     if (!(await this.isPortAvailable(port))) {
       throw new Error(`Port ${port} is already in use`);
     }
 
-    // Recover running containers before starting
+    // ✅ Recover running containers BEFORE checking dependencies/RabbitMQ
     await this.recoverRunningContainers();
+
+    // ✅ Check dependencies (RabbitMQ, MongoDB, Docker ping)
+    await this.checkDependencies();
 
     this.app.listen(port, () => {
       console.log(`MCP Server Manager running on port ${port}`);

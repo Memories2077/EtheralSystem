@@ -114,6 +114,7 @@ export async function main(options: Options = {}) {
           serverId,
           retryCount,
           lastError?.message,
+          process.env.RAG_CONTEXT,
         );
 
         // Test if generated server can run
@@ -133,7 +134,7 @@ export async function main(options: Options = {}) {
 
           console.log(`✅ MCP server test passed!`);
           console.log(
-            `📊 Total LLM calls for this generation: ${result.llmCallCount}`,
+            `📊 Total LLM calls for this generation: ${result?.llmCallCount}`,
           );
           console.log(`📊 Total retry attempts: ${retryCount + 1}`);
           break; // Success, exit retry loop
