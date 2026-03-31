@@ -480,9 +480,19 @@ async def supervisor_final_node(state: AgentState) -> AgentState:
     # Get the agent's output
     last_content = str(messages[-1].content) if messages else ""
     
+    # Avoid hallucinating JWT tokens or config: if generator provided the final config block,
+    # pass it through without LLM summarization.
+    if "Server Details:" in last_content and "Configuration:" in last_content:
+        return {
+            "messages": [messages[-1]] if messages else [],
+            "next_agent": "end",
+            "final_response": last_content
+        }
+    
     # Create final summary (using async) - combine system prompt with content
     combined_prompt = f"""[SYSTEM INSTRUCTION]
 Summarize the results from the sub-agent into a cohesive, final response for the user.
+IMPORTANT: Do NOT alter, summarize, or modify any URLs, JSON configuration blocks, tokens, or code. Copy them EXACTLY as they appear.
 
 [AGENT RESULTS TO SUMMARIZE]
 {last_content}"""

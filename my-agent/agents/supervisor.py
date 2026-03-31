@@ -36,13 +36,11 @@ class SupervisorAgent:
         Returns:
             Agent response
         """
-        # Combine prompt with query
-        if context:
-            combined_query = f"{self.prompt}\n\n[Context: {context}]\n\n{query}"
-        else:
-            combined_query = f"{self.prompt}\n\n{query}"
+        messages = [SystemMessage(content=self.prompt)]
         
-        messages = [HumanMessage(content=combined_query)]
+        # Combine query with context into HumanMessage
+        human_content = f"[Context: {context}]\n\n{query}" if context else query
+        messages.append(HumanMessage(content=human_content))
         
         # Invoke model with tools
         response = await self.model_with_tools.ainvoke(messages)
