@@ -326,6 +326,11 @@ class MCPServerManager {
     targetStatus: string,
     timeoutMs: number = 300000,
   ): Promise<string> {
+    const currentStatus = this.servers.get(serverId)?.status;
+    if (currentStatus === targetStatus || currentStatus === "error") {
+      return Promise.resolve(currentStatus);
+    }
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.events.off(`status:${serverId}`, listener);
@@ -697,14 +702,17 @@ class MCPServerManager {
         const serverId = randomUUID();
         const hostPort = await this.getAvailablePort();
 
+        const now = Math.floor(Date.now() / 1000);
+        const expiration = now + 365 * 24 * 60 * 60; // 1 year
+
         // Tạo JWT token
         const token = jwt.sign(
           {
             sub: userId,
             email: email,
             serverId: serverId,
-            iat: Math.floor(Date.now() / 1000),
-            exp: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+            iat: now,
+            exp: expiration,
           },
           this.jwtSecret,
         );
@@ -738,13 +746,20 @@ class MCPServerManager {
         let inputType: "json" | "yaml" | "text" = "text";
         try {
           // Kiểm tra JSON
-          JSON.parse(request);
-          inputType = "json";
+          const jsonObj = JSON.parse(request);
+          if (typeof jsonObj === "object" && jsonObj !== null) {
+            inputType = "json";
+          }
         } catch {
           // Nếu không phải JSON, thử kiểm tra YAML
           try {
-            yaml.load(request);
-            inputType = "yaml";
+            const yamlObj = yaml.load(request);
+            if (typeof yamlObj === "object" && yamlObj !== null) {
+              // Ensure it's not a primitive mapped to YAML (like string/number)
+              inputType = "yaml";
+            } else {
+              inputType = "text";
+            }
           } catch {
             inputType = "text";
           }
@@ -882,8 +897,12 @@ class MCPServerManager {
           );
 
           serverConfig.containerId = containerId;
-          serverConfig.status = "created";
-          await this.SaveToDB(serverConfig, "created");
+          if (serverConfig.status !== "running") {
+            serverConfig.status = "created";
+            await this.SaveToDB(serverConfig, "created");
+          } else {
+            await this.SaveToDB(serverConfig, "updated");
+          }
         }
 
         // Final Wait for "running" status before returning response to client
@@ -1429,14 +1448,7 @@ class MCPServerManager {
       if (!server) {
         throw new Error(`Server with id ${serverId} not found`);
       }
-      return {
-        mcpServers: {
-          [serverId]: {
-            command: "npx",
-            args: ["mcp-remote", `${server.publicUrl}?token=${server.token}`],
-          },
-        },
-      };
+      return this.generateClaudeConfig(serverId, server as ServerLogEntry);
     } catch (error) {
       console.error("Error fetching Claude config:", error);
       throw error;

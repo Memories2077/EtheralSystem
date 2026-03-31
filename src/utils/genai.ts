@@ -144,10 +144,8 @@ export async function genaiCompletion({
     return result;
   } catch (error: any) {
     console.error(`Error calling ${selectedProvider} API:`, error);
-    if (error.message) {
-      return `Error from ${selectedProvider} service: ${error.message}`;
-    } else {
-      return `An unknown error occurred while contacting the ${selectedProvider} service.`;
-    }
+    throw new Error(
+      `[${selectedProvider} API Error] ${error.message || "Unknown error occurred"}`,
+    );
   }
 }
