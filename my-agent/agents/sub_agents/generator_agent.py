@@ -40,16 +40,15 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     # Without ToolNode: messages = [HumanMessage, AIMessage with tool_calls]
     task_content = ""
     
-    # Try to find task from ToolMessage first (when using ToolNode)
+    # Try to find task from message content
     for msg in reversed(messages):
-        if isinstance(msg, ToolMessage):
-            content = str(msg.content)
-            if "DELEGATE_TO_GENERATOR:" in content:
-                # Extract task from "DELEGATE_TO_GENERATOR: [task]"
-                task_content = content.replace("DELEGATE_TO_GENERATOR:", "").strip()
-                print(f"[Generator] Found task from ToolMessage: {task_content[:200]}...")
-                break
-    
+        content = str(getattr(msg, 'content', ''))
+        if "DELEGATE_TO_GENERATOR:" in content:
+            # Extract task from "DELEGATE_TO_GENERATOR: [task]"
+            task_content = content.replace("DELEGATE_TO_GENERATOR:", "").strip()
+            print(f"[Generator] Found task from message content: {task_content[:200]}...")
+            break
+            
     # Fallback: Try to find from AIMessage tool_calls (old flow without ToolNode)
     if not task_content:
         for msg in reversed(messages):
@@ -62,6 +61,7 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                         break
                 if task_content:
                     break
+
     
     if not task_content:
         print("[Generator] ⚠️  WARNING: No task content found! Using default.")

@@ -152,6 +152,11 @@ async def create_MCPServer(query: List[str]) -> str:
     logger.info(f"Searching RAG context for request: {sanitized_request[:100]}...")
     rag_context = await search_mcp_artifacts(sanitized_request, n_results=5)
     
+    if rag_context:
+        logger.info(f"Using {len(rag_context)} relevant context items for generation.")
+    else:
+        logger.info("No relevant context found. Proceeding with zero-shot generation.")
+        
     # Prepare the payload
     payload = {
         "request": sanitized_request,
