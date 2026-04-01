@@ -45,50 +45,36 @@ async def examiner_agent_node(state: AgentState) -> AgentState:
     # 2. Perform RAG Search
     related_contents = await search_mcp_artifacts(api_doc, n_results=3)
     
-    rag_context = ""
-    if related_contents:
-        rag_context = "Found the following related historical data and patterns:\n\n"
-        for i, res in enumerate(related_contents, 1):
-            meta = res["metadata"]
-            type_label = meta.get("type", "unknown")
-            rag_context += f"--- Related Item {i} (Type: {type_label}, Source: {meta.get('filename', 'unknown')}) ---\n"
-            # Increase truncation to 10,000 chars for better context
-            rag_context += f"Content Snippet:\n{res['content'][:10000]}\n\n"
-    else:
-        rag_context = "No related historical data found in the vector database."
-        
-    # 3. Enrich Context using LLM
-    from prompts.examiner import EXAMINER_MAIN_PROMPT
+    # 3. Structured Technical Extraction (Zero-Summarization)
+    from utils.openapi_parser import extract_structured_context
+    print(f"[Examiner] 🤖 Extracting structured technical data from {len(related_contents)} RAG items...")
+    rag_context_data = await extract_structured_context(related_contents, llm)
+    rag_context_json = json.dumps(rag_context_data, indent=2)
     
-    enrichment_prompt = f"""{EXAMINER_MAIN_PROMPT}
+    # 4. Extract User info to pass through
+    user_id = "default_user"
+    email = "user@example.com"
+    user_id_match = re.search(r"USER_ID:\s*([^\n\r]*)", task_content)
+    if user_id_match:
+        user_id = user_id_match.group(1).strip()
+    email_match = re.search(r"EMAIL:\s*([^\n\r]*)", task_content)
+    if email_match:
+        email = email_match.group(1).strip()
 
-USER REQUEST / API DOCS:
+    # 5. Prepare Enriched Task (No LLM synthesis needed for the wrapper)
+    enriched_task = f"""API_DOCUMENTATION:
 {api_doc}
 
-RETRIEVED RAG CONTEXT:
-{rag_context}
-
-INSTRUCTIONS:
-Synthesize the above information into a single "ENRICHED TASK" for the Generator Agent.
-Maintain the exact format required:
-API_DOCUMENTATION:
-...
 ENRICHED_CONTEXT (RAG):
-...
-USER_ID: ...
-EMAIL: ...
+{rag_context_json}
 
-Only output the synthesized task text, no conversational filler."""
+USER_ID: {user_id}
+EMAIL: {email}"""
 
-    print("[Examiner] 🤖 Synthesizing enriched context...")
-    response = await llm.ainvoke([HumanMessage(content=enrichment_prompt)])
-    enriched_task = str(response.content).strip()
-    
-    # 4. Prepare return state
-    # We return a message that looks like a delegation to generator
+    # 6. Prepare return state
     delegation_msg = f"DELEGATE_TO_GENERATOR: {enriched_task}"
     
-    print(f"[Examiner] ✅ Context enriched. Delegating to Generator.")
+    print(f"[Examiner] ✅ Technical data extracted. Delegating to Generator.")
     
     return {
         "messages": [AIMessage(content=delegation_msg)],

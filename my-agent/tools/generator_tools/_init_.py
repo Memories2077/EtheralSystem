@@ -148,15 +148,24 @@ async def create_MCPServer(query: List[str]) -> str:
     # sanitized_request = base64.b64encode(request_data.encode('utf-8')).decode('ascii')
     # logger.info(f"Encoded API doc to base64: {len(sanitized_request)} characters")
     
-    # Fetch RAG context related to the request
-    logger.info(f"Searching RAG context for request: {sanitized_request[:100]}...")
-    rag_context = await search_mcp_artifacts(sanitized_request, n_results=5)
+    # RAG context is now handled by the Examiner Agent and passed to the Generator.
+    # If rag_context is provided in the query or extracted from the request, use it.
+    # Otherwise, it will be empty.
     
-    if rag_context:
-        logger.info(f"Using {len(rag_context)} relevant context items for generation.")
-    else:
-        logger.info("No relevant context found. Proceeding with zero-shot generation.")
-        
+    rag_context = []
+    
+    # Try to extract rag_context from the request_data if it follows our ENRICHED_CONTEXT format
+    import re
+    rag_match = re.search(r"ENRICHED_CONTEXT \(RAG\):\n(.*?)(\n\nUSER_ID:|\Z)", request_data, re.DOTALL)
+    if rag_match:
+        try:
+            rag_context_str = rag_match.group(1).strip()
+            rag_context = json.loads(rag_context_str)
+            logger.info(f"Successfully extracted {len(rag_context)} structured RAG items from request.")
+        except Exception as e:
+            logger.warning(f"Failed to parse RAG context from request: {e}")
+            rag_context = []
+
     # Prepare the payload
     payload = {
         "request": sanitized_request,
