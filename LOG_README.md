@@ -74,5 +74,27 @@
 
 ---
 
+## [2026-04-01 22:58] - Refactor RAG Post-Processing (Strict Parameter Mapping)
+
+### 🚀 Tính năng mới & Tối ưu hóa (New Features & Optimization)
+
+- **Strict Technical Extraction**: Thay thế việc tóm tắt ngữ cảnh RAG bằng ngôn ngữ tự nhiên (prose summary) bằng cơ chế trích xuất dữ liệu kỹ thuật có cấu trúc (structured JSON).
+    - **Cơ chế**: Sử dụng LLM với prompt ràng buộc chặt chẽ (Zero-Summarization) để trích xuất `base_url`, `auth_scheme`, `endpoints`, và `parameters` (gồm type, enum, required flags) từ các đoạn mã/tài liệu RAG.
+    - **Lợi ích**: Đảm bảo không mất mát các ràng buộc dữ liệu quan trọng và giữ nguyên quy ước đặt tên (camelCase vs snake_case).
+- **Loại bỏ RAG dư thừa**: Xóa bỏ bước tìm kiếm RAG lặp lại trong công cụ `create_MCPServer`. Dữ liệu ngữ cảnh hiện được luân chuyển trực tiếp từ Examiner Agent tới công cụ dưới dạng JSON.
+
+### 🛠️ Thay đổi hệ thống (System Changes)
+
+- **`openapi_parser.py` (NEW)**: Tiện ích trung tâm xử lý việc trích xuất dữ liệu kỹ thuật từ các kết quả RAG bằng LLM.
+- **Examiner Agent Refactor**: Cập nhật logic từ "Synthesize" (tổng hợp văn bản) sang "Extract" (trích xuất cấu trúc). Phối hợp với `openapi_parser` để đóng gói dữ liệu vào task của Generator.
+- **Generator Agent & Tools**: Cập nhật `create_MCPServer` để tự động nhận diện và phân giải khối dữ liệu `ENRICHED_CONTEXT (RAG)` từ task payload.
+
+### ✅ Kiểm chứng (Verification)
+
+- **Tính toàn vẹn dữ liệu**: Xác nhận `rag_context` gửi lên Backend chứa map tham số chi tiết thay vì một đoạn văn bản tóm tắt.
+- **Zero-Summarization**: LLM không còn giải thích các tham số trong `rag_context`, chỉ trả về spec kỹ thuật thuần túy.
+
+---
+
 _Người thực hiện: Nguyen Thanh Tung_
 
