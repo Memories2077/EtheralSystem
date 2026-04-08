@@ -2,7 +2,62 @@
 
 This project focuses on building an AI-driven system that automatically translates RESTful API definitions into a format compatible with MCP Servers. The generated MCP modules are designed for seamless integration with platforms like Claude and other LLM-based environments, enabling scalable deployment and enhanced interoperability for AI applications.
 
+## 🏗️ Architecture: Hybrid Agent Skill System
+
+The platform utilizes a **Hybrid Agent Skill System** to achieve high-precision code generation. Instead of using a single monolithic prompt, the engine dynamically assembles specialized "skills" based on the input context.
+
+### 🔄 System Flow
+
+```mermaid
+graph TD
+    Input[API Documentation / Specification] --> Router{SkillRouter}
+    
+    subgraph "Skill Discovery & Assembly"
+    Router -->|Mode: MCP| MCPSkill[MCP Generation Skill]
+    Router -->|Mode: OpenAPI| OpenAPISkill[OpenAPI Analysis Skill]
+    
+    MCPSkill --> Fragments[Fragment Discovery]
+    OpenAPISkill --> Fragments
+    
+    Fragments --> System[System Logic]
+    Fragments --> Auth{Auth Guard}
+    Fragments --> Schema[Schema/Zod Mappings]
+    
+    Auth -->|Auth Detected| Inject[Inject Requirements]
+    Auth -->|No Auth| Isolated[Anti-Contamination]
+    end
+    
+    System & Inject & Isolated & Schema --> Prompt[Stitched AI Prompt]
+    Prompt --> LLM[GenAI Execution]
+    LLM --> Code[Production-Ready MCP Server]
+```
+
+### 🧠 Core Components
+
+#### 🛠️ Modular Skill Pipeline (`src/skills/`)
+All prompt logic is decomposed into reusable Markdown fragments. This allows for:
+- **Zero Knowledge Contamination**: Anti-contamination guards prevent the model from "hallucinating" auth parameters into public APIs.
+- **Context Optimization**: Dynamically trimming examples and instructions to fit within token limits (managed via `utils/token-counter.ts`).
+- **High Consistency**: Common patterns (like Zod mappings and HTTP request structures) are shared across all generations.
+
+#### 🔐 Intelligent Auth Guard
+The system automatically scans input specifications for security schemes (OAuth2, Bearer, Basic Auth, API Keys). 
+- If **Auth is detected**: The generator injects specialized handlers and parameter injection logic.
+- If **No Auth is found**: The system applies strict isolation prompts to ensure no security vulnerabilities are accidentally introduced.
+
+#### 🧩 Skill Directory Structure
+```text
+src/skills/
+├── auth/           # Security & authentication logic fragments
+├── mcp/            # MCP server architecture & transport patterns
+├── openapi/        # OpenAPI spec analysis & YAML generation
+└── skill-router.ts # The brain that assembles context-aware prompts
+```
+
+---
+
 ## ⚡ Quick Start
+
 
 ### Prerequisites
 
