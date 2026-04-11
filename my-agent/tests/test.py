@@ -620,6 +620,7 @@ class MultiAgentSystem:
         self.graph = create_multi_agent_graph()
         print("✓ Supervisor Agent")
         print("✓ Generator Agent")
+        print("✓ Examiner Agent")
         print("\nMulti-Agent System Ready!\n")
     
     async def run(self, query: str) -> str:
