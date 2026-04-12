@@ -11,6 +11,7 @@ license = { text = "MIT" }
 authors = [{ name = "tung" }]
 dependencies = [
     "langgraph",
+    "langgraph-cli",
     "langchain",
     "langchain-openai",
     "langchain-core",
@@ -24,7 +25,15 @@ dependencies = [
     "httpx",
     "tavily-python",
     "mcp",
-    "mcp-use"
+    "mcp-use",
+    "llama-index",
+    "llama-index-vector-stores-chroma",
+    "llama-index-llms-langchain",
+    "llama-index-embeddings-ollama",
+    "langgraph-api>=0.7.90",
+    "langgraph-runtime-inmem>=0.27.0",
+    "protobuf>=5.26.1,<7.0.0",
+    "langgraph-checkpoint-sqlite"
 ]
 
 [tool.setuptools.packages.find]

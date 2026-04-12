@@ -13,6 +13,7 @@ import logging
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from utils.vector_db import search_mcp_artifacts
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -147,18 +148,38 @@ async def create_MCPServer(query: List[str]) -> str:
     # sanitized_request = base64.b64encode(request_data.encode('utf-8')).decode('ascii')
     # logger.info(f"Encoded API doc to base64: {len(sanitized_request)} characters")
     
+    # RAG context is now handled by the Examiner Agent and passed to the Generator.
+    # If rag_context is provided in the query or extracted from the request, use it.
+    # Otherwise, it will be empty.
+    
+    rag_context = []
+    
+    # Try to extract rag_context from the request_data if it follows our ENRICHED_CONTEXT format
+    import re
+    rag_match = re.search(r"ENRICHED_CONTEXT \(RAG\):\n(.*?)(\n\nUSER_ID:|\Z)", request_data, re.DOTALL)
+    if rag_match:
+        try:
+            rag_context_str = rag_match.group(1).strip()
+            rag_context = json.loads(rag_context_str)
+            logger.info(f"Successfully extracted {len(rag_context)} structured RAG items from request.")
+        except Exception as e:
+            logger.warning(f"Failed to parse RAG context from request: {e}")
+            rag_context = []
+
     # Prepare the payload
     payload = {
         "request": sanitized_request,
         "userId": user_id,
-        "email": email
+        "email": email,
+        "rag_context": rag_context
     }
     
     try:
         # Send POST request to create MCP server using async httpx
         # Increased timeout to allow backend enough time to process and respond
         # Using a longer read timeout since MCP server creation can take time
-        create_url = "http://localhost:8080/api/mcp/create"
+        mcp_base_url = os.environ.get("MCP_BASE_URL", "http://gemini-backend:8000/api")
+        create_url = f"{mcp_base_url}/mcp/create"
         timeout_config = httpx.Timeout(
             connect=10.0,    # Time to establish connection
             read=300.0,      # Time to wait for backend response (5 minutes)
@@ -241,7 +262,7 @@ async def create_MCPServer(query: List[str]) -> str:
     
     except httpx.ConnectError as connect_error:
         logger.error(f"Connection failed: {connect_error}")
-        return f"❌ Error: Cannot connect to MCP server creation service at {create_url}. Please ensure the backend service is running on port 8080."
+        return f"❌ Error: Cannot connect to MCP server creation service at {create_url}. Ensure the backend service is accessible and MCP_BASE_URL is set correctly (currently: {mcp_base_url})."
     
     except httpx.RequestError as request_error:
         logger.error(f"Request error: {request_error}")

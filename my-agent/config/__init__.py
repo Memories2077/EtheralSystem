@@ -29,17 +29,20 @@ def get_env_var(key: str, default: str = "") -> str:
 AGENT_CONFIG = {
     "supervisor": {
         "name": "Supervisor Agent",
-        "prompt_file": "supervisor.py",
+        "prompt_file": "supervisor.txt",
+        "model": get_env_var("GEMINI_MODEL", "gemini-2.5-flash"),
         "temperature": 0.5,
     },
     "generator_agent": {
         "name": "Generator Agent",
-        "prompt_file": "generator.py",
+        "prompt_file": "generator.txt",
+        "model": get_env_var("GEMINI_MODEL", "gemini-2.5-flash"),
         "temperature": 0.3,
     },
     "examiner_agent": {
         "name": "Examiner Agent",
-        "prompt_file": "examiner.py",
+        "prompt_file": "examiner.txt",
+        "model": get_env_var("GEMINI_MODEL", "gemini-2.5-flash"),
         "temperature": 0.3
     }}
 
@@ -48,7 +51,7 @@ API_CONFIG = {
     "gemini_api_key": get_env_var("GEMINI_API_KEY"),
     "groq_api_key": get_env_var("GROQ_API_KEY"),
     "tavily_api_key": get_env_var("TAVILY_API_KEY"),
-    "mcp_base_url": get_env_var("MCP_BASE_URL", "http://localhost:8000"),
+    "mcp_base_url": get_env_var("MCP_BASE_URL", "http://localhost:8080"), # Updated default to 8080 or allow env
     "mcp_api_key": get_env_var("MCP_API_KEY"),
 }
 

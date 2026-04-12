@@ -1,4 +1,11 @@
 .langgraph_api
+.agents/
+.qwen/
+conductor/
+
+ollama_data/
+chroma_data/
+tmp/
 
 # Python
 __pycache__/
@@ -62,7 +69,6 @@ test-results/
 
 # Environment files and secrets
 .env
-.env.*
 env.local
 secrets.json
 *.key

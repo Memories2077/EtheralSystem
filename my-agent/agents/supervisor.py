@@ -3,8 +3,7 @@ Supervisor Agent - Coordinates and delegates tasks to sub-agents
 """
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, BaseMessage
-from langchain.agents import create_agent
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from pydantic import SecretStr
 
 from config import load_prompt, AGENT_CONFIG, API_CONFIG
@@ -23,12 +22,8 @@ class SupervisorAgent:
         api_key = SecretStr(API_CONFIG["gemini_api_key"])
         self.model = ChatGoogleGenerativeAI(model=config["model"], api_key=api_key)
         
-        # Create agent with langgraph
-        self.agent = create_agent(
-            model=self.model,
-            tools=SUPERVISOR_TOOLS,
-            prompt=self.prompt
-        )
+        # Bind tools to the model
+        self.model_with_tools = self.model.bind_tools(SUPERVISOR_TOOLS)
     
     async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -41,16 +36,19 @@ class SupervisorAgent:
         Returns:
             Agent response
         """
-        # Combine context with query to avoid SystemMessage at start (template issues)
-        if context:
-            combined_query = f"[Context: {context}]\n\n{query}"
-        else:
-            combined_query = query
+        messages = [SystemMessage(content=self.prompt)]
         
-        messages: List[BaseMessage] = [HumanMessage(content=combined_query)]
+        # Combine query with context into HumanMessage
+        human_content = f"[Context: {context}]\n\n{query}" if context else query
+        messages.append(HumanMessage(content=human_content))
         
-        result = await self.agent.ainvoke({"messages": messages})
-        return result
+        # Invoke model with tools
+        response = await self.model_with_tools.ainvoke(messages)
+        
+        return {
+            "messages": messages + [response],
+            "final_response": str(response.content) if hasattr(response, 'content') else str(response)
+        }
     
     def __repr__(self):
         return f"<{self.name}>"
