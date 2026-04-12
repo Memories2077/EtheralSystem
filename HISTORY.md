@@ -63,9 +63,9 @@
     - **baseDir comment added** (`src/skills/skill-router.ts`): Added an inline comment explaining that `baseDir = __dirname` relies on `skill-router.ts` being located inside `src/skills/`, to prevent silent path errors if the file is ever relocated.
 
 
-## [2026-04-08 21:10] - Documentation & Architecture Overview
-- **Feature**: Enhanced project documentation to showcase the Hybrid Agent Skill System.
+## [2026-04-12 00:05] - Shared Network Migration & Service Exposure
+- **Feature**: Integrated `mcp-gen` stack into the global `mcp-network` to allow direct communication from other projects (e.g., LangGraph agent).
 - **Changes**:
-    - Updated `README.md` with a detailed architecture section, including a Mermaid flow diagram of the SkillRouter pipeline.
-    - Added high-level descriptions for modular skill components (MCP, OpenAPI, Auth Guard) to aid developer onboarding.
-    - Documented the internal `src/skills/` directory structure.
+    - Updated `docker-compose.yml` to define `mcp-network` as an external network.
+    - Attached all services (`mongodb`, `rabbitmq`, `docker-manager`, `my-proxy`, `mongo-express`) to the `mcp-network`.
+    - Exposed `docker-manager` to the network, enabling other containers to reach the `/api/mcp/create` endpoint via `http://docker-manager:8080`.
