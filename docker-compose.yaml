@@ -7,6 +7,8 @@ services:
     volumes:
       - ./chroma_data:/data
     restart: always
+    networks:
+      - mcp-network
 
   ollama:
     build:
@@ -18,3 +20,31 @@ services:
     volumes:
       - ./ollama_data:/root/.ollama
     restart: always
+    networks:
+      - mcp-network
+
+  agent:
+    build: .
+    container_name: agent-service
+    ports:
+      - "2024:2024"
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb-server
+      - CHROMA_PORT=8000
+      - OLLAMA_BASE_URL=http://ollama-server:11434
+      - MCP_BASE_URL=http://docker-manager:8080/api
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - chromadb
+      - ollama
+    restart: always
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    name: mcp-network
+    driver: bridge

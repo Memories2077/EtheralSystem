@@ -9,6 +9,7 @@ from utils.vector_db import save_mcp_artifacts
 from config import load_prompt, AGENT_CONFIG, API_CONFIG, PROVIDER_CONFIG
 from utils.state import AgentState # Import from centralized location
 
+import os
 import httpx
 
 custom_client = httpx.Client(
@@ -174,12 +175,19 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                     
                     try:
                         # 2. Fetch generated files from manager
-                        manager_url = "http://localhost:8080"
+                        # Use MCP_BASE_URL env var (strip /api suffix if present)
+                        mcp_base_url = os.environ.get("MCP_BASE_URL", "http://localhost:8080")
+                        # Remove /api suffix if present to get the manager base URL
+                        if mcp_base_url.endswith("/api"):
+                            manager_url = mcp_base_url[:-4]  # Remove last 4 characters "/api"
+                        else:
+                            manager_url = mcp_base_url
+                        
                         async with httpx.AsyncClient(timeout=30.0) as client:
                             files_response = await client.get(f"{manager_url}/api/mcp/{server_id}/files")
                             if files_response.status_code == 200:
                                 artifacts_data = files_response.json().get("files", {})
-                                
+
                                 # 3. Save to Vector DB
                                 await save_mcp_artifacts(
                                     server_id=server_id,

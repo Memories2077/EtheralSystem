@@ -20,11 +20,11 @@ from config import API_CONFIG, AGENT_CONFIG
 logger = logging.getLogger(__name__)
 
 # Constants
-CHROMA_HOST = "localhost"
-CHROMA_PORT = 8025
+CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
+CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8025"))
 COLLECTION_NAME = "mcp_servers_hierarchical"
 EMBEDDING_MODEL = "qwen3-embedding:0.6b"
-OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 PERSIST_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "llama_storage")
 
 # Ensure persist directory exists

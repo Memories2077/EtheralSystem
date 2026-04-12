@@ -1,4 +1,7 @@
 .langgraph_api
+.agents/
+.qwen/
+conductor/
 
 ollama_data/
 chroma_data/
