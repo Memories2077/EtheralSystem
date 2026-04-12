@@ -178,7 +178,8 @@ async def create_MCPServer(query: List[str]) -> str:
         # Send POST request to create MCP server using async httpx
         # Increased timeout to allow backend enough time to process and respond
         # Using a longer read timeout since MCP server creation can take time
-        create_url = "http://localhost:8080/api/mcp/create"
+        mcp_base_url = os.environ.get("MCP_BASE_URL", "http://gemini-backend:8000/api")
+        create_url = f"{mcp_base_url}/mcp/create"
         timeout_config = httpx.Timeout(
             connect=10.0,    # Time to establish connection
             read=300.0,      # Time to wait for backend response (5 minutes)
@@ -261,7 +262,7 @@ async def create_MCPServer(query: List[str]) -> str:
     
     except httpx.ConnectError as connect_error:
         logger.error(f"Connection failed: {connect_error}")
-        return f"❌ Error: Cannot connect to MCP server creation service at {create_url}. Please ensure the backend service is running on port 8080."
+        return f"❌ Error: Cannot connect to MCP server creation service at {create_url}. Ensure the backend service is accessible and MCP_BASE_URL is set correctly (currently: {mcp_base_url})."
     
     except httpx.RequestError as request_error:
         logger.error(f"Request error: {request_error}")
