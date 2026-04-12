@@ -12,6 +12,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    networks:
+      - mcp-network
+
 
   mongo-express:
     image: mongo-express
@@ -27,6 +30,9 @@ services:
       mongodb:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - mcp-network
+
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -45,6 +51,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    networks:
+      - mcp-network
+
 
   docker-manager:
     build:
@@ -85,6 +94,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    networks:
+      - mcp-network
   proxy:
     build:
       context: .
@@ -107,6 +118,9 @@ services:
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - mcp-network
+
 
 volumes:
   mongodb_data:
@@ -121,3 +135,7 @@ volumes:
     driver: local
     name: shared_mcpserver_ts
   jwt_data:
+
+networks:
+  mcp-network:
+    external: true
