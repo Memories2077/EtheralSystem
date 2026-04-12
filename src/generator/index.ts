@@ -95,7 +95,7 @@ export async function generateOpenAPISpec(
       console.log("📖⚠️ Twilio example not found, skipping...");
     }
 
-    const messages = buildOpenAPIPromptWithExamples(
+    const messages = await buildOpenAPIPromptWithExamples(
       read_input,
       input_Example,
       output_Example,
@@ -268,12 +268,6 @@ export async function generateOpenAPISpec(
 
     console.log("💾 Writing to file...");
 
-    // Delete existing YAML file if it exists (in case the randomUUID duplicates)
-    if (await exists(outputPath)) {
-      console.log("🗑️ Removing existing YAML file...");
-      await remove(outputPath);
-    }
-
     await writeFileSafe(outputPath, fullCode);
 
     console.log(
@@ -335,7 +329,7 @@ export async function generateMCP(
       console.log("📖⚠️ Auth example not found, skipping...");
     }
 
-    const messages = buildPromptWithExamples(
+    const messages = await buildPromptWithExamples(
       spec,
       structure,
       inputExample,
@@ -425,12 +419,6 @@ export async function generateMCP(
     }
 
     console.log("💾 Writing to file...");
-
-    // Delete existing TS file if it exists
-    if (await exists(outputPath)) {
-      console.log("🗑️ Removing existing TS file...");
-      await remove(outputPath);
-    }
 
     await writeFileSafe(outputPath, fullCode);
 
