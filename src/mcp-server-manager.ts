@@ -69,6 +69,7 @@ class MCPServerManager {
   private defaultDockerfilePath: string;
   private persistenceFilePath: string;
   private events: EventEmitter;
+  private mcpNetworkName: string = process.env.MCP_NETWORK || "mcp-network";
 
   // MongoDB properties
   private mongoClient: MongoClient;
@@ -1270,9 +1271,14 @@ class MCPServerManager {
         Env: [
           `SERVER_ID=${config.serverId}`,
           `JWT_TOKEN=${config.token}`,
-          `MANAGER_URL=${process.env.MANAGER_URL || "http://host.docker.internal:8080"}`,
+          `MANAGER_URL=${process.env.MANAGER_URL || "http://docker-manager:8080"}`,
           `RAG_CONTEXT=${(config as any).ragContext || ""}`,
         ],
+        NetworkingConfig: {
+          EndpointsConfig: {
+            [this.mcpNetworkName]: {},
+          },
+        },
       });
 
       config.buildLogs?.push("Starting container...");

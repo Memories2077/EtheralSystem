@@ -61,6 +61,8 @@ services:
       dockerfile: Dockerfile.manager
     container_name: docker-manager
     user: "0:0" # root to ensure docker.sock usage
+    env_file:
+      - .env
     ports:
       - "8080:8080"
     extra_hosts:
@@ -73,7 +75,7 @@ services:
       - jwt_data:/app/data
     environment:
       - USE_DOCKER_PING=false
-      - PUBLIC_URL=http://localhost:8081
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8081}
       - MONGO_URI=mongodb://mongodb:27017
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - NODE_ENV=production
