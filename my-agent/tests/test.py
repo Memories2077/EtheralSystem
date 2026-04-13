@@ -16,7 +16,7 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from typing import TypedDict, Annotated, Sequence, Literal
+from typing import TypedDict, Annotated, Sequence, Literal, Optional
 import operator
 import json
 from agents.sub_agents.generator_agent import generator_agent_node
@@ -507,13 +507,59 @@ async def supervisor_final_node(state: AgentState) -> AgentState:
     # Get the generator's output
     last_content = str(messages[-1].content) if messages else ""
     
-    # Avoid hallucinating JWT tokens or config: if generator provided the final config block,
-    # pass it through without LLM summarization.
+    import json
+    def extract_json(content: str) -> Optional[str]:
+        """Extract JSON block from text, supporting markdown fences"""
+        content = content.strip()
+        
+        # 1. Check if it's already pure JSON
+        if content.startswith('{') and content.endswith('}'):
+            try:
+                json.loads(content)
+                return content
+            except:
+                pass
+        
+        # 2. Try to find markdown JSON block
+        import re
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if json_match:
+            try:
+                json_str = json_match.group(1).strip()
+                json.loads(json_str)
+                return json_str
+            except:
+                pass
+                
+        # 3. Fallback: try to find anything that looks like a JSON object
+        json_match = re.search(r'(\{.*\})', content, re.DOTALL)
+        if json_match:
+            try:
+                json_str = json_match.group(1).strip()
+                json.loads(json_str)
+                return json_str
+            except:
+                pass
+                
+        return None
+
+    extracted_json = extract_json(last_content)
+
+    # Bypass summarization if we found valid JSON or it matches old format
+    if extracted_json:
+        print("[Supervisor Final] ✅ Found valid JSON block, using it directly.")
+        return {
+            "messages": [AIMessage(content=extracted_json)],
+            "next_agent": "end",
+            "final_response": extracted_json
+        }
+    
     if "Server Details:" in last_content and "Configuration:" in last_content:
+        print("[Supervisor Final] ✅ Found legacy format, using it directly.")
         return {
             "messages": [messages[-1]] if messages else [],
             "next_agent": "end",
-            "final_response": last_content
+            "final_response": last_content.strip()
         }
     
     # Create final summary (using async) - combine system prompt with content

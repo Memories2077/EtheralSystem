@@ -30,6 +30,8 @@ dependencies = [
     "llama-index-vector-stores-chroma",
     "llama-index-llms-langchain",
     "llama-index-embeddings-ollama",
+    "llama-index-storage-docstore-mongodb",
+    "pymongo",
     "langgraph-api>=0.7.90",
     "langgraph-runtime-inmem>=0.27.0",
     "protobuf>=5.26.1,<7.0.0",

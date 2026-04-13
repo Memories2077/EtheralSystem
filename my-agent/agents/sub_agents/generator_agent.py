@@ -3,7 +3,7 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
 from typing import Dict, Any, Optional, List, Sequence
 from pydantic import SecretStr
-from tools.generator_tools._init_ import create_MCPServer, test_mcp_server
+from tools.generator_tools import create_MCPServer, test_mcp_server
 from utils.vector_db import save_mcp_artifacts
 
 from config import load_prompt, AGENT_CONFIG, API_CONFIG, PROVIDER_CONFIG
@@ -149,80 +149,110 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     # If tool calls exist, execute them
     if response.tool_calls:
         tool_results = []
+        has_error = False
+        error_message = ""
+        
         for tool_call in response.tool_calls:
             if tool_call["name"] == "create_MCPServer":
                 # CRITICAL: Use our pre-constructed query with FULL API doc
-                # We ignore whatever the LLM provides and use our complete version
-                query = constructed_query  # Contains [full_api_doc, user_id, email]
+                query = constructed_query
                 
                 print(f"[Generator] Creating MCP Server with FULL API documentation...")
-                print(f"  - API Doc Length: {len(query[0])} chars (COMPLETE, NOT TRUNCATED)")
-                print(f"  - User ID: {query[1]}")
-                print(f"  - Email: {query[2]}")
                 
                 # Properly await the async tool
                 result = await create_MCPServer.ainvoke({"query": query})
-                tool_results.append(result)
+                result_str = str(result)
+                tool_results.append(result_str)
 
-                # --- RAG INTEGRATION ---
-                # 1. Extract serverId from result
-                # Expected result contains "Server ID: [id]"
-                import re
-                server_id_match = re.search(r"Server ID: ([\w-]+)", str(result))
-                if server_id_match:
-                    server_id = server_id_match.group(1)
-                    print(f"[Generator] 🔄 Server created with ID: {server_id}. Indexing for RAG...")
+                # Check for error in tool result
+                if result_str.startswith("❌"):
+                    has_error = True
+                    error_message = result_str
+                    print(f"[Generator] ❌ Tool returned error: {error_message[:100]}...")
+                    continue
+
+                import json
+                try:
+                    tool_data = json.loads(result_str)
+                    server_id = tool_data.get("serverId")
                     
-                    try:
-                        # 2. Fetch generated files from manager
-                        # Use MCP_BASE_URL env var (strip /api suffix if present)
+                    if server_id:
+                        print(f"[Generator] 🔄 Server created with ID: {server_id}. Indexing for RAG...")
+                        # ... (RAG indexing logic remains the same)
                         mcp_base_url = os.environ.get("MCP_BASE_URL", "http://localhost:8080")
-                        # Remove /api suffix if present to get the manager base URL
-                        if mcp_base_url.endswith("/api"):
-                            manager_url = mcp_base_url[:-4]  # Remove last 4 characters "/api"
-                        else:
-                            manager_url = mcp_base_url
-                        
+                        manager_url = mcp_base_url.rstrip('/')
+                        if manager_url.endswith("/api"):
+                            manager_url = manager_url[:-4]
+                        manager_url = manager_url.rstrip('/')
+
                         async with httpx.AsyncClient(timeout=30.0) as client:
                             files_response = await client.get(f"{manager_url}/api/mcp/{server_id}/files")
                             if files_response.status_code == 200:
                                 artifacts_data = files_response.json().get("files", {})
-
-                                # 3. Save to Vector DB
-                                await save_mcp_artifacts(
+                                save_result = await save_mcp_artifacts(
                                     server_id=server_id,
                                     user_id=user_id,
                                     email=email,
-                                    artifacts=artifacts_data
+                                    artifacts=artifacts_data,
+                                    skip_if_similar=True
                                 )
-                                print(f"[Generator] ✅ Artifacts indexed in vector database successfully")
-                            else:
-                                print(f"[Generator] ⚠️ Failed to fetch files for indexing: {files_response.status_code}")
-                    except Exception as rag_error:
-                        print(f"[Generator] ❌ RAG Integration Error: {rag_error}")
-                # -----------------------
+                                if save_result["status"] == "success":
+                                    print(f"[Generator] ✅ Artifacts indexed successfully")
+                except Exception as e:
+                    print(f"[Generator] Warning during post-creation processing: {e}")
             
             elif tool_call["name"] == "test_mcp_server":
                 mcp_link = tool_call["args"].get("MCPLink", "")
                 if mcp_link:
-                    # Properly await the async tool
                     result = await test_mcp_server.ainvoke({"MCPLink": mcp_link})
                     tool_results.append(str(result))
                 else:
                     tool_results.append("❌ Error: MCPLink parameter is required for testing")
+
+        # If there was an error, return it directly
+        if has_error:
+            return {
+                "messages": [AIMessage(content=error_message)],
+                "next_agent": "supervisor_final",
+                "final_response": error_message
+            }
         
         # Generate final response with tool results
+        final_prompt = """Based on the tool results above, create a final response for the user.
+        If the MCP Server was created successfully, you MUST include:
+        1. A success message with the Server ID.
+        2. The 'Server Details:' and 'Configuration:' sections exactly as required by the supervisor.
+        3. The full JSON configuration object for the user to copy.
+        
+        Example format:
+        ✅ MCP Server created successfully!
+        
+        Server Details:
+        - Server ID: [id]
+        - Status: active
+        
+        Configuration:
+        ```json
+        { ... }
+        ```
+        """
+        
         final_messages = generator_messages + [response] + [
             ToolMessage(content=str(result), tool_call_id=tc["id"])
             for result, tc in zip(tool_results, response.tool_calls)
+        ] + [
+            HumanMessage(content=final_prompt)
         ]
+        
         final_response = await llm.ainvoke(final_messages)
+        content = str(final_response.content) if hasattr(final_response, 'content') else str(final_response)
         
         return {
-            "messages": [final_response],
+            "messages": [AIMessage(content=content)],
             "next_agent": "supervisor_final",
-            "final_response": str(final_response.content) if hasattr(final_response, 'content') else str(final_response)
+            "final_response": content
         }
+
     
     return {
         "messages": [response],
