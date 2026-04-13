@@ -13,7 +13,6 @@ import logging
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from utils.vector_db import search_mcp_artifacts
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -178,7 +177,7 @@ async def create_MCPServer(query: List[str]) -> str:
         # Send POST request to create MCP server using async httpx
         # Increased timeout to allow backend enough time to process and respond
         # Using a longer read timeout since MCP server creation can take time
-        mcp_base_url = os.environ.get("MCP_BASE_URL", "http://gemini-backend:8000/api")
+        mcp_base_url = os.environ.get("MCP_BASE_URL", "http://docker-manager:8080/api")
         create_url = f"{mcp_base_url}/mcp/create"
         timeout_config = httpx.Timeout(
             connect=10.0,    # Time to establish connection
@@ -209,18 +208,15 @@ async def create_MCPServer(query: List[str]) -> str:
 
                 config_str = json.dumps(claude_config, indent=4)
                 
+                tool_result = {
+                    "status": status,
+                    "serverId": server_id,
+                    "config": claude_config
+                }
+                
                 logger.info(f"MCP Server created successfully: {server_id}")
                 
-                return f"""✅ MCP Server created successfully!
-            
-                    📋 Server Details:
-                    - Server ID: {server_id}
-                    - Status: {status}
-
-                    ⚙️ Configuration:
-                    {config_str}
-
-                    You can now use this MCP server with the provided configuration."""
+                return json.dumps(tool_result, indent=2)
             except Exception as json_error:
                 logger.error(f"Failed to parse success response: {json_error}")
                 return f"✅ MCP Server created (Status {response.status_code}), but response format was unexpected. Raw response: {response.text[:500]}"
