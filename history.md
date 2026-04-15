@@ -1,5 +1,18 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-04-14] - MetaClaw Support & LLM Proxy Configuration
+
+### 🚀 Tính năng mới & Cơ sở hạ tầng (New Features & Infrastructure)
+
+- **MetaClaw Integration**: Tích hợp hỗ trợ MetaClaw làm LLM provider. Cho phép Agent chạy qua proxy MetaClaw để sử dụng các công cụ và bộ nhớ nâng cao.
+- **ChatOpenAI Adapter**: Cập nhật `generator_agent.py` để sử dụng `ChatOpenAI` khi `METACLAW_ENABLED` là true, cho phép tương thích hoàn toàn với API của MetaClaw.
+- **External Model Configuration**: Thêm các biến môi trường `METACLAW_BASE_URL` và `METACLAW_API_KEY` vào hệ thống cấu hình `config/__init__.py`.
+
+### 🛠️ Tối ưu hóa Agent (Agent Optimization)
+
+- **Flexible Provider Logic**: Agent giờ đây có khả năng chuyển đổi linh hoạt giữa trực tiếp Google SDK và MetaClaw Proxy dựa trên cấu hình môi trường, giúp dễ dàng triển khai trong các môi trường khác nhau (Docker vs Local).
+
+
 ## [2026-04-13 12:30] - Cải thiện Generator Agent & Chuẩn hóa Output MCP Config
 
 ### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)

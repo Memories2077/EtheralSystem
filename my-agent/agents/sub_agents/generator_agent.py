@@ -29,10 +29,25 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     gemini_api_key = SecretStr(API_CONFIG["gemini_api_key"])
     groq_api_key = SecretStr(API_CONFIG["groq_api_key"])
 
-    if gemini_api_key:
+    # MetaClaw Integration
+    metaclaw_url = API_CONFIG.get("metaclaw_base_url")
+    metaclaw_enabled = os.getenv("METACLAW_ENABLED", "false").lower() == "true"
+
+    if metaclaw_enabled and metaclaw_url:
+        from langchain_openai import ChatOpenAI
+        print(f"[Generator] Using MetaClaw proxy at {metaclaw_url}")
+        llm = ChatOpenAI(
+            model=PROVIDER_CONFIG.get("metaclaw", "gemini-2.0-flash"),
+            base_url=metaclaw_url,
+            api_key=SecretStr(API_CONFIG.get("metaclaw_api_key", "metaclaw")),
+            temperature=config["temperature"]
+        )
+    elif gemini_api_key:
         llm = ChatGoogleGenerativeAI(model=PROVIDER_CONFIG["gemini"], api_key=gemini_api_key)
     elif groq_api_key:
         llm = ChatGroq(model_name=PROVIDER_CONFIG["groq"], api_key=groq_api_key)
+    else:
+        raise Exception("No valid LLM configuration found (Gemini, Groq, or MetaClaw)")
 
     llm_with_tools = llm.bind_tools([create_MCPServer])
     
