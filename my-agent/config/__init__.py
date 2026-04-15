@@ -51,8 +51,10 @@ API_CONFIG = {
     "gemini_api_key": get_env_var("GEMINI_API_KEY"),
     "groq_api_key": get_env_var("GROQ_API_KEY"),
     "tavily_api_key": get_env_var("TAVILY_API_KEY"),
-    "mcp_base_url": get_env_var("MCP_BASE_URL", "http://localhost:8080"), # Updated default to 8080 or allow env
+    "mcp_base_url": get_env_var("MCP_BASE_URL", "http://docker-manager:8080/api"),
     "mcp_api_key": get_env_var("MCP_API_KEY"),
+    "mongo_uri": get_env_var("MONGO_URI", "mongodb://mongodb:27017"),
+    "mongo_db_name": get_env_var("MONGO_DB_NAME", "mcp_agent_db"),
 }
 
 # LLM Provider Configuration

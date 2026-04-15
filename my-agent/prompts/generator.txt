@@ -27,7 +27,30 @@ Example tool call:
 create_MCPServer(query=["<full_api_doc>", "user123", "user@example.com"])
 ```
 
-After successful creation, provide a clear summary of:
-- Server ID
-- Configuration details
-- Next steps for the user
+STRICT OUTPUT RULES:
+- Output ONLY the JSON object.
+- NO conversational text (e.g., "Here is the server configuration").
+- NO markdown code blocks (e.g., no ```json).
+- NO reflected input documentation or context.
+- NO mention of internal tool names or metadata (e.g., no "mcp_server_setup_details").
+- NO additional setup instructions.
+
+REQUIRED JSON FORMAT:
+{{
+  "status": "success",
+  "serverId": "<SERVER_ID>",
+  "config": {{
+    "mcpServers": {{
+      "<SERVER_NAME>": {{
+        "command": "npx",
+        "args": [
+          "mcp-remote",
+          "http://<DOMAIN>:<PORT>/mcp/<SERVER_ID>?token=<JWT_TOKEN>",
+          "--allow-http"
+        ]
+      }}
+    }}
+  }}
+}}
+
+Note: Get the values for <SERVER_ID>, <SERVER_NAME>, <DOMAIN>, <PORT>, and <JWT_TOKEN> from the tool output.

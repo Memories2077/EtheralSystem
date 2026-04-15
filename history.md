@@ -1,98 +1,85 @@
 # Nhật ký Thay đổi (Change Log)
 
-## [2026-03-27 23:34] - Tối ưu hóa RAG & Tích hợp Backend
-
-### 🚀 Tính năng mới & Tích hợp
-
-- **Backend Context Injection**: Công cụ `create_MCPServer` hiện đã tự động gọi hệ thống RAG để tìm kiếm các tài liệu liên quan trước khi tạo server.
-- **Payload mở rộng**: Dữ liệu gửi tới Backend (`/api/mcp/create`) hiện bao gồm trường `rag_context`, cung cấp ngữ cảnh đầy đủ cho việc tạo mã nguồn MCP Server.
-
-### 🛠️ Tối ưu hóa hệ thống RAG (Auto-Merging)
-
-- **Tăng kích thước Leaf Node**: Điều chỉnh `chunk_sizes` từ 128 lên **256** characters để đảm bảo tính toàn vẹn của thông tin.
-- **Mở rộng phạm vi tìm kiếm**: Tăng `similarity_top_k` lên **x5** lần số lượng kết quả (`n_results * 5`). Điều này giúp tăng tỉ lệ gộp (merge) các node con thành node cha, cung cấp ngữ cảnh liền mạch hơn.
-- **Cải thiện logic xử lý**: Cập nhật `vector_db.py` để hỗ trợ tốt hơn việc truy xuất phân cấp.
-
-### ✅ Kiểm chứng (Verification)
-
-- Đã xác minh thành công qua script [test_generator_tool.py].
-- Kết quả kiểm thử cho thấy Agent đã tự động trích xuất đúng ngữ cảnh và đóng gói vào payload gửi tới Backend.
-
----
-
-## [2026-03-31 00:00] - Sửa lỗi Blocking Calls & Tăng độ chính xác RAG
+## [2026-04-13 12:30] - Cải thiện Generator Agent & Chuẩn hóa Output MCP Config
 
 ### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
 
-- **Async Isolation (Blocking Calls)**: Giải quyết triệt để lỗi `Blocking call to socket.socket.connect` bằng cách đưa các tác vụ đồng bộ của ChromaDB và LlamaIndex vào luồng riêng biệt (`asyncio.to_thread`). Điều này giúp LangGraph hoạt động mượt mà hơn trong môi trường ASGI.
-- **Loại bỏ nhiễu ngữ cảnh (Relevance Filtering)**: Thiết lập ngưỡng độ tương đồng (`similarity score` >= 0.35). Các kết quả tìm kiếm không đạt yêu cầu sẽ bị loại bỏ, ngăn chặn việc nạp dữ liệu sai lệch (ví dụ: input là Notion nhưng output lại lấy context từ Reddit).
-
-### 📈 Cải thiện trải nghiệm (Improvements)
-
-- **Minh bạch hóa xử lý Agent**: Thêm logic ghi log chi tiết trong `generator_tools` để theo dõi số lượng context tìm được hoặc thông báo nạp context trống (zero-shot) khi không có tài liệu liên quan.
-- **Độ tin cậy của VectorDB**: Cải thiện hàm tìm kiếm trong `vector_db.py` để xử lý các node phân cấp chính xác hơn với cơ chế lọc mới.
-
-### ✅ Kiểm chứng (Verification)
-
-- Đã chạy thành công script [test_hierarchical_rag.py].
-- Xác minh không còn cảnh báo "Blocking call" từ LangGraph dev.
-- Kiểm tra tính năng lọc: Query về Notion không còn bị ảnh hưởng bởi dữ liệu Reddit cũ trong DB.
+- **Generator Agent Error Handling**: Nâng cấp logic xử lý lỗi trong `generator_agent_node`. Agent hiện đã có khả năng nhận diện và báo cáo các lỗi cụ thể từ tool `create_MCPServer` (ví dụ: lỗi kết nối backend, lỗi dữ liệu đầu vào) thay vì cố gắng tiếp tục quy trình và trả về kết quả rác.
+- **Output Formatting & Summarization Bypass**: Cập nhật prompt của Generator Agent để luôn bao gồm các section "Server Details:" và "Configuration:".
+  - **Lý do**: Việc chuẩn hóa header này giúp Supervisor Agent nhận diện được kết quả đã hoàn tất và kích hoạt cơ chế bypass (pass-through), ngăn chặn việc LLM tóm tắt lại làm hỏng cấu trúc JSON hoặc mất mát thông tin quan trọng như Server ID và Tokens.
+- **Full Info Delivery**: Đảm bảo phản hồi cuối cùng của Generator Agent chứa đầy đủ cả thông báo trạng thái thân thiện và khối JSON cấu hình kỹ thuật để người dùng có thể copy-paste ngay lập tức.
 
 ---
 
-## [2026-03-31 16:35] - Sửa lỗi Container & Đồng bộ hóa Agent Task
+## [2026-04-13 10:45] - Chuẩn hóa Cấu hình Kết nối MCP Manager (Docker Alignment)
 
 ### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
 
-- **Container Entrypoint Fix (CRLF)**: Giải quyết lỗi `exec /entrypoint.sh: no such file or directory` khi chạy Ollama trên Windows.
-    - **Before**: Dockerfile chỉ copy và chmod script, dẫn đến lỗi nếu file có định dạng xuống dòng Windows (CRLF).
-    - **After**: Thêm lệnh `sed -i 's/\r$//' /entrypoint.sh` vào `Dockerfile.ollama` để tự động chuẩn hóa định dạng sang Linux (LF) trong quá trình build.
-- **Generator Agent Task Extraction**: Sửa lỗi Generator Agent không nhận diện được task được giao từ Examiner Agent, dẫn đến việc dùng chuỗi mặc định vô nghĩa gửi lên Backend.
-    - **Before**: Agent chỉ tìm task trong `ToolMessage`, bỏ qua `AIMessage` chứa nội dung delegation (`DELEGATE_TO_GENERATOR:`).
-    - **After**: Cập nhật vòng lặp quét tin nhắn trong `generator_agent.py` để kiểm tra thuộc tính `.content` của tất cả các loại tin nhắn, đảm bảo nhận diện đúng payload đã được làm giàu (Enriched Task).
-
-### ✅ Kiểm chứng (Verification)
-
-- **Ollama**: Build lại image thành công, script `/entrypoint.sh` thực thi bình thường, tự động pull model mà không bị treo.
-- **Backend Integration**: Kiểm tra file input tại `/app/input/` trên backend đã chứa đầy đủ documentation thay vì chuỗi placeholder "Generate content based on the user's request".
+- **MCP Base URL Alignment**: Cập nhật `MCP_BASE_URL` trong `.env.example` thành `http://docker-manager:8080/api`.
+  - **Lý do**: Đảm bảo cấu hình mẫu đồng bộ với logic mạng trong `docker-compose.yaml`, giúp Agent container có thể kết nối trực tiếp với dịch vụ quản lý MCP qua mạng nội bộ Docker (`mcp-network`).
 
 ---
 
-## [2026-03-31 23:00] - Sửa lỗi Hallucination (JWT/Config) & Bảo toàn dữ liệu cuối
-
-### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
-
-- **Bypass LLM Summarization (Final Response)**: Ngăn chặn hiện tượng LLM tự ý "tóm tắt" hoặc thay đổi các chuỗi ký tự ngẫu nhiên (như JWT Token) và cấu trúc JSON trong phản hồi cuối cùng.
-    - **Vấn đề**: `supervisor_final_node` trước đây luôn gọi LLM để tóm tắt kết quả từ Generator, dẫn đến việc hỏng Token hoặc sai lệch cú pháp JSON config của MCP Server.
-    - **Giải pháp**: Thêm logic kiểm tra trong `test.py` và `test_with_examiner.py`. Nếu nội dung chứa cấu hình MCP Server (`Server Details` & `Configuration`), Agent sẽ trả về trực tiếp kết quả gốc mà không qua LLM xử lý lại.
-- **Tăng cường System Prompt**: Cập nhật chỉ dẫn hệ thống trong `supervisor_final_node` để yêu cầu LLM (nếu có được gọi) phải giữ nguyên 100% các đoạn code, URL và Tokens.
-
-### ✅ Kiểm chứng (Verification)
-
-- **Độ chính xác Token**: Xác nhận JWT Token trong JSON config trả về khớp hoàn toàn với Token được tạo ra bởi Generator, không còn tình trạng mất dấu ngoặc hay sai ký tự Base64.
-- **Cấu hình MCP**: Link MCP Server và các tham số `args` được bảo toàn nguyên vẹn, sẵn sàng để copy-paste vào file cấu hình của Claude Desktop hoặc các MCP Client khác.
-
----
-
-## [2026-04-01 22:58] - Refactor RAG Post-Processing (Strict Parameter Mapping)
+## [2026-04-12 22:30] - Sửa lỗi LangGraph Streaming & Chuẩn hóa Output JSON
 
 ### 🚀 Tính năng mới & Tối ưu hóa (New Features & Optimization)
 
-- **Strict Technical Extraction**: Thay thế việc tóm tắt ngữ cảnh RAG bằng ngôn ngữ tự nhiên (prose summary) bằng cơ chế trích xuất dữ liệu kỹ thuật có cấu trúc (structured JSON).
-    - **Cơ chế**: Sử dụng LLM với prompt ràng buộc chặt chẽ (Zero-Summarization) để trích xuất `base_url`, `auth_scheme`, `endpoints`, và `parameters` (gồm type, enum, required flags) từ các đoạn mã/tài liệu RAG.
-    - **Lợi ích**: Đảm bảo không mất mát các ràng buộc dữ liệu quan trọng và giữ nguyên quy ước đặt tên (camelCase vs snake_case).
-- **Loại bỏ RAG dư thừa**: Xóa bỏ bước tìm kiếm RAG lặp lại trong công cụ `create_MCPServer`. Dữ liệu ngữ cảnh hiện được luân chuyển trực tiếp từ Examiner Agent tới công cụ dưới dạng JSON.
+- **Strict JSON Output Enforcement**: Ràng buộc Generator Agent chỉ trả về duy nhất khối JSON cấu hình MCP server (theo yêu cổng người dùng).
+  - **Prompt Update**: Cập nhật `generator.txt` với yêu cầu format JSON nghiêm ngặt.
+  - **Agent Logic**: Thêm chỉ dẫn cuối cùng trong `generator_agent.py` để LLM không trả về văn bản thừa.
+  - **Summarization Bypass**: Cập nhật `supervisor_final_node` trong `test.py` để bỏ qua bước tóm tắt nếu kết quả đã là JSON, tránh việc LLM làm hỏng cấu trúc hoặc halluncinate tokens.
+- **LangGraph Streaming Fix (Frontend)**: Khắc phục lỗi không hiển thị response khi stream từ LangGraph.
+  - **Event Handling**: Hỗ trợ xử lý event `messages/partial`.
+  - **Extraction Refactor**: Nâng cấp hàm `extractContent` trong `use-chat-store.ts` để bóc tách dữ liệu từ các cấu trúc phức tạp/lồng nhau của LangGraph SDK (array/object).
 
-### 🛠️ Thay đổi hệ thống (System Changes)
+### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
 
-- **`openapi_parser.py` (NEW)**: Tiện ích trung tâm xử lý việc trích xuất dữ liệu kỹ thuật từ các kết quả RAG bằng LLM.
-- **Examiner Agent Refactor**: Cập nhật logic từ "Synthesize" (tổng hợp văn bản) sang "Extract" (trích xuất cấu trúc). Phối hợp với `openapi_parser` để đóng gói dữ liệu vào task của Generator.
-- **Generator Agent & Tools**: Cập nhật `create_MCPServer` để tự động nhận diện và phân giải khối dữ liệu `ENRICHED_CONTEXT (RAG)` từ task payload.
+- **RAG Indexing Fix**: Sửa lỗi Generator Agent không lấy được `serverId` để index RAG khi tool `create_MCPServer` chuyển sang trả về định dạng JSON (thay vì text).
+
+---
+
+## [2026-04-12 22:30] - Di chuyển sang MongoDB cho VectorDB (Scalability Fix)
+
+### 🚀 Tính năng mới & Cơ sở hạ tầng (New Features & Infrastructure)
+
+- **MongoDB Integration (Shared Storage)**: Chuyển đổi hệ thống `DocStore` từ file JSON cục bộ sang **MongoDB** để tăng khả năng mở rộng và hiệu suất.
+  - **Dùng chung hạ tầng**: Tận dụng container MongoDB sẵn có của dự án `mcp-gen` để tiết kiệm tài nguyên.
+  - **Tách biệt dữ liệu**: Dữ liệu của agent được lưu vào database riêng `mcp_agent_db`.
+- **LlamaIndex Scaling**: Thay thế `SimpleDocumentStore` bằng `MongoDocumentStore`, giải quyết triệt để lỗi `doc_id not found` do mất đồng bộ giữa bộ nhớ và file vật lý.
+
+### 🛠️ Khắc phục lỗi & Dọn dẹp (Bug Fixes & Cleanup)
+
+- **Fix Inconsistency**: Loại bỏ việc phụ thuộc vào file `docstore.json` – nguyên nhân gây ra lỗi khi dữ liệu phình to.
+- **Dependency Update**: Cập nhật `pyproject.toml` với các thư viện cần thiết (`llama-index-storage-docstore-mongodb`, `pymongo`).
+- **Storage Cleanup**: Xóa bỏ các file lưu trữ JSON cũ không còn cần thiết.
+
+---
+
+## [2026-04-12 16:15] - Sửa lỗi Xung đột Mạng Docker & Dọn dẹp Cảnh báo Compose
+
+### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
+
+- **Docker Networking Fix (External Network)**: Giải quyết triệt để lỗi `network mcp-network exists but was not created by compose` khi chạy lệnh `./manage.sh up`.
+  - **Vấn đề**: Script `manage.sh` tạo mạng thủ công, nhưng `docker-compose.yaml` lại khai báo mạng như một thành phần do Compose quản lý, dẫn đến tranh chấp quyền sở hữu.
+  - **Giải pháp**: Cập nhật cấu hình `mcp-network` thành `external: true` trong `langChain-application/docker-compose.yaml`. Điều này báo cho Docker Compose sử dụng mạng đã có sẵn thay vì cố gắng khởi tạo lại.
+- **Obsolete Warning Cleanup**: Loại bỏ thuộc tính `version` đã lỗi thời trong file `docker-compose.yml` của `chatbot_mcp_client`.
+  - **Lợi ích**: Giảm bớt các dòng cảnh báo (warning) không cần thiết trong terminal khi khởi hệ thống, giúp theo dõi logs sạch sẽ hơn.
 
 ### ✅ Kiểm chứng (Verification)
 
-- **Tính toàn vẹn dữ liệu**: Xác nhận `rag_context` gửi lên Backend chứa map tham số chi tiết thay vì một đoạn văn bản tóm tắt.
-- **Zero-Summarization**: LLM không còn giải thích các tham số trong `rag_context`, chỉ trả về spec kỹ thuật thuần túy.
+- Đảm bảo tính đồng bộ cấu hình mạng trên cả 3 project (`mcp-gen`, `langChain-application`, `chatbot_mcp_client`).
+- Xác nhận các service có thể kết nối với nhau qua mạng `mcp-network` mà không gặp lỗi khởi tạo.
+
+---
+
+## [2026-04-12 00:05] - Sửa lỗi MCP Routing (404) & Tối ưu hóa Mạng shared
+
+- **Issue**: Lỗi "404 Not Found" khi gọi công cụ `create_MCPServer`. Agent trước đó trỏ nhầm endpoint tới `gemini-backend:8000` thay vì `docker-manager:8080`.
+- **Changes**:
+  - **Routing Fix**: Cập nhật `MCP_BASE_URL` trong `docker-compose.yaml` để trỏ trực tiếp tới hostname `docker-manager` trên cổng `8080`.
+  - **Network Dependency**: Cập nhật script `manage.sh` để tự động kiểm tra và khởi tạo `mcp-network` (`docker network create`) trước khi chạy các service, đảm bảo các container không bị lỗi "network not found".
+  - **Tool Code Refactor**: Cập nhật `generator_tools/__init__.py` để sử dụng biến môi trường linh hoạt cho `MCP_BASE_URL` thay vì fix cứng `localhost`.
+- **Verification**: Xác nhận Agent đã có thể gọi thành công endpoint tại `docker-manager:8080` qua kết nối nội bộ Docker.
 
 ---
 
@@ -109,13 +96,48 @@
 
 ---
 
-## [2026-04-12 00:05] - Sửa lỗi MCP Routing (404) & Tối ưu hóa Mạng shared
-- **Issue**: Lỗi "404 Not Found" khi gọi công cụ `create_MCPServer`. Agent trước đó trỏ nhầm endpoint tới `gemini-backend:8000` thay vì `docker-manager:8080`.
-- **Changes**:
-    - **Routing Fix**: Cập nhật `MCP_BASE_URL` trong `docker-compose.yaml` để trỏ trực tiếp tới hostname `docker-manager` trên cổng `8080`.
-    - **Network Dependency**: Cập nhật script `manage.sh` để tự động kiểm tra và khởi tạo `mcp-network` (`docker network create`) trước khi chạy các service, đảm bảo các container không bị lỗi "network not found".
-    - **Tool Code Refactor**: Cập nhật `generator_tools/_init_.py` để sử dụng biến môi trường linh hoạt cho `MCP_BASE_URL` thay vì fix cứng `localhost`.
-- **Verification**: Xác nhận Agent đã có thể gọi thành công endpoint tại `docker-manager:8080` qua kết nối nội bộ Docker.
+## [2026-04-01 22:58] - Refactor RAG Post-Processing (Strict Parameter Mapping)
+
+### 🚀 Tính năng mới & Tối ưu hóa (New Features & Optimization)
+
+- **Strict Technical Extraction**: Thay thế việc tóm tắt ngữ cảnh RAG bằng ngôn ngữ tự nhiên (prose summary) bằng cơ chế trích xuất dữ liệu kỹ thuật có cấu trúc (structured JSON).
+- **Loại bỏ RAG dư thừa**: Xóa bỏ bước tìm kiếm RAG lặp lại trong công cụ `create_MCPServer`. Dữ liệu ngữ cảnh hiện được luân chuyển trực tiếp từ Examiner Agent tới công cụ dưới dạng JSON.
+
+---
+
+## [2026-03-31 23:00] - Sửa lỗi Hallucination (JWT/Config) & Bảo toàn dữ liệu cuối
+
+### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
+
+- **Bypass LLM Summarization (Final Response)**: Ngăn chặn hiện tượng LLM tự ý "tóm tắt" hoặc thay đổi các chuỗi ký tự ngẫu nhiên (như JWT Token) và cấu trúc JSON trong phản hồi cuối cùng.
+- **Tăng cường System Prompt**: Cập nhật chỉ dẫn hệ thống trong `supervisor_final_node` để yêu cầu LLM (nếu có được gọi) phải giữ nguyên 100% các đoạn code, URL và Tokens.
+
+---
+
+## [2026-03-31 16:35] - Sửa lỗi Container & Đồng bộ hóa Agent Task
+
+### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
+
+- **Container Entrypoint Fix (CRLF)**: Giải quyết lỗi `exec /entrypoint.sh: no such file or directory` khi chạy Ollama trên Windows bằng cách xử lý `sed -i 's/\r$//'`.
+- **Generator Agent Task Extraction**: Sửa lỗi Generator Agent không nhận diện được task được giao từ Examiner Agent trong chuỗi hội thoại.
+
+---
+
+## [2026-03-31 00:00] - Sửa lỗi Blocking Calls & Tăng độ chính xác RAG
+
+### 🛠️ Khắc phục lỗi hệ thống (Bug Fixes)
+
+- **Async Isolation (Blocking Calls)**: Giải quyết triệt để lỗi `Blocking call to socket.socket.connect` bằng `asyncio.to_thread`.
+- **Loại bỏ nhiễu ngữ cảnh (Relevance Filtering)**: Thiết lập ngưỡng độ tương đồng (`similarity score` >= 0.35).
+
+---
+
+## [2026-03-27 23:34] - Tối ưu hóa RAG & Tích hợp Backend
+
+### 🚀 Tính năng mới & Tích hợp
+
+- **Backend Context Injection**: Công cụ `create_MCPServer` tự động gọi hệ thống RAG tìm tài liệu liên quan.
+- **Tối ưu hóa RAG**: Tăng kích thước Leaf Node và mở rộng phạm vi tìm kiếm để cải thiện ngữ cảnh.
 
 ---
 

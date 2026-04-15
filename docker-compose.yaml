@@ -46,5 +46,5 @@ services:
 
 networks:
   mcp-network:
-    name: mcp-network
-    driver: bridge
+    external: true
+
