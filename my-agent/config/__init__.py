@@ -50,6 +50,8 @@ AGENT_CONFIG = {
 API_CONFIG = {
     "gemini_api_key": get_env_var("GEMINI_API_KEY"),
     "groq_api_key": get_env_var("GROQ_API_KEY"),
+    "metaclaw_api_key": get_env_var("METACLAW_API_KEY", "metaclaw"),
+    "metaclaw_base_url": get_env_var("METACLAW_BASE_URL", "http://host.docker.internal:30000/v1"),
     "tavily_api_key": get_env_var("TAVILY_API_KEY"),
     "mcp_base_url": get_env_var("MCP_BASE_URL", "http://docker-manager:8080/api"),
     "mcp_api_key": get_env_var("MCP_API_KEY"),
@@ -60,6 +62,7 @@ API_CONFIG = {
 # LLM Provider Configuration
 PROVIDER_CONFIG = {
     "gemini": get_env_var("GEMINI_MODEL"),
-    "groq": get_env_var("GROQ_MODEL")
+    "groq": get_env_var("GROQ_MODEL"),
+    "metaclaw": get_env_var("METACLAW_MODEL", "gemini-2.5-flash") # Use standard model name for metaclaw
 }
 
