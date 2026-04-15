@@ -1,96 +1,107 @@
-# Multi-Agent System (MCP Server Generator)
+# 🧠 MCP Agent Engine: Autonomous Generation & RAG
 
-Hệ thống đa agent với kiến trúc Supervisor-SubAgent, được xây dựng bằng LangChain, LangGraph và LlamaIndex. Hệ thống chuyên dụng để tạo và quản lý các MCP (Model Context Protocol) Servers.
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-black)](https://langchain-ai.github.io/langgraph/)
+[![RAG](https://img.shields.io/badge/Context-Hierarchical--RAG-orange)](https://vapi.ai)
+[![MetaClaw](https://img.shields.io/badge/MetaClaw-Provider-blueviolet)](https://github.com/metaclaw)
 
-## 🏗️ Cấu trúc
+The core agentic engine powering the **Gemini InsightLink** ecosystem. This repository contains the stateful LangGraph orchestration logic, hierarchical RAG systems, and specialized sub-agents designed to analyze codebases and generate fully functional MCP (Model Context Protocol) servers.
 
-```
-my-agent/
-├── agents/                      # Triển khai các Agent (Supervisor, Generator, Examiner)
-│   ├── sub_agents/              # Các sub-agents chuyên biệt
-├── config/                      # Cấu hình hệ thống (API keys, model settings)
-├── data/                        # Dữ liệu lưu trữ (LlamaIndex storage, ChromaDB)
-├── prompts/                     # Prompt cho các agent
-├── scripts/                     # Script tiện ích
-├── tests/                       # Bộ test suite và script kiểm tra RAG
-├── tools/                       # Định nghĩa các tool cho agent
-├── utils/                       # Các hàm tiện ích (Vector DB, State management)
-└── README.md                    # Tài liệu hướng dẫn chính
-```
+---
 
-## 🤖 Các Agent
+## 🤖 Multi-Agent Orchestration
 
-### 1. Supervisor Agent (Agent Giám sát)
+Driven by **LangGraph**, the engine utilizes a specialized multi-agent architecture to ensure precision in complex tasks:
 
-- **Vai trò**: Phân tích yêu cầu và điều phối.
-- **Nhiệm vụ**:
-  - Nhận yêu cầu từ người dùng (ví dụ: "Tạo MCP Server cho API này").
-  - Ủy thác công việc cho `Generator Agent` hoặc `Examiner Agent`.
-  - Tổng hợp kết quả cuối cùng để phản hồi người dùng.
+*   **Examiner Agent**: The "scout" of the system. It proactively explores the target environment or codebase, identifying patterns, dependencies, and integration points.
+*   **Generator Agent**: The architect. It consumes findings from the Examiner and produces production-ready MCP server implementations, configuration JSONs, and robust deployment scripts.
+*   **Supervisor Node**: The gatekeeper. It manages the state machine, validates agent outputs against strict schemas, and ensures the system remains resilient across long-running tasks.
 
-### 2. Generator Agent (Agent Tạo mã)
+---
 
-- **Vai trò**: Tạo mã nguồn cho MCP Server.
-- **Tools**: `create_MCPServer`, `test_mcp_server`.
-- **Nhiệm vụ**:
-  - Dựa trên tài liệu API, tạo mã nguồn TypeScript cho MCP Server.
-  - Tự động cài đặt và kiểm tra server sau khi tạo.
-  - Lưu trữ kết quả (code, specs) vào Vector DB để tham khảo trong tương lai.
+## ✨ Advanced Capabilities
 
-### 3. Examiner Agent (Agent Kiểm tra)
+### 🛡️ MetaClaw Provider Integration
+Native support for **MetaClaw** as a high-fidelity LLM provider. This allows the agents to utilize advanced tool-calling capabilities and shared memory models across different sessions.
 
-- **Vai trò**: Phân tích và làm phong phú ngữ cảnh (RAG).
-- **Nhiệm vụ**:
-  - Trích xuất thông tin quan trọng từ tài liệu API hoặc yêu cầu.
-  - Sử dụng **Hierarchical RAG** để tìm kiếm các mã nguồn hoặc tài liệu cũ liên quan.
-  - Cung cấp ngữ cảnh phong phú (Enriched Context) cho Generator Agent để tăng độ chính xác.
+### 📚 Hierarchical RAG (Retrieval-Augmented Generation)
+Combines codebase-wide indexing with deep semantic search. The engine maintains a hierarchical representation of your project, allowing it to retrieve relevant context without being overwhelmed by file size or quantity.
 
-## 🧠 Advanced RAG (Hierarchical & Auto-Merging)
+### 🏗️ Autonomous MCP Generation
+Simply describe your requirements, and the engine will:
+1.  Analyze the target API or environment.
+2.  Generate the Python/TypeScript boilerplate for the MCP server.
+3.  Produce a valid `mcp_config.json`.
+4.  Provide a deployment-ready Dockerfile.
 
-Hệ thống sử dụng **LlamaIndex** để triển khai kỹ thuật RAG tiên tiến:
+### 📡 Real-time Telemetry
+Exposes granular internal state updates via the LangGraph SDK. This allows frontends (like the InsightLink Chatbot) to visualize the agent's progress, tool calls, and decision-making logic in real-time.
 
-- **Hierarchical Indexing**: Tài liệu được chia thành nhiều cấp độ (Nodes) từ lớn đến nhỏ (2048, 512, 256 bytes).
-- **Auto-Merging Retriever**: Khi các node con nhỏ được tìm thấy, hệ thống sẽ tự động hợp nhất chúng thành node cha lớn hơn để cung cấp ngữ cảnh đầy đủ, tránh việc thông tin bị cắt vụn.
-- **LangChain Integration**: Sử dụng `LangChainLLM` để tích hợp LLM từ LangChain vào quy trình xử lý của LlamaIndex.
+---
 
-## ⚙️ Cài đặt
+## 🛠️ Technical Stack
 
-1. **Cài đặt môi trường**:
-   Project sử dụng virtual environment tại thư mục gốc `.venv`.
+*   **Orchestration**: LangGraph, LangChain.
+*   **Vector Database**: ChromaDB (Support for hierarchical indexing).
+*   **LLM Support**: Google Gemini (2.0-Flash / 2.5-Series), MetaClaw Proxy, OpenAI-compatible APIs.
+*   **Persistence**: MongoDB (Storing agent checkpoints and thread states).
 
-2. **Cấu hình file `.env`**:
+---
 
-```env
-GEMINI_API_KEY=your_gemini_api_key
-GROQ_API_KEY=your_groq_api_key
-TAVILY_API_KEY=your_tavily_api_key
-MCP_BASE_URL=http://localhost:8000
-```
+## 🚀 Getting Started
 
-## 🚀 Kiểm tra và Chạy thử
+### Prerequisites
+*   Python 3.10 or higher.
+*   Docker & Docker Compose (for MongoDB and ChromaDB).
 
-### Kiểm tra RAG và Embeddings:
+### Configuration
+Create a `.env` file based on `.env.example`:
 
 ```bash
-# Trong thư mục my-agent/
-..\.venv\Scripts\python.exe tests/verify_embeddings.py
-..\.venv\Scripts\python.exe tests/test_hierarchical_rag.py
+# 1. LLM & Tools
+GEMINI_API_KEY="your_api_key"
+TAVILY_API_KEY="your_tavily_key"
+
+# 2. MetaClaw (Brain) Configuration
+METACLAW_ENABLED=true
+METACLAW_BASE_URL="https://llmapi.iec-uit.com/v1"
+METACLAW_API_KEY="your_metaclaw_key"
+
+# 3. Persistence
+MONGO_URI=mongodb://localhost:27017
+MONGO_DB_NAME=mcp_agent_db
 ```
 
-### Chạy hệ thống (Interactive Mode):
-
+### Installation
+We provide a management script for ease of use:
 ```bash
-..\.venv\Scripts\python.exe tests/test_with_examiner.py
+# Initialize environment and dependencies
+sh manage.sh setup
 ```
 
-## 🛡️ Best Practices
+### Running the Engine
+```bash
+# Start the LangGraph API server in development mode
+sh manage.sh start
+```
 
-1. **Dữ liệu Lịch sử**: Luôn cho phép Examiner Agent chạy trước để tìm kiếm các pattern cũ, giúp Generator Agent hoạt động hiệu quả hơn.
-2. **Context merging**: Tính năng Auto-merging được bật mặc định, giúp các đoạn code dài không bị mất ngữ cảnh khi truy xuất.
+---
 
-## 📚 Tài liệu tham khảo
+## 🧪 Testing & Verification
 
-- LangChain: https://python.langchain.com/
-- LlamaIndex: https://www.llamaindex.ai/
-- LangGraph: https://langchain-ai.github.io/langgraph/
-- Tavily API: https://tavily.com/
+The suite includes dedicated tools for verifying the RAG pipeline and agent logic:
+```bash
+# Verify RAG & Embeddings
+python tests/verify_embeddings.py
+
+# Test Hierarchical RAG indexing
+python tests/test_hierarchical_rag.py
+
+# Run interactive Examiner loop
+python tests/test_with_examiner.py
+```
+
+---
+
+## 📄 License
+MIT License. See [LICENSE](LICENSE) for details.
