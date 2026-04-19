@@ -1,5 +1,59 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-04-20] - Kiến trúc State-Based & Đánh giá Thông minh (State-Based Architecture & Evaluation)
+
+### 🚀 Cải tiến Kiến trúc & Luồng dữ liệu (Architectural Improvements)
+
+- **Kiến trúc State-Based (Explicit State Architecture)**: Chuyển đổi từ cơ chế bóc tách marker dựa trên chuỗi (`API_DOCUMENTATION:`) sang sử dụng các key tường minh trong `AgentState` (`raw_api_doc`, `enriched_context`). Giải quyết triệt để lỗi mất dữ liệu khi tin nhắn bị LLM cắt ngắn hoặc format sai.
+- **Node Sửa lỗi Tool Call (Tool Argument Repair)**: Triển khai `tools_node_wrapper` đóng vai trò "người gác cổng" dữ liệu. Node này tự động kiểm tra và "vá" các tham số của tool delegation (`task`) bằng dữ liệu từ state nếu phát hiện LLM truyền thiếu hoặc truyền generic placeholder.
+- **Đánh giá Thành công bằng LLM (LLM-Based Success Evaluation)**: Nâng cấp `supervisor_final_node` sử dụng một pass LLM riêng biệt để đánh giá kết quả từ Generator. Hệ thống hiện xác thực "Server ID" và cấu hình JSON thực tế thay vì chỉ dựa vào từ khóa (keywords) mong manh.
+- **Luồng Tắt (Orchestration Fast-path)**: Triển khai cơ chế điều hướng nhanh trong `supervisor_final_node`. Sau khi Examiner hoàn thành enrichment, hệ thống sẽ tự động kích hoạt Generator mà không cần qua bước Supervisor routing, giúp giảm 1 turn LLM và tăng tốc độ phản hồi.
+
+### 🛠️ Tối ưu hóa Generator & Sửa lỗi (Generator Optimization & Bug Fixes)
+
+- **Truyền tải Documentation Toàn vẹn (Full Doc Transmission)**: Generator Agent hiện tự xây dựng tham số query cho tool `create_MCPServer` bằng cách lấy trực tiếp từ state, đảm bảo 100% dữ liệu API specification (ngay cả khi rất dài) được gửi đi mà không bị LLM làm hư hại hay cắt cụt.
+- **Fix Import & Reliability**: 
+  - Sửa lỗi `NameError: get_message_content` trong `generator_agent.py`.
+  - Tập trung hóa logic xử lý tin nhắn vào `my_agent/utils/state.py`.
+  - Cập nhật prompt điều phối để Supervisor nhận diện tốt hơn các tín hiệu hoàn thành từ MetaClaw Proxy.
+
+---
+
+## [2026-04-19] - Hệ thống Điều phối Đa Agent & Khắc phục Luồng Dữ liệu
+
+### 🚀 Khắc phục Luồng Dữ liệu & Vòng lặp Agent (Data Flow & Loop Fixes)
+
+- **Ngăn chặn Vòng lặp Vô tận (Infinite Loop Prevention)**: Tái cấu trúc logic `route_after_tools` trong `graph.py`. Hệ thống hiện chỉ kiểm tra tín hiệu điều phối (`DELEGATE_TO_...`) trong các tin nhắn của **turn hiện tại**, ngăn chặn việc kích hoạt lại các agent từ các tín hiệu cũ trong lịch sử.
+- **Kiểm tra Type Tin nhắn Chắc chắn (Robust Message Checking)**: Thay thế việc kiểm tra `isinstance` (dễ lỗi khi bị serialize) bằng việc kiểm tra thuộc tính `.type == "human"` hoặc `.type == "ai"`. Điều này đảm bảo hệ thống luôn tìm thấy yêu cầu gốc của người dùng (`Original Prompt`) ngay cả khi chạy trong Docker/LangGraph API.
+- **Chuẩn hóa Marker Dữ liệu (Marker Unification)**: Thống nhất sử dụng marker `API_DOCUMENTATION:` (viết hoa, có gạch dưới) trên toàn bộ hệ thống (`graph.py`, `examiner`, `generator`). Khắc phục lỗi mismatch khiến Examiner không tìm thấy documentation được trích xuất.
+- **Bảo toàn Ngữ cảnh Gốc (Context Preservation)**: Sửa lỗi `ORIGINAL_PROMPT: N/A`. Examiner hiện đã có thể tìm thấy và truyền lại yêu cầu gốc của người dùng tới Generator, giúp Generator có đủ ngữ cảnh để tạo server chính xác.
+
+### 🛠️ Tối ưu hóa RAG & Sửa lỗi (RAG Optimization & Bug Fixes)
+
+- **Giảm nhiễu RAG (Noise Reduction)**: Tăng ngưỡng độ tương đồng (`similarity threshold`) từ `0.35` lên `0.45` lên `0.45` để lọc bỏ các tài liệu lịch sử không liên quan (ví dụ: không lấy Reddit khi đang yêu cầu ArXiv).
+- **Sửa lỗi Code (Bug Fixes)**: 
+  - Khắc phục lỗi `NameError: name 're' is not defined` trong `generator_agent.py`.
+  - Sửa lỗi `tools_node_wrapper` cố gắng "sửa" tham số cho các tool không phải là delegation (như `mark_task_complete`).
+
+---
+
+## [2026-04-18] - MetaClaw Dynamic Orchestration & Intelligence Refinement
+
+### 🚀 Tái cấu trúc Luồng điều phối (Orchestration Refactor)
+
+- **MetaClaw-Centric Orchestration**: Chuyển đổi mô hình điều phối từ "Heuristic-based" (dựa trên từ khóa) sang "Intelligence-based" (dựa trên trí tuệ của MetaClaw). Hiện tại, chỉ MetaClaw (Supervisor) mới có quyền quyết định khi nào hoàn thành task.
+- **Cumulative State Tracking**: Nâng cấp trường `history` trong `AgentState` sử dụng `operator.add`. Điều này cho phép hệ thống lưu trữ toàn bộ nhật ký các bước đã thực hiện (ví dụ: "Examiner analyzed docs", "Generator finished attempt") mà không bị ghi đè, giúp Supervisor có cái nhìn toàn cảnh về tiến trình.
+- **Simplified Supervisor Final Node**: Loại bỏ các logic kiểm tra thành công cứng nhắc (regex/keyword matching). Node này hiện đóng vai trò như một "Evaluator bridge" sạch sẽ, luôn quay lại Supervisor để đánh giá kết quả từ sub-agents.
+- **Sequential Awareness Prompt**: Cập nhật `_ROUTING_SYSTEM_PROMPT` để MetaClaw nhận diện được quy trình tiêu chuẩn: `Examiner` (Phân tích) → `Generator` (Tạo) cho các yêu cầu tạo server.
+
+### 🛠️ Tối ưu hóa & Độ tin cậy (Optimization & Reliability)
+
+- **Centralized LLM Factory**: Triển khai `my-agent/utils/llm_factory.py` làm entry point duy nhất cho tất cả LLM calls. Tự động tích hợp MetaClaw Proxy khi phát hiện biến môi trường `METACLAW_ENABLED=true`.
+- **Retry Guard Mechanism**: Thiết lập `MAX_RETRIES = 3` để ngăn chặn vòng lặp vô tận khi Agent không thể hoàn thành task.
+- **Node Tracking Support**: Cập nhật các wrapper `examiner_node_with_tracking` và `generator_node_with_tracking` để tự động đẩy các tracking markers vào lịch sử tích lũy.
+
+---
+
 ## [2026-04-14] - MetaClaw Support & LLM Proxy Configuration
 
 ### 🚀 Tính năng mới & Cơ sở hạ tầng (New Features & Infrastructure)
@@ -11,7 +65,6 @@
 ### 🛠️ Tối ưu hóa Agent (Agent Optimization)
 
 - **Flexible Provider Logic**: Agent giờ đây có khả năng chuyển đổi linh hoạt giữa trực tiếp Google SDK và MetaClaw Proxy dựa trên cấu hình môi trường, giúp dễ dàng triển khai trong các môi trường khác nhau (Docker vs Local).
-
 
 ## [2026-04-13 12:30] - Cải thiện Generator Agent & Chuẩn hóa Output MCP Config
 

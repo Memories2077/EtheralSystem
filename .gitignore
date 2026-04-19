@@ -2,6 +2,9 @@
 .agents/
 .qwen/
 conductor/
+.chroma_data/
+
+CLAUDE.md
 
 ollama_data/
 chroma_data/

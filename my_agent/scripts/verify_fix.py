@@ -3,9 +3,9 @@ import os
 import sys
 
 # Add parent directory to path so we can import agents, utils, etc.
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from utils.vector_db import save_mcp_artifacts, search_mcp_artifacts
+from my_agent.utils.vector_db import save_mcp_artifacts, search_mcp_artifacts
 
 async def main():
     server_id = "test_server_fix"
