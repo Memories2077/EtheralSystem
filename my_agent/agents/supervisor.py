@@ -1,13 +1,14 @@
 """
 Supervisor Agent - Coordinates and delegates tasks to sub-agents
 """
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, BaseMessage
+from langchain_core.messages import HumanMessage, BaseMessage, SystemMessage, AIMessage
+
 from typing import Dict, Any, Optional
 from pydantic import SecretStr
 
-from config import load_prompt, AGENT_CONFIG, API_CONFIG
-from tools.supervisor_tools import SUPERVISOR_TOOLS
+from my_agent.config import load_prompt, AGENT_CONFIG, API_CONFIG
+from my_agent.tools.supervisor_tools import SUPERVISOR_TOOLS
+from my_agent.utils.llm_factory import get_llm
 
 
 class SupervisorAgent:
@@ -18,12 +19,12 @@ class SupervisorAgent:
         self.name = config["name"]
         self.prompt = load_prompt(config["prompt_file"])
         
-        # Initialize model (streaming=False to avoid 'Invalid diff' error with tool calls)
-        api_key = SecretStr(API_CONFIG["gemini_api_key"])
-        self.model = ChatGoogleGenerativeAI(model=config["model"], api_key=api_key)
+        # Initialize model via factory (MetaClaw or direct)
+        self.model = get_llm(temperature=config["temperature"])
         
         # Bind tools to the model
         self.model_with_tools = self.model.bind_tools(SUPERVISOR_TOOLS)
+
     
     async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """

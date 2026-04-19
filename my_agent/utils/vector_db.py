@@ -15,7 +15,7 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import SecretStr
 
-from config import API_CONFIG, AGENT_CONFIG
+from my_agent.config import API_CONFIG, AGENT_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -250,8 +250,9 @@ def _sync_search_artifacts(query_text: str, n_results: int) -> List[Dict[str, An
         
         # Threshold filter to avoid passing completely unrelated context 
         # (e.g. asking for Notion but getting Reddit)
-        if score < 0.35:
-            logger.warning(f"[VectorDB] ⚠️ Discarding chunk due to low score {score:.4f} < 0.35")
+        # Increased threshold to 0.45 for higher precision and less noise
+        if score < 0.45:
+            logger.warning(f"[VectorDB] ⚠️ Discarding chunk due to low score {score:.4f} < 0.45")
             continue
             
         formatted_results.append({

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -10,12 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- Layer dependency cache ---
 # Chỉ copy pyproject.toml trước để pip install được cache riêng.
 # Layer này chỉ bị invalidate khi pyproject.toml thay đổi,
-# KHÔNG bị ảnh hưởng bởi thay đổi code trong my-agent/.
+# KHÔNG bị ảnh hưởng bởi thay đổi code trong my_agent/.
 COPY pyproject.toml .
 
 # Tạo package stub để pip install . không yêu cầu source code. 
 # Cài đặt thêm langgraph-cli để có lệnh 'langgraph' trong PATH.
-RUN mkdir -p my-agent && pip install --no-cache-dir . langgraph-cli
+RUN mkdir -p my_agent && pip install --no-cache-dir . langgraph-cli
 
 # --- Layer source code ---
 # Copy toàn bộ source code sau khi đã cài xong dependencies.

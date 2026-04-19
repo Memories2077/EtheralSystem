@@ -1,16 +1,16 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
+
 from typing import Dict, Any, Optional, List, Sequence
 from pydantic import SecretStr
-from tools.generator_tools import create_MCPServer, test_mcp_server
-from utils.vector_db import save_mcp_artifacts
+from my_agent.tools.generator_tools import create_MCPServer, test_mcp_server
+from my_agent.utils.vector_db import save_mcp_artifacts
 
-from config import load_prompt, AGENT_CONFIG, API_CONFIG, PROVIDER_CONFIG
-from utils.state import AgentState # Import from centralized location
+from my_agent.config import load_prompt, AGENT_CONFIG, API_CONFIG, PROVIDER_CONFIG
+from my_agent.utils.state import AgentState, get_message_content # Import from centralized location
 
 import os
 import httpx
+import re
 
 custom_client = httpx.Client(
     timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
@@ -25,102 +25,68 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     config = AGENT_CONFIG["generator_agent"]
     system_prompt = config["prompt_file"]
 
-    # Initialize LLM (streaming=False to avoid 'Invalid diff' error with tool calls)
-    gemini_api_key = SecretStr(API_CONFIG["gemini_api_key"])
-    groq_api_key = SecretStr(API_CONFIG["groq_api_key"])
+    # Initialize LLM via factory
+    from my_agent.utils.llm_factory import get_llm
+    llm = get_llm(temperature=config["temperature"])
 
-    # MetaClaw Integration
-    metaclaw_url = API_CONFIG.get("metaclaw_base_url")
-    metaclaw_enabled = os.getenv("METACLAW_ENABLED", "false").lower() == "true"
-
-    if metaclaw_enabled and metaclaw_url:
-        from langchain_openai import ChatOpenAI
-        print(f"[Generator] Using MetaClaw proxy at {metaclaw_url}")
-        llm = ChatOpenAI(
-            model=PROVIDER_CONFIG.get("metaclaw", "gemini-2.0-flash"),
-            base_url=metaclaw_url,
-            api_key=SecretStr(API_CONFIG.get("metaclaw_api_key", "metaclaw")),
-            temperature=config["temperature"]
-        )
-    elif gemini_api_key:
-        llm = ChatGoogleGenerativeAI(model=PROVIDER_CONFIG["gemini"], api_key=gemini_api_key)
-    elif groq_api_key:
-        llm = ChatGroq(model_name=PROVIDER_CONFIG["groq"], api_key=groq_api_key)
-    else:
-        raise Exception("No valid LLM configuration found (Gemini, Groq, or MetaClaw)")
 
     llm_with_tools = llm.bind_tools([create_MCPServer])
     
-    # Find the delegation task
-    # With ToolNode: messages = [HumanMessage, AIMessage with tool_calls, ToolMessage with result]
-    # Without ToolNode: messages = [HumanMessage, AIMessage with tool_calls]
+    # 1. State-backed Data Extraction (Primary Source)
+    raw_api_doc = state.get("raw_api_doc", "")
+    enriched_context_json = state.get("enriched_context", "[]")
+    
+    # 2. Find information from messages (Fallback/Source for user_id, email)
     task_content = ""
-    
-    # Try to find task from message content
     for msg in reversed(messages):
-        content = str(getattr(msg, 'content', ''))
+        content = get_message_content(msg)
         if "DELEGATE_TO_GENERATOR:" in content:
-            # Extract task from "DELEGATE_TO_GENERATOR: [task]"
             task_content = content.replace("DELEGATE_TO_GENERATOR:", "").strip()
-            print(f"[Generator] Found task from message content: {task_content[:200]}...")
+            # Strip the ORIGINAL_PROMPT header block if present (examiner adds it,
+            # but we get the real doc from raw_api_doc in state - avoid double parsing)
+            if task_content.startswith("ORIGINAL_PROMPT:"):
+                # Jump past the ORIGINAL_PROMPT section, start from API_DOCUMENTATION
+                api_doc_idx = task_content.find("API_DOCUMENTATION:")
+                if api_doc_idx != -1:
+                    task_content = task_content[api_doc_idx:]
             break
-            
-    # Fallback: Try to find from AIMessage tool_calls (old flow without ToolNode)
-    if not task_content:
-        for msg in reversed(messages):
-            tool_calls = getattr(msg, 'tool_calls', None)
-            if tool_calls:
-                for tool_call in tool_calls:
-                    if "delegate_to_generator_agent" in tool_call.get("name", ""):
-                        task_content = tool_call.get("args", {}).get("task", "")
-                        print(f"[Generator] Found task from AIMessage tool_calls: {task_content[:200]}...")
-                        break
-                if task_content:
-                    break
-
     
-    if not task_content:
-        print("[Generator] ⚠️  WARNING: No task content found! Using default.")
-        print(f"[Generator] Messages received: {len(messages)} messages")
-        for idx, msg in enumerate(messages):
-            print(f"  [{idx}] {type(msg).__name__}: {str(msg)[:100]}...")
+    if not task_content and not raw_api_doc:
+        print("[Generator] ⚠️ WARNING: No task content or raw_api_doc found!")
         task_content = "Generate content based on the user's request"
     
-    # Parse task_content to extract API documentation, userId, and email
-    # Expected format:
-    # API_DOCUMENTATION:
-    # [content]
-    # USER_ID: [userId]
-    # EMAIL: [email]
-    
-    def parse_task_content(content: str) -> tuple:
-        """Parse task content to extract API doc, userId, and email"""
-        api_doc = ""
+    def parse_task_metadata(content: str) -> tuple:
+        """Parse task metadata (userId, email) from message content"""
         user_id = "default_user"
         email = "user@example.com"
         
-        # Extract API documentation
-        if "API_DOCUMENTATION:" in content:
-            parts = content.split("USER_ID:", 1)
-            api_doc = parts[0].replace("API_DOCUMENTATION:", "").strip()
+        # Extract User info
+        uid_match = re.search(r"USER_ID:\s*([^\n\r]*)", content)
+        if uid_match:
+            user_id = uid_match.group(1).strip()
             
-            # Extract userId and email if present
-            if len(parts) > 1:
-                remaining = parts[1]
-                if "EMAIL:" in remaining:
-                    user_parts = remaining.split("EMAIL:", 1)
-                    user_id = user_parts[0].strip()
-                    email = user_parts[1].strip().split("\n")[0].strip()
-                else:
-                    user_id = remaining.strip().split("\n")[0].strip()
-        else:
-            # If no format markers, treat entire content as API doc
-            api_doc = content.strip()
-        
-        return api_doc, user_id, email
+        email_match = re.search(r"EMAIL:\s*([^\n\r]*)", content)
+        if email_match:
+            email = email_match.group(1).strip()
+            
+        return user_id, email
     
-    # Add parsed parameters to the task for the generator
-    api_doc, user_id, email = parse_task_content(task_content)
+    # Get metadata from task_content (fallback mechanism)
+    msg_user_id, msg_email = parse_task_metadata(task_content)
+    
+    # Final data consolidation
+    # use raw_api_doc if available, otherwise try to extract from msg content
+    if not raw_api_doc:
+        # Robust extraction from task_content if state was empty
+        ad_match = re.search(r"API_DOCUMENTATION:\s*(.*?)(?=\s*\nENRICHED_CONTEXT|\s*\nUSER_ID:|\s*\Z)", task_content, re.DOTALL)
+        api_doc = ad_match.group(1).strip() if ad_match else task_content
+    else:
+        api_doc = raw_api_doc
+
+    user_id = msg_user_id
+    email = msg_email
+    
+    print(f"[Generator] 🛠️ Ready with API doc ({len(api_doc)} chars) and RAG context ({len(enriched_context_json)} chars).")
     
     # CRITICAL: Pre-construct the query with FULL API documentation
     # This ensures the complete API doc (no truncation) is passed to create_MCPServer
@@ -146,11 +112,12 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     Call the create_MCPServer tool now with the query parameter.
     The full API documentation has been prepared for you.
     Just invoke: create_MCPServer(query=[api_doc, userId, email])"""
-    
-    # Create generator query - combine system prompt with task to avoid template issues
-    # Some models have issues when SystemMessage is first, so we combine them
+
     combined_prompt = f"""[SYSTEM INSTRUCTION]
         {system_prompt}
+
+        [TECHNICAL CONTEXT (RAG)]
+        {enriched_context_json}
 
         [USER REQUEST]
         {enhanced_task}"""
@@ -235,21 +202,11 @@ async def generator_agent_node(state: AgentState) -> AgentState:
         # Generate final response with tool results
         final_prompt = """Based on the tool results above, create a final response for the user.
         If the MCP Server was created successfully, you MUST include:
-        1. A success message with the Server ID.
-        2. The 'Server Details:' and 'Configuration:' sections exactly as required by the supervisor.
+        1. The exact phrase: "✅ MCP Server created successfully!"
+        2. The 'Server Details:' section including "Server ID: [id]".
         3. The full JSON configuration object for the user to copy.
         
-        Example format:
-        ✅ MCP Server created successfully!
-        
-        Server Details:
-        - Server ID: [id]
-        - Status: active
-        
-        Configuration:
-        ```json
-        { ... }
-        ```
+        This will signal the supervisor that the task is complete.
         """
         
         final_messages = generator_messages + [response] + [
@@ -284,9 +241,10 @@ class GeneratorAgent:
         self.name = config["name"]
         self.prompt = load_prompt(config["prompt_file"])
         
-        # Initialize model
-        api_key = SecretStr(API_CONFIG["gemini_api_key"])
-        self.model = ChatGoogleGenerativeAI(mode=config["model"], api_key=api_key)
+        # Initialize model via factory
+        from my_agent.utils.llm_factory import get_llm
+        self.model = get_llm(temperature=config["temperature"])
+
 
     async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
