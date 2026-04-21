@@ -14,6 +14,12 @@
   - `METACLAW_API_KEY=metaclaw`
 - **Benefit**: MCP server generation now benefits from MetaClaw's skill library, improving quality and consistency across generated code.
 
+## [2026-04-21 00:00] - Configuration Documentation & Centralization Improvements
+
+- **Documentation**: Updated `.env.example` with comprehensive MetaClaw configuration documentation, including clear explanations of all environment variables and their purpose.
+- **Consistency**: Aligned configuration structure with `chatbot_mcp_client` repository for better developer experience across the monorepo.
+- **Testing**: Verified MetaClaw integration remains fully functional after documentation updates.
+
 ## [2026-04-13 21:00] - Dynamic PUBLIC_URL for Local & Tunnel Access
 
 - **Issue**: Hardcoded `my-proxy` host prevented local tools (like MCP Inspector) from connecting to generated servers when run outside the Docker network.
