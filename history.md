@@ -1,5 +1,13 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-04-21] - Cải tiến Cấu hình & Tích hợp MetaClaw (Configuration Improvements & MetaClaw Integration)
+
+- **Cấu hình Tập trung**: Cải thiện `my_agent/config/__init__.py` với các biến môi trường rõ ràng hơn và giá trị mặc định hợp lý.
+- **Tích hợp MetaClaw**: Xác nhận `METACLAW_ENABLED`, `METACLAW_BASE_URL`, và `METACLAW_API_KEY` được sử dụng đúng trong `llm_factory.py`.
+- **Tài liệu**: Bổ sung hướng dẫn cấu hình MetaClaw trong `CLAUDE.md` và `.env` mẫu.
+
+---
+
 ## [2026-04-20] - Kiến trúc State-Based & Đánh giá Thông minh (State-Based Architecture & Evaluation)
 
 ### 🚀 Cải tiến Kiến trúc & Luồng dữ liệu (Architectural Improvements)
