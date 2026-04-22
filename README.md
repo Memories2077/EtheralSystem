@@ -56,14 +56,42 @@ src/skills/
 
 ---
 
-## ⚡ Quick Start
+## 🚀 Quick Start
 
+### AI Provider Configuration
 
-### Prerequisites
+mcp-gen supports multiple AI providers via LangChain:
 
-- Docker & Docker Compose installed
-- Access to Ollama server (https://ollama.timnguyen.id.vn)
-- Node.js 20+ (for local development)
+1. **Google Gemini** (default): Fast, cost-effective for code generation
+2. **Groq**: High-performance inference with Llama models
+3. **MetaClaw** (recommended): Anthropic Claude via MetaClaw proxy with skill injection and continuous learning
+
+#### Using MetaClaw (Recommended for Production)
+
+MetaClaw acts as an intelligent proxy that injects relevant skills and accumulates knowledge across generations:
+
+1. Install and start MetaClaw on your host machine:
+   ```bash
+   pip install -e ".[evolve]"
+   metaclaw setup  # Follow wizard to configure
+   metaclaw start --mode skills_only --port 30000
+   ```
+
+2. Configure mcp-gen to use MetaClaw by editing `.env`:
+   ```bash
+   METACLAW_ENABLED=true
+   METACLAW_BASE_URL=http://host.docker.internal:30000/v1
+   METACLAW_API_KEY=metaclaw
+   ```
+
+3. Keep your existing Gemini/Groq API keys as fallback (used only if MetaClaw is disabled).
+
+**Benefits:**
+- Skill injection: MetaClaw searches `~/.metaclaw/skills/` for relevant patterns
+- Continuous improvement: MetaClaw learns from successful generations
+- Consistent quality: Best practices are automatically applied
+
+**Note:** When using Docker Compose, ensure MetaClaw is accessible from containers via `host.docker.internal` (macOS/Windows) or host IP on Linux.
 
 ### Installation Steps
 
@@ -77,26 +105,31 @@ src/skills/
 2. Create an environment file:
 
    ```bash
-   cp env_example.txt .env
+   cp .env.example .env
    ```
 
-   Configure the following variables:
+   Configure your AI provider(s). **Recommended: Use MetaClaw for best results:**
 
    ```bash
-   # Ollama Configuration (required)
-   OLLAMA_BASE_URL=https://ollama.timnguyen.id.vn
-   OLLAMA_MODEL=qwen2.5:7b
-   OLLAMA_TEMPERATURE=0.5
-   OLLAMA_TIMEOUT_MS=60000
+   # MetaClaw (recommended) - provides skill injection and continuous learning
+   METACLAW_ENABLED=true
+   METACLAW_BASE_URL=http://localhost:30000/v1
+   METACLAW_API_KEY=metaclaw
 
-   # MongoDB & RabbitMQ (optional, defaults provided in docker-compose)
-   MONGO_URI=mongodb://mongodb:27017
-   RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+   # Keep Gemini or Groq as fallback (only used if MetaClaw is disabled)
+   GEMINI_API_KEY=your_gemini_api_key
+   GEMINI_MODEL=gemini-2.5-flash
+   # or
+   GROQ_API_KEY=your_groq_api_key
+   GROQ_MODEL=llama-3.3-70b-versatile
+   ```
 
-   # Public URL for MCP server access
-   PUBLIC_URL=https://your-domain.com
+   Other required settings:
+   ```bash
+   # Docker network for generated MCP servers
+   MCP_NETWORK=mcp-network
 
-   # Default Docker Image for MCP Servers (recommended: pre-build this image)
+   # Base Docker image for generated MCP servers (build this in next step)
    DEFAULT_MCP_IMAGE=mcp-gen
    ```
 
