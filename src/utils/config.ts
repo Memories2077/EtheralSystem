@@ -39,4 +39,6 @@ export const metaclawConfig = {
   baseUrl: process.env.METACLAW_BASE_URL || "http://localhost:30000/v1",
   apiKey: process.env.METACLAW_API_KEY || "metaclaw",
   enabled: process.env.METACLAW_ENABLED === "true",
+  topP: 0.5,
+  maxTokens: 100000,
 };

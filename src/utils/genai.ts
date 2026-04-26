@@ -87,7 +87,8 @@ export async function genaiCompletion({
         apiKey: metaclawConfig.apiKey,
         model: selectedModel,
         temperature: temperature ?? currentConfig.temperature,
-        maxTokens: maxTokens,
+        topP: metaclawConfig.topP,
+        maxTokens: maxTokens ?? metaclawConfig.maxTokens,
         maxRetries: 2,
       });
     } else {
