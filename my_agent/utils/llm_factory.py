@@ -30,18 +30,20 @@ def get_llm(model_name: Optional[str] = None, temperature: float = 0.3, **kwargs
     if metaclaw_enabled:
         base_url = API_CONFIG.get("metaclaw_base_url")
         api_key = API_CONFIG.get("metaclaw_api_key", "metaclaw")
-        
-        # Default model for MetaClaw if None provided, 
+
+        # Default model for MetaClaw if None provided,
         # though MetaClaw often ignores this if it has its own logic.
         # We use the configured metaclaw model from PROVIDER_CONFIG as a placeholder.
         target_model = PROVIDER_CONFIG.get("metaclaw", "gemini-2.5-flash")
-        
+
         print(f"[LLM-Factory] Using MetaClaw proxy at {base_url}")
         return ChatOpenAI(
             model=target_model,
             base_url=base_url,
             api_key=SecretStr(api_key),
             temperature=temperature,
+            top_p=API_CONFIG.get("metaclaw_top_p", 0.5),
+            max_tokens=API_CONFIG.get("metaclaw_max_tokens", 100000),
             **kwargs
         )
     
