@@ -52,6 +52,8 @@ API_CONFIG = {
     "groq_api_key": get_env_var("GROQ_API_KEY"),
     "metaclaw_api_key": get_env_var("METACLAW_API_KEY", "metaclaw"),
     "metaclaw_base_url": get_env_var("METACLAW_BASE_URL", "http://host.docker.internal:30000/v1"),
+    "metaclaw_top_p": float(get_env_var("METACLAW_TOP_P", "0.5")),
+    "metaclaw_max_tokens": int(get_env_var("METACLAW_MAX_TOKENS", "100000")),
     "tavily_api_key": get_env_var("TAVILY_API_KEY"),
     "mcp_base_url": get_env_var("MCP_BASE_URL", "http://docker-manager:8080/api"),
     "mcp_api_key": get_env_var("MCP_API_KEY"),

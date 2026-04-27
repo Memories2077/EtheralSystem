@@ -1,5 +1,21 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-04-27] - Khắc phục lỗi Client MetaClaw & Cấu hình Model (MetaClaw Client Fix & Model Config)
+
+- **Sửa lỗi Khởi tạo Client**: Khắc phục lỗi `AttributeError` khi gọi `ChatOpenAI` thông qua MetaClaw Proxy bằng cách chuẩn hóa tham số khởi tạo.
+- **Cập nhật Model mặc định**: Thay đổi model mặc định cho MetaClaw sang `qwen/qwen3-next-80b-a3b-instruct` và cập nhật khóa cấu hình thành `METACLAW_MODEL`.
+- **Tối ưu hóa llm_factory**: Cải thiện logic chọn model và bổ sung chú thích về việc xử lý headers trong `llm_factory.py`.
+
+---
+
+## [2026-04-21] - Cải tiến Cấu hình & Tích hợp MetaClaw (Configuration Improvements & MetaClaw Integration)
+
+- **Cấu hình Tập trung**: Cải thiện `my_agent/config/__init__.py` với các biến môi trường rõ ràng hơn và giá trị mặc định hợp lý.
+- **Tích hợp MetaClaw**: Xác nhận `METACLAW_ENABLED`, `METACLAW_BASE_URL`, và `METACLAW_API_KEY` được sử dụng đúng trong `llm_factory.py`.
+- **Tài liệu**: Bổ sung hướng dẫn cấu hình MetaClaw trong `CLAUDE.md` và `.env` mẫu.
+
+---
+
 ## [2026-04-20] - Kiến trúc State-Based & Đánh giá Thông minh (State-Based Architecture & Evaluation)
 
 ### 🚀 Cải tiến Kiến trúc & Luồng dữ liệu (Architectural Improvements)
