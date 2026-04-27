@@ -34,9 +34,11 @@ def get_llm(model_name: Optional[str] = None, temperature: float = 0.3, **kwargs
         # Default model for MetaClaw if None provided,
         # though MetaClaw often ignores this if it has its own logic.
         # We use the configured metaclaw model from PROVIDER_CONFIG as a placeholder.
-        target_model = PROVIDER_CONFIG.get("metaclaw", "gemini-2.5-flash")
+        target_model = PROVIDER_CONFIG.get("METACLAW_MODEL", "qwen/qwen3-next-80b-a3b-instruct")
 
         print(f"[LLM-Factory] Using MetaClaw proxy at {base_url}")
+        # MetaClaw can accept custom headers via configuration.defaultHeaders if needed.
+        # By default, no special headers are added (session_done is not universally required).
         return ChatOpenAI(
             model=target_model,
             base_url=base_url,

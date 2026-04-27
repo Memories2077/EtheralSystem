@@ -30,7 +30,7 @@ case "$1" in
         echo " - Frontend: http://localhost:3000"
         echo " - LangGraph: http://localhost:2024"
         echo " - MCP Gen: http://localhost:8080"
-        ;;
+        ;;  
     down)
         echo "--- Dừng chatbot client ---"
         (cd "$CHATBOT_DIR" && docker compose down)
