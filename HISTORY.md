@@ -1,5 +1,58 @@
 # Project History Log
 
+## [2026-04-27] - Security & Code Quality Improvements
+
+- **Security Fix**: Replaced wildcard CORS (`Access-Control-Allow-Origin: *`) with configurable origin whitelist
+  - Added `CORS_ORIGINS` environment variable (comma-separated list of allowed origins)
+  - Properly supports Docker container-to-container communication without hardcoding localhost
+  - Enables `Access-Control-Allow-Credentials` for authorized requests
+- **Feature Enhancement**: Added comprehensive input validation to feedback endpoint
+  - Comment length limit (1000 characters max)
+  - HTML sanitization to prevent XSS
+  - Type-safe FeedbackEntry interface
+- **Reliability**: Fixed container recovery state synchronization
+  - Ensures in-memory server state matches database after container cleanup
+  - Prevents stale container references from persisting
+- **Observability**: Added database index on `{ status: 1, updatedAt: -1 }` to optimize stats queries
+- **Error Handling**: Implemented standardized `sendError()` helper
+  - Consistent error response format across all endpoints
+  - Development mode includes error details; production safe
+  - Removes inconsistent response structures
+- **Retry Logic**: Fixed LLM call count logging (was off by one)
+- **Rate Limiting**: Added in-memory rate limiter to feedback endpoint
+  - Configurable via `FEEDBACK_RATE_LIMIT_WINDOW_MS` and `FEEDBACK_RATE_LIMIT_MAX`
+  - Prevents abuse of feedback system
+- **TypeScript Safety**: Eliminated unsafe `any` casts
+  - Defined `FeedbackEntry` interface
+  - Improved type annotations in `SaveToDB` method
+  - Better type inference throughout
+- **Files Modified**:
+  - `src/mcp-server-manager.ts` (CORS, validation, error handling, rate limiting, indexing)
+  - `src/utils/config.ts` (whitespace cleanup)
+
+## [2026-04-25] - MCP Server Feedback API & CORS Support
+
+- **Feature**: Added feedback collection for generated MCP servers with like/dislike counters and persistent feedback history.
+- **Schema Extension**: Extended `ServerLogEntry` to include:
+  - `likeCount: number` (default 0)
+  - `dislikeCount: number` (default 0)
+  - `feedbacks: Array<{ feedbackId, type, userId?, comment?, timestamp }>`
+- **API Endpoint**: Created `POST /api/mcp/:serverId/feedback`:
+  - Validates `type` is 'like' or 'dislike'
+  - Atomic MongoDB updates (`$inc` counters, `$push` feedback entry)
+  - Returns updated `likeCount` and `dislikeCount`
+- **CORS**: Enabled cross-origin requests to support chatbot frontend on port 9002:
+  - `Access-Control-Allow-Origin: *`
+  - `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`
+  - `Access-Control-Allow-Headers: Content-Type, Authorization`
+- **Sanitization**: Updated `/api/mcp/servers` to filter sensitive fields before sending to frontend:
+  - Removed: `token`, `containerId`, `hostPort`, `containerPort`, `dockerImage`, `inputContent`, `action`, `buildLogs`, `ragContext`
+  - Sanitized `feedbacks` array to hide `userId` fields
+- **Client**: `chatbot_mcp_client` implemented corresponding UI component (`McpServerFeedbackList`) with optimistic updates.
+- **Files Modified**:
+  - `src/mcp-server-manager.ts` (ServerLogEntry interface, feedback endpoint, CORS middleware, sanitization)
+- **Integration**: Feedback data now stored in same MongoDB collection (`logs`) as server metadata, maintaining data locality.
+
 ## [2026-04-20 00:00] - MetaClaw Integration for Intelligent Code Generation
 
 - **Feature**: Integrated mcp-gen with MetaClaw learning proxy to enhance code generation with accumulated skills and best practices.

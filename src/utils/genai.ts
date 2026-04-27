@@ -37,6 +37,7 @@ export interface GenAICompletionParams {
   messages: GenAIChatMessage[];
   maxTokens?: number;
   temperature?: number;
+  sessionDone?: boolean; // Add sessionDone flag for MetaClaw memory ingestion
 }
 
 // Convert GenAIChatMessage to LangChain message format
@@ -57,6 +58,7 @@ export async function genaiCompletion({
   messages,
   temperature,
   maxTokens,
+  sessionDone = true,
 }: GenAICompletionParams): Promise<string> {
   // 1. Auto-detect available provider to determine which model to use
   let selectedProvider: "gemini" | "groq";
@@ -83,11 +85,16 @@ export async function genaiCompletion({
       llm = new ChatOpenAI({
         configuration: {
           baseURL: metaclawConfig.baseUrl,
+          // X-Session-Done must be an HTTP header, NOT in modelKwargs (request body)
+          defaultHeaders: {
+            "X-Session-Done": sessionDone ? "true" : "false",
+          },
         },
         apiKey: metaclawConfig.apiKey,
         model: selectedModel,
         temperature: temperature ?? currentConfig.temperature,
-        maxTokens: maxTokens,
+        topP: metaclawConfig.topP,
+        maxTokens: maxTokens ?? metaclawConfig.maxTokens,
         maxRetries: 2,
       });
     } else {
