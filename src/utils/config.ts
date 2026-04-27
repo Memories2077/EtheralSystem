@@ -29,7 +29,6 @@ export const groqConfig = {
   timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 300000),
 };
 
-
 // Keep backward compatibility - point to Gemini now
 export const openaiConfig = geminiConfig;
 export const ollamaConfig = geminiConfig;
@@ -38,7 +37,9 @@ export const ollamaConfig = geminiConfig;
 export const metaclawConfig = {
   baseUrl: process.env.METACLAW_BASE_URL || "http://localhost:30000/v1",
   apiKey: process.env.METACLAW_API_KEY || "metaclaw",
+  temperature: 0.5,
   enabled: process.env.METACLAW_ENABLED === "true",
+  model: process.env.METACLAW_MODEL || "qwen/qwen3-next-80b-a3b-instruct",
   topP: 0.5,
   maxTokens: 100000,
 };

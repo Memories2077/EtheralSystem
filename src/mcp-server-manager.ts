@@ -15,6 +15,67 @@ import { writeFileSafe, remove, exists } from "./utils/fs.ts";
 import { confirm } from "./generator/validator.ts";
 import { generateOpenAPISpec } from "./generator/index.ts";
 
+// Simple in-memory rate limiter for feedback endpoint
+interface RateLimitWindow {
+  timestamps: number[];
+  resetTime: number;
+}
+
+class SimpleRateLimiter {
+  private windows: Map<string, RateLimitWindow> = new Map();
+  private readonly windowMs: number;
+  private readonly maxRequests: number;
+
+  constructor(windowMs: number = 15 * 60 * 1000, maxRequests: number = 100) {
+    this.windowMs = windowMs;
+    this.maxRequests = maxRequests;
+  }
+
+  private cleanupOldWindows(): void {
+    const now = Date.now();
+    for (const [ip, window] of this.windows.entries()) {
+      if (now > window.resetTime) {
+        this.windows.delete(ip);
+      }
+    }
+  }
+
+  isLimited(ip: string): boolean {
+    this.cleanupOldWindows();
+    const now = Date.now();
+    let window = this.windows.get(ip);
+
+    if (!window || now > window.resetTime) {
+      window = {
+        timestamps: [],
+        resetTime: now + this.windowMs,
+      };
+      this.windows.set(ip, window);
+    }
+
+    // Remove timestamps outside the current window
+    window.timestamps = window.timestamps.filter(ts => now - ts < this.windowMs);
+
+    if (window.timestamps.length >= this.maxRequests) {
+      return true;
+    }
+
+    window.timestamps.push(now);
+    return false;
+  }
+
+  getRemaining(ip: string): number {
+    const window = this.windows.get(ip);
+    if (!window) return this.maxRequests;
+    return Math.max(0, this.maxRequests - window.timestamps.length);
+  }
+}
+
+const feedbackRateLimiter = new SimpleRateLimiter(
+  Number(process.env.FEEDBACK_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  Number(process.env.FEEDBACK_RATE_LIMIT_MAX) || 100
+);
+
 import {
   MessageQueueService,
   BuildMessage,
@@ -47,6 +108,18 @@ interface ServerLogEntry {
   inputContent: string;
   action: "created" | "error" | "deleted" | "started" | "stopped";
   ragContext?: string;
+  // Feedback fields
+  likeCount: number;
+  dislikeCount: number;
+  feedbacks: FeedbackEntry[];
+}
+
+interface FeedbackEntry {
+  feedbackId: string;
+  type: "like" | "dislike";
+  userId?: string;
+  comment?: string;
+  timestamp: Date;
 }
 
 interface PersistedData {
@@ -356,9 +429,10 @@ class MCPServerManager {
       this.db = this.mongoClient.db(this.dbName);
       this.logsCollection = this.db.collection<ServerLogEntry>("logs");
 
-      // Create index for better query performance
+      // Create indexes for better query performance
       await this.logsCollection.createIndex({ serverId: 1 });
       await this.logsCollection.createIndex({ createdAt: -1 });
+      await this.logsCollection.createIndex({ status: 1, updatedAt: -1 }); // Optimize stats queries
 
       console.log("✅ Connected to MongoDB successfully");
     } catch (error) {
@@ -441,16 +515,17 @@ class MCPServerManager {
     }
   }
 
-  private async SaveToDB(server: ServerLogEntry, action: string) {
+  private async SaveToDB(server: ServerLogEntry, action: "created" | "error" | "deleted" | "updated") {
     try {
       if (!this.logsCollection) {
         console.warn("MongoDB not initialized, skipping database save");
         return;
       }
 
-      // Create a copy to avoid mutating the original object's _id
+      // Create a copy to avoid mutating the original object
       const dataToSave = { ...server };
-      delete (dataToSave as any)._id; // Mongo doesn't like updating/upserting with _id in the body
+      // MongoDB _id cannot be in update/upsert bodies
+      delete (dataToSave as any)._id;
 
       dataToSave.updatedAt = new Date();
 
@@ -653,6 +728,13 @@ class MCPServerManager {
               },
             );
 
+            // Update in-memory state to match database
+            const inMemoryServer = this.servers.get(serverId);
+            if (inMemoryServer) {
+              inMemoryServer.status = "error";
+              inMemoryServer.containerId = undefined;
+            }
+
             // Release the port since container is gone
             if (config.hostPort) {
               this.usedPorts.delete(config.hostPort);
@@ -681,7 +763,43 @@ class MCPServerManager {
     }
   }
 
+  private sendError(
+    res: express.Response,
+    status: number,
+    message: string,
+    error?: unknown
+  ): void {
+    const response: { error: string; details?: unknown } = { error: message };
+
+    // Only include error details in development mode
+    if (process.env.NODE_ENV === 'development' && error) {
+      response.details = error instanceof Error ? error.message : String(error);
+    }
+
+    res.status(status).json(response);
+  }
+
   private setupRoutes() {
+    // Enable CORS for configured origins (Docker-friendly configuration)
+    // Set CORS_ORIGINS env var as comma-separated list, e.g., "http://localhost:9002,http://frontend:3000"
+    const corsOrigins = process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+
+    this.app.use((req, res, next) => {
+      const origin = req.headers.origin;
+      if (origin && corsOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+      }
+      res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+      }
+      next();
+    });
+
     // Increase payload size limits so large API docs (e.g. ~100KB+) are accepted.
     // Also accept urlencoded and plain text bodies (for raw OpenAPI/YAML uploads).
     this.app.use(express.json({ limit: "5mb" }));
@@ -695,9 +813,7 @@ class MCPServerManager {
 
         // ✅ Validate required fields
         if (!request || !userId || !email) {
-          return res.status(400).json({
-            error: "Missing required fields: request, userId, email",
-          });
+          return this.sendError(res, 400, "Missing required fields: request, userId, email");
         }
 
         const serverId = randomUUID();
@@ -737,6 +853,9 @@ class MCPServerManager {
           inputContent: request,
           action: "created",
           ragContext: rag_context,
+          likeCount: 0,
+          dislikeCount: 0,
+          feedbacks: [],
         };
 
         this.servers.set(serverId, serverConfig);
@@ -835,29 +954,44 @@ class MCPServerManager {
           );
         } else if (inputType === "text") {
           console.log("🤖 Calling Gemini to generate OpenAPI spec...");
-          await generateOpenAPISpec(outputPath, serverId, 0, undefined, rag_context);
-        }
 
-        console.log("📍 Using OpenAPI spec:", openapi_filepath);
-
-        let checking = await confirm(openapi_filepath);
-        if (inputType !== "json") {
+          // Unified retry loop for text generation: handles both generation errors
+          // (template syntax, API failures) and validation failures
+          let checking: { success: boolean; error?: string } = { success: false };
+          let lastError: string | undefined;
           let retryCount = 0;
           const maxRetries = 5;
-          //let lastError = "";
 
           while (!checking.success && retryCount < maxRetries) {
-            console.log(
-              `🔄 Retry attempt ${retryCount + 1} of ${maxRetries} for OpenAPI spec generation`,
-            );
-            await generateOpenAPISpec(
-              outputPath,
-              serverId,
-              retryCount + 1,
-              checking.error,
-              rag_context,
-            );
-            checking = await confirm(openapi_filepath);
+            try {
+              console.log(
+                `🔄 Generation attempt ${retryCount + 1} of ${maxRetries}...`,
+              );
+              await generateOpenAPISpec(
+                outputPath,
+                serverId,
+                retryCount,
+                lastError,
+                rag_context,
+              );
+
+              // Validate the generated spec
+              checking = await confirm(openapi_filepath);
+              if (!checking.success) {
+                lastError = checking.error || "Validation failed";
+                console.log(
+                  `⚠️ Validation failed: ${lastError}. Will retry...`,
+                );
+              }
+            } catch (error: any) {
+              // Generation failed (template syntax, API error, etc.)
+              lastError = error.message;
+              console.log(
+                `❌ Generation error: ${error.message}. Will retry...`,
+              );
+              checking = { success: false, error: error.message };
+            }
+
             retryCount++;
           }
 
@@ -865,20 +999,32 @@ class MCPServerManager {
             console.log(
               `✅ OpenAPI spec validated successfully after ${retryCount} attempts (Total LLM calls: ${retryCount + 1})`,
             );
+          } else {
+            console.log("❌ Validation failed after maximum retries");
+            // Clean up allocated resources
+            this.servers.delete(serverId);
+            this.usedPorts.delete(hostPort);
+            await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
+
+            return this.sendError(res, 500, "Failed to generate valid OpenAPI specification", checking.error);
           }
         }
 
-        if (!checking.success) {
-          console.log("❌ Validation failed after maximum retries");
-          // Clean up allocated resources
-          this.servers.delete(serverId);
-          this.usedPorts.delete(hostPort);
-          await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
+        console.log("📍 Using OpenAPI spec:", openapi_filepath);
 
-          return res.status(500).json({
-            error: "Failed to generate valid OpenAPI specification",
-            serverId: serverId,
-          });
+        // For JSON/YAML inputs, already converted - just validate once
+        if (inputType !== "text") {
+          console.log("✅ Input already in OpenAPI format, validating...");
+          const checking = await confirm(openapi_filepath);
+          if (!checking.success) {
+            console.log("❌ Validation failed for direct input");
+            this.servers.delete(serverId);
+            this.usedPorts.delete(hostPort);
+            await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
+
+            return this.sendError(res, 500, "Failed to generate valid OpenAPI specification", checking.error);
+          }
+          console.log("✅ OpenAPI spec validated successfully");
         }
 
         // Queue build message or process synchronously
@@ -929,18 +1075,11 @@ class MCPServerManager {
           }
         } catch (waitError: any) {
           console.error(`Error waiting for server ${serverId}:`, waitError);
-          res.status(504).json({
-            error: "Timeout waiting for server to be ready",
-            serverId: serverId,
-            message: waitError.message,
-          });
+          this.sendError(res, 504, "Timeout waiting for server to be ready", waitError);
         }
       } catch (error) {
         console.error("Error creating MCP server:", error);
-        res.status(500).json({
-          error: "Failed to create MCP server",
-          details: error,
-        });
+        this.sendError(res, 500, "Failed to create MCP server", error);
       }
     });
 
@@ -948,22 +1087,109 @@ class MCPServerManager {
     this.app.get("/api/mcp/servers", async (req, res) => {
       try {
         if (!this.logsCollection) {
-          return res.status(503).json({
-            error: "Database not available",
-            servers: [],
-          });
+          return this.sendError(res, 503, "Database not available");
         }
 
         const serverList = await this.logsCollection.find({}).toArray();
+
+        // Sanitize: remove sensitive fields and large/unnecessary data
+        const sanitizedServers = serverList.map(server => {
+          const { token, containerId, hostPort, containerPort, dockerImage, inputContent, action, buildLogs, ragContext, _id, ...rest } = server;
+          // Also sanitize feedbacks: remove userId for privacy
+          const sanitizedFeedbacks: FeedbackEntry[] = (rest.feedbacks || []).map((fb: FeedbackEntry) => {
+            const { userId, ...fbRest } = fb;
+            return fbRest;
+          });
+          return {
+            ...rest,
+            feedbacks: sanitizedFeedbacks,
+          };
+        });
+
         res.json({
-          servers: serverList,
-          count: serverList.length,
+          servers: sanitizedServers,
+          count: sanitizedServers.length,
         });
       } catch (error) {
         console.error("Error fetching server list:", error);
+        this.sendError(res, 500, "Failed to fetch server list");
+      }
+    });
+
+    // API submit feedback for MCP server
+    this.app.post("/api/mcp/:serverId/feedback", async (req, res) => {
+      try {
+        // Rate limiting check
+        const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+        if (feedbackRateLimiter.isLimited(clientIp)) {
+          return this.sendError(res, 429, "Too many feedback requests, please try again later");
+        }
+
+        const { serverId } = req.params;
+        const { type, userId, comment } = req.body;
+
+        // Validate required fields
+        if (!type || !['like', 'dislike'].includes(type)) {
+          return this.sendError(res, 400, "Invalid feedback type. Must be 'like' or 'dislike'");
+        }
+
+        // Validate comment length if provided (max 1000 chars)
+        const MAX_COMMENT_LENGTH = 1000;
+        if (comment && comment.length > MAX_COMMENT_LENGTH) {
+          return this.sendError(res, 400, `Comment too long (maximum ${MAX_COMMENT_LENGTH} characters)`);
+        }
+
+        if (!this.logsCollection) {
+          return this.sendError(res, 503, "Database not available");
+        }
+
+        // Create feedback entry (sanitize comment for potential HTML)
+        const sanitizedComment = comment ? comment.replace(/<[^>]*>/g, '') : undefined;
+        const feedbackEntry = {
+          feedbackId: randomUUID(),
+          type,
+          comment: sanitizedComment || undefined,
+          userId: userId || undefined,
+          timestamp: new Date(),
+        };
+
+        // Atomic update: increment counter and push feedback entry
+        const result = await this.logsCollection.updateOne(
+          { serverId },
+          {
+            $inc: {
+              likeCount: type === 'like' ? 1 : 0,
+              dislikeCount: type === 'dislike' ? 1 : 0,
+            },
+            $push: { feedbacks: feedbackEntry },
+          },
+          { upsert: false } // Only update existing servers
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            error: "Server not found",
+          });
+        }
+
+        // Fetch updated document to return current counts
+        const updatedDoc = await this.logsCollection.findOne(
+          { serverId },
+          { projection: { likeCount: 1, dislikeCount: 1, feedbacks: 1 } }
+        );
+
+        res.json({
+          success: true,
+          serverId,
+          likeCount: updatedDoc?.likeCount || 0,
+          dislikeCount: updatedDoc?.dislikeCount || 0,
+          totalFeedbacks: updatedDoc?.feedbacks?.length || 0,
+        });
+      } catch (error) {
+        console.error("Error submitting feedback:", error);
         res.status(500).json({
-          error: "Failed to fetch server list",
-          servers: [],
+          error: "Failed to submit feedback",
+          details: error instanceof Error ? error.message : String(error),
         });
       }
     });
@@ -982,7 +1208,7 @@ class MCPServerManager {
           if (response.success) {
             res.json(response.config);
           } else {
-            res.status(404).json({ error: response.error });
+            return this.sendError(res, 404, response.error || "Failed to get Claude config");
           }
         } else {
           // Fallback to direct call when message queue is not available
@@ -991,7 +1217,7 @@ class MCPServerManager {
         }
       } catch (error) {
         console.error("Error getting Claude config:", error);
-        res.status(500).json({ error: "Failed to get Claude config" });
+        this.sendError(res, 500, "Failed to get Claude config");
       }
     });
 
@@ -1003,23 +1229,23 @@ class MCPServerManager {
 
         // Validate input
         if (!serverId) {
-          return res.status(400).json({ error: "Server ID is required" });
+          return this.sendError(res, 400, "Server ID is required");
         }
 
         if (!token) {
-          return res.status(401).json({ error: "Token required" });
+          return this.sendError(res, 401, "Token required");
         }
 
         // Check if server exists
         const existingServer = await this.logsCollection?.findOne({ serverId });
         if (!existingServer) {
-          return res.status(404).json({ error: "Server not found" });
+          return this.sendError(res, 404, "Server not found");
         }
 
         // Validate JWT token
         const jwtSecret = this.loadPersistedData();
         if (!jwtSecret) {
-          return res.status(500).json({ error: "Server configuration error" });
+          return this.sendError(res, 500, "Server configuration error");
         }
 
         try {
@@ -1027,9 +1253,7 @@ class MCPServerManager {
 
           if (decoded.serverId !== serverId) {
             console.log("Token serverId mismatch");
-            return res.status(403).json({
-              error: "Invalid token for this server",
-            });
+            return this.sendError(res, 403, "Invalid token for this server");
           }
 
           // Process deletion
@@ -1056,14 +1280,11 @@ class MCPServerManager {
           }
         } catch (jwtError) {
           console.error("Authentication error:", jwtError);
-          return res.status(401).json({ error: "Invalid token" });
+          return this.sendError(res, 401, "Invalid token");
         }
       } catch (error) {
         console.error("Error deleting server:", error);
-        res.status(500).json({
-          error: "Failed to delete server",
-          details: process.env.NODE_ENV === "development" ? error : undefined,
-        });
+        this.sendError(res, 500, "Failed to delete server");
       }
     });
 
@@ -1074,7 +1295,7 @@ class MCPServerManager {
         res.json(stats);
       } catch (error) {
         console.error("Error getting server stats:", error);
-        res.status(500).json({ error: "Failed to get server statistics" });
+        this.sendError(res, 500, "Failed to get server statistics");
       }
     });
 
@@ -1110,10 +1331,7 @@ class MCPServerManager {
           `❌ Error processing ready notification for ${serverId}:`,
           error,
         );
-        res.status(500).json({ 
-          error: "Failed to process ready notification",
-          details: error instanceof Error ? error.message : String(error)
-        });
+        this.sendError(res, 500, "Failed to process ready notification");
       }
     });
 
@@ -1188,7 +1406,7 @@ class MCPServerManager {
           `Error retrieving files for ${req.params.serverId}:`,
           error,
         );
-        res.status(500).json({ error: "Failed to retrieve generated files" });
+        this.sendError(res, 500, "Failed to retrieve generated files");
       }
     });
   }
@@ -1272,7 +1490,7 @@ class MCPServerManager {
           `SERVER_ID=${config.serverId}`,
           `JWT_TOKEN=${config.token}`,
           `MANAGER_URL=${process.env.MANAGER_URL || "http://docker-manager:8080"}`,
-          `RAG_CONTEXT=${(config as any).ragContext || ""}`,
+          `RAG_CONTEXT=${config.ragContext || ""}`,
         ],
         NetworkingConfig: {
           EndpointsConfig: {
