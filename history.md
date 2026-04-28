@@ -1,5 +1,12 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-04-28] - Tối ưu hóa MetaClaw Memory & Model Selection (MetaClaw Memory Optimization)
+
+- **Cập nhật Logic chọn Model**: Sử dụng trực tiếp cấu hình `metaclaw` từ `PROVIDER_CONFIG`.
+- **Kích hoạt Memory Ingestion**: Bổ sung chú thích và chuẩn bị logic cho việc truyền `session_done` vào `model_kwargs` để hỗ trợ hệ thống memory của MetaClaw thông qua `**kwargs`.
+
+---
+
 ## [2026-04-27] - Khắc phục lỗi Client MetaClaw & Cấu hình Model (MetaClaw Client Fix & Model Config)
 
 - **Sửa lỗi Khởi tạo Client**: Khắc phục lỗi `AttributeError` khi gọi `ChatOpenAI` thông qua MetaClaw Proxy bằng cách chuẩn hóa tham số khởi tạo.
