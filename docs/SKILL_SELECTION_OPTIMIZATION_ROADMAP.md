@@ -1,8 +1,8 @@
-# Skill Selection Optimization Roadmap
+# Skill Selection Optimization Roadmap (Single-Agent Version)
 
 ## Executive Summary
 
-The current skill selection logic in `src/generator/prompt.ts` uses **binary, hardcoded decision-making** based solely on authentication presence detection. This document proposes a strategic evolution toward **dynamic, multi-dimensional skill composition** using specialized AI agents.
+The current skill selection logic in `src/generator/prompt.ts` uses **binary, hardcoded decision-making** based solely on authentication presence detection. This document proposes a strategic evolution toward **dynamic, multi-dimensional skill composition** using a single, unified intelligent agent.
 
 ---
 
@@ -62,429 +62,455 @@ const skills = await SkillRouter.assembleMCPSkills({ hasAuth: specHasAuth });
 
 ---
 
-## Proposed Solution: Dynamic Skill Selection System
+## Proposed Solution: Single-Agent Skill Intelligence System
 
 ### Vision
-Transform from **hardcoded boolean logic** to an **intelligent, multi-agent skill orchestration system** that:
+Transform from **hardcoded boolean logic** to an **intelligent, self-contained skill orchestration agent** that:
 
 1. **Analyzes input** across multiple dimensions (auth, complexity, patterns, data types)
 2. **Scores skill variants** based on relevance to detected characteristics
 3. **Composes skills dynamically** from granular fragments
-4. **Learns from feedback** to improve selection over time
+4. **Learns from feedback** to improve future selections
 5. **Provides explainable decisions** for debugging and tuning
+
+### Why Single Agent?
+
+The original roadmap proposed 6 separate agents. After analysis, we consolidate into **one unified `SkillSelectionAgent`** because:
+
+- **Co-located logic**: All selection steps naturally flow together (analysis → matching → composition → feedback)
+- **Shared state**: Registry, scoring weights, and feedback history live in-memory without RPC overhead
+- **Simplified deployment**: Single class, single responsibility, easier to test and debug
+- **Performance**: In-process calls vs multiple async agent invocations
+- **Maintainability**: One codebase to maintain, one set of unit tests
 
 ### Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Dynamic Skill Selector                       │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────┐     ┌──────────────────┐                 │
-│  │  Input Analyzer │────▶│  Skill Scorer    │                 │
-│  │    Agent        │     │   Agent          │                 │
-│  └─────────────────┘     └──────────────────┘                 │
-│         │                        │                             │
-│         ▼                        ▼                             │
-│  ┌─────────────────┐     ┌──────────────────┐                 │
-│  │ Context Features│     │  Skill Matches   │                 │
-│  │ • Auth Type     │     │  • Relevance     │                 │
-│  │ • Complexity    │     │  • Confidence    │                 │
-│  │ • Patterns      │     │  • Coverage      │                 │
-│  │ • Data Types    │     │                  │                 │
-│  └─────────────────┘     └──────────────────┘                 │
-│         │                        │                             │
-│         └──────────┬─────────────┘                             │
-│                    ▼                                            │
-│         ┌─────────────────────┐                                │
-│         │  Skill Composer     │◀─┐  Selection Strategy       │
-│         │  Agent              │  │  (Thresholds,            │
-│         │                     │  │   Fallbacks, Weighting)  │
-│         └─────────────────────┘  └───────────────────────────┘
-│                    │                                            │
-│                    ▼                                            │
-│         ┌─────────────────────┐                                │
-│         │  Assembled Prompt   │                                │
-│         │  • System           │                                │
-│         │  • Auth Fragment    │                                │
-│         │  • Pattern Guides   │                                │
-│         │  • Examples Filtered │                               │
-│         └─────────────────────┘                                │
-│                    │                                            │
-│                    ▼                                            │
-│         ┌─────────────────────┐                                │
-│         │   LLM Generation    │                                │
-│         └─────────────────────┘                                │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                       SkillSelectionAgent                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────┐                                              │
+│  │  Skill Registry │ ◀── Load from src/skills/ with metadata      │
+│  │  (in-memory)    │                                              │
+│  └─────────────────┘                                              │
+│         │                                                         │
+│         ▼                                                         │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  analyzeSpec(spec: string): SpecProfile                     │  │
+│  │    • Parse OpenAPI structure                                │  │
+│  │    • Detect capabilities (auth, pagination, file ops, etc) │  │
+│  │    • Calculate complexity metrics                          │  │
+│  │    • Return structured profile                             │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                                                         │
+│         ▼                                                         │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  selectSkills(profile: SpecProfile): SkillComposition       │  │
+│  │    • Score all applicable skills                           │  │
+│  │    • Resolve conflicts (mutually exclusive patterns)       │  │
+│  │    • Respect dependencies (pagination → patterns)          │  │
+│  │    • Apply token budget constraints                        │  │
+│  │    • Return ranked skill list with explanations            │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                                                         │
+│         ▼                                                         │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  assemblePrompt(base: string, skills: Skill[]): string      │  │
+│  │    • Load skill content from registry                     │  │
+│  │    • Inject at designated injection points                │  │
+│  │    • Interpolate placeholders                             │  │
+│  │    • Return complete system prompt                        │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                                                         │
+│         ▼                                                         │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  recordFeedback(outcome: GenerationOutcome)                 │  │
+│  │    • Update skill effectiveness metrics                   │  │
+│  │    • Adjust scoring weights                               │  │
+│  │    • Detect skill gaps & suggest new skills               │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Phase 1: Enhanced Analysis (Week 1-2) - **P0 Priority**
+## Phase 1: Foundation (Week 1-2)
 
 ### Objective
-Deploy specialized analysis agents to extract rich context from input specs.
+Create the agent skeleton and skill registry infrastructure.
 
-### Agents Required
+### Tasks
 
-#### 1. **SpecProfileAnalyzer Agent**
-**Purpose**: Extract comprehensive feature vector from OpenAPI/user input.
+1. **Create `src/skill-intelligence/` directory**
+   ```
+   src/skill-intelligence/
+   ├── agent.ts                 # Main SkillSelectionAgent class
+   ├── registry.ts              # SkillRegistry with metadata parsing
+   ├── analyzer.ts              # SpecProfileAnalyzer logic
+   ├── composer.ts              # Skill selection & composition
+   ├── feedback.ts              # Learning & effectiveness tracking
+   ├── types.ts                 # All TypeScript interfaces
+   ├── cache.ts                 # Profile caching, LRU
+   └── __tests__/
+       ├── agent.test.ts
+       ├── analyzer.test.ts
+       ├── scorer.test.ts
+       ├── composer.test.ts
+       └── feedback.test.ts
+   ```
 
-**Input**: OpenAPI spec or API endpoint description
-**Output**: `SpecProfile` object
+2. **Implement `SkillRegistry`** (`registry.ts`)
+   - Scan `src/skills/` directory recursively
+   - Parse YAML frontmatter from `.md` files
+   - Build in-memory index: `Map<skillId, SkillMetadata>`
+   - Group skills by category/tag for fast lookup
+   - Detect and report metadata errors (missing ID, conflicts, etc.)
+   - Cache registry globally (singleton)
 
-```typescript
-interface SpecProfile {
-  // Authentication (dimensional, not binary)
-  auth: {
-    hasAuth: boolean;
-    types: ('basic' | 'bearer' | 'oauth2' | 'apikey' | 'custom')[];
-    schemes: SecurityScheme[];
-    complexity: 'simple' | 'standard' | 'complex'; // based on flow types
-  };
+3. **Implement `SpecProfileAnalyzer`** (`analyzer.ts`)
+   - Parse OpenAPI YAML/JSON (use `yaml` package)
+   - Extract:
+     - `auth.types`: From `components.securitySchemes`
+     - `structure.endpointCount`: Count paths
+     - `data.hasFileUpload`: Detect `multipart/form-data` in requestBody
+     - `patterns.pagination`: Heuristic on param names (`limit`/`offset` vs `cursor`/`after`)
+     - `patterns.rateLimiting`: Check for `X-RateLimit-*` headers in responses
+     - `errors.format`: From response content types
+   - Calculate `guidance.complexityScore`: Weighted sum of features
+   - Return `SpecProfile` object
 
-  // API Structure
-  structure: {
-    endpointCount: number;
-    pathDepth: number; // nesting levels
-    hasWebhooks: boolean;
-    hasGraphQL: boolean;
-    hasWebSocket: boolean;
-    methodDistribution: Record<string, number>;
-  };
+4. **Add metadata to all existing skills**
+   - Create `SKILL_METADATA.md` reference document
+   - Add frontmatter to each of the 11 skill files:
+     - `id`, `category`, `tags`, `priority`, `tokenCost`, `conditions`
+   - Estimate token costs by actual measurement (not guesswork)
 
-  // Data Complexity
-  data: {
-    schemaCount: number;
-    hasCircularReferences: boolean;
-    hasFileUpload: boolean;
-    hasStreaming: boolean;
-    contentTypeVariants: string[];
-  };
+5. **Write unit tests**
+   - `analyzer.test.ts`: Test profile extraction on Reddit.yaml, simple API spec
+   - `registry.test.ts`: Test skill loading, metadata validation, conflict detection
 
-  // Pattern Detection
-  patterns: {
-    pagination: 'none' | 'offset' | 'cursor' | 'both';
-    rateLimiting: boolean;
-    batchOperations: boolean;
-    idempotencyKeys: boolean;
-    retryAfterHeaders: boolean;
-  };
-
-  // Quality Indicators
-  quality: {
-    documentationCompleteness: number; // 0-1 score
-    exampleCount: number;
-    hasDeprecatedEndpoints: boolean;
-  };
-
-  // Generation Guidance
-  guidance: {
-    needsLargeContextHandling: boolean;
-    recommendedChunkSize: number;
-    priorityEndpoints: string[]; // based on /health, /status, etc.
-  };
-}
-```
-
-**Implementation Strategy**:
-- Use **code-explorer** agent to analyze spec structure
-- Use **grep** patterns for specific OpenAPI extensions (`x-` prefixes)
-- Generate embeddings for schema complexity assessment
-
-#### 2. **SkillRegistryBuilder Agent**
-**Purpose**: Create a searchable registry of available skills with metadata.
-
-**Skills Metadata Schema**:
-```typescript
-interface SkillMetadata {
-  id: string;  // e.g., "auth.basic", "patterns.pagination.cursor"
-  path: string; // relative path in skills/
-  category: 'auth' | 'patterns' | 'types' | 'validation' | 'error_handling';
-  tags: string[]; // e.g., ['bearer', 'oauth2', 'api-key', 'pagination']
-  applicability: {
-    authTypes: string[];  // which auth types this skill applies to
-    complexity: 'any' | 'simple' | 'complex';
-    endpointCount: 'any' | 'few' | 'many';
-  };
-  conflicts: string[]; // skill IDs that conflict (mutually exclusive)
-  dependencies: string[]; // skills that should be included together
-  tokenCost: number; // approximate tokens this skill adds
-  effectiveness: {
-    successRate: number; // learned from generation feedback
-    avgImprovement: number; // quality delta when used
-  };
-}
-```
-
-**Implementation**:
-- Scan `src/skills/` directory automatically on startup
-- Parse markdown frontmatter or YAML metadata blocks
-- Build skill dependency graph for intelligent composition
+**Deliverable**: `SkillSelectionAgent` can be instantiated and `analyzeSpec()` returns a `SpecProfile`.
 
 ---
 
-## Phase 2: Intelligent Selection (Week 3-4) - **P1 Priority**
+## Phase 2: Core Selection (Week 3-4)
 
 ### Objective
-Implement scoring and composition algorithm.
+Implement skill scoring, matching, and prompt composition.
 
-#### 3. **SkillMatcher Agent**
-**Purpose**: Match spec profile to relevant skills with confidence scores.
+### Tasks
 
-**Algorithm**:
+1. **Implement `SkillScorer`** in `composer.ts`
+   ```typescript
+   class SkillScorer {
+     score(
+       profile: SpecProfile, 
+       skill: SkillMetadata, 
+       weights?: ScoringWeights
+     ): SkillScore {
+       let score = 0;
+       const reasons: string[] = [];
 
-```typescript
-class SkillMatcher {
-  async match(profile: SpecProfile, availableSkills: SkillMetadata[]): Promise<SkillMatch[]> {
-    const matches: SkillMatch[] = [];
+       // 1. Auth type matching (high weight: 3.0)
+       if (skill.category === 'auth') {
+         const match = this.scoreAuthMatch(profile.auth, skill);
+         score += match.score * 3.0;
+         reasons.push(...match.reasons);
+       }
 
-    for (const skill of availableSkills) {
-      let score = 0;
-      let reasons: string[] = [];
+       // 2. Pattern matching (medium weight: 2.0)
+       if (skill.category === 'patterns') {
+         const match = this.scorePatternMatch(profile.patterns, skill);
+         score += match.score * 2.0;
+         reasons.push(...match.reasons);
+       }
 
-      // Auth dimension matching
-      if (skill.category === 'auth') {
-        const authMatch = this.scoreAuthMatch(profile.auth, skill);
-        score += authMatch.score;
-        reasons.push(...authMatch.reasons);
-      }
+       // 3. Complexity alignment (medium weight: 1.5)
+       const complexityFit = this.scoreComplexityFit(profile, skill);
+       score += complexityFit.score * 1.5;
+       reasons.push(...complexityFit.reasons);
 
-      // Pattern dimension matching
-      if (skill.category === 'patterns') {
-        const patternMatch = this.scorePatternMatch(profile.patterns, skill);
-        score += patternMatch.score;
-        reasons.push(...patternMatch.reasons);
-      }
+       // 4. Token budget awareness (penalty for overspend)
+       if (skill.tokenCost > profile.guidance.recommendedSkillBudget * 0.3) {
+         score *= 0.7; // Penalize expensive skills
+         reasons.push('High token cost penalty');
+       }
 
-      // Complexity dimension
-      if (skill.applicability.complexity !== 'any') {
-        const complexityScore = this.scoreComplexity(profile, skill);
-        score += complexityScore;
-      }
+       // 5. Conflict detection (applied later in selection)
+       
+       return { skillId: skill.id, score, confidence: this.normalize(score), reasons };
+     }
+   }
+   ```
 
-      // Apply conflicts filter
-      if (this.hasConflict(skill, selectedSkills)) {
-        score *= 0.1; // heavily penalize conflicting skills
-        reasons.push('Conflicts with other selected skills');
-      }
+2. **Implement `SkillSelector`** in `composer.ts`
+   - Input: `profile`, `registry`, `tokenBudget` (default: 30,000)
+   - Process:
+     1. Get all skills from registry
+     2. Score each skill with `SkillScorer`
+     3. Filter: `score > 0` and `!hasConflict(skill, selected)`
+     4. Sort by score descending
+     5. Greedy selection: add skills while `totalTokens < tokenBudget`
+     6. Ensure coverage: At least one skill per active category (auth, patterns, etc.)
+     7. Apply dependencies: If skill requires another, include it
+   - Output: `SkillComposition`
 
-      matches.push({
-        skillId: skill.id,
-        path: skill.path,
-        score,
-        confidence: this.normalizeScore(score),
-        reasons,
-      });
-    }
+3. **Implement `PromptAssembler`** in `composer.ts`
+   - Load skill contents from file system (use `SkillRouter.getSkill()` or direct `fs`)
+   - Injection point system:
+     - `{{SYSTEM_HEADER}}` → system fragments sorted by priority
+     - `{{USER_FOOTER}}` → user fragments
+     - `{{AUTH_SECTION}}` → auth-specific fragment (only one, conflicts resolved)
+     - `{{ZOD_MAPPING}}` → zod mapping fragment
+     - `{{REQUEST_PATTERNS}}` → request patterns fragment
+   - Handle missing injection points gracefully (log warning)
+   - Return assembled prompt string
 
-    return matches.sort((a, b) => b.score - a.score);
-  }
+4. **Integrate into `prompt.ts`**
+   ```typescript
+   // Feature flag
+   const useDynamicSelection = process.env.DYNAMIC_SKILL_SELECTION === 'true';
+   
+   if (useDynamicSelection) {
+     const agent = SkillSelectionAgent.getInstance();
+     const profile = agent.analyzeSpec(openApiSpec);
+     const composition = agent.selectSkills(profile);
+     const { system, user } = agent.assemblePrompt(basePrompt, composition);
+     // Use these instead of hardcoded skill assembly
+   } else {
+     // Existing hardcoded logic (fallback)
+     const skills = await SkillRouter.assembleMCPSkills({ hasAuth: specHasAuth });
+     // ...
+   }
+   ```
 
-  private scoreAuthMatch(auth: ProfileAuth, skill: SkillMetadata): { score: number; reasons: string[] } {
-    // Implementation: match detected auth types to skill tags
-  }
-}
-```
+5. **Write integration tests**
+   - Test with Reddit.yaml: should select auth.oauth2, pagination? (check Reddit API), rate limiting?
+   - Test with simple API: should select minimal skills, no auth
+   - Test token budget enforcement: large spec → skill budget reduction
 
-#### 4. **SkillComposer Agent**
-**Purpose**: Assemble non-conflicting skill set into final prompt.
-
-**Composition Rules**:
-
-1. **Maximize total confidence** while staying within token budget
-2. **Ensure coverage** of all detected dimensions (must have at least one skill per active category)
-3. **Respect dependencies** (if pagination skill selected, also include pagination patterns skill)
-4. **Apply conflict resolution** (if both OAuth2 and Basic Auth skills applicable, choose based on actual spec)
-5. **Fallback chain**:
-   - Primary: Matched skills with confidence > threshold (0.7)
-   - Secondary: Matched skills with confidence 0.4-0.7
-   - Fallback: Generic skills with `applicability: 'any'`
-
-**Output**:
-```typescript
-interface ComposedSkills {
-  system: SkillReference[];  // ordered by priority
-  userMessage: SkillReference[];
-  fragments: Map<string, SkillFragment>; // path -> content
-  metadata: {
-    totalTokens: number;
-    selectedCount: number;
-    skippedCount: number;
-    compositionStrategy: string;
-    confidence: number; // average of selected skills
-  };
-}
-```
+**Deliverable**: `prompt.ts` can use `SkillSelectionAgent` to dynamically compose prompts. Backward compatible with feature flag.
 
 ---
 
-## Phase 3: Learning & Adaptation (Week 5-6) - **P2 Priority**
+## Phase 3: Learning Loop (Week 5-6)
 
 ### Objective
 Close the loop: learn from generation outcomes to improve future selections.
 
-#### 5. **FeedbackCollector Agent**
-**Purpose**: Capture generation results and associate with skill selection decisions.
+### Tasks
 
-**Telemetry Schema**:
-```typescript
-interface GenerationOutcome {
-  requestId: string;
-  specProfile: SpecProfile;
-  selectedSkills: string[];
-  skillConfidences: Record<string, number>;
-  
-  // Generation metrics
-  llmCalls: number;
-  tokenCount: number;
-  generationTimeMs: number;
-  
-  // Quality assessment
-  validationPassed: boolean;
-  errorTypes: string[]; // e.g., ['template_syntax', 'missing_auth', ' zod_error']
-  requiredRetries: number;
-  
-  // Human feedback (if available)
-  reviewerRating?: number; // 1-5
-  reviewerNotes?: string;
-  
-  // Post-generation analysis
-  generatedCodeQuality: {
-    hasTestCoverage: boolean;
-    followsPatterns: boolean;
-    structureCorrect: boolean;
-  };
-}
-```
+1. **Define `GenerationOutcome` schema** (`feedback.ts`)
+   ```typescript
+   interface GenerationOutcome {
+     requestId: string;
+     timestamp: Date;
+     specProfile: SpecProfile;
+     selectedSkillIds: string[];
+     skillConfidences: Record<string, number>;
+     
+     // Metrics
+     llmCalls: number;
+     tokenCount: number;
+     generationTimeMs: number;
+     validationPassed: boolean;
+     validationErrors: string[];
+     requiredRetries: number;
+     
+     // Quality assessment (from post-generation analysis)
+     codeQuality: {
+       hasProperErrorHandling: boolean;
+       usesHelperFunctions: boolean;
+       structureCorrect: boolean;
+       authImplemented: boolean;
+       zodSchemasValid: boolean;
+     };
+     
+     // Human feedback (if available from UI)
+     reviewerRating?: number;  // 1-5
+     manualFixesRequired: string[];  // e.g., ['added_missing_auth', 'fixed_pagination']
+   }
+   ```
 
-#### 6. **SkillOptimizer Agent**
-**Purpose**: Update skill effectiveness metrics and suggest new skill variants.
+2. **Add `FeedbackCollector`** to `SkillSelectionAgent`
+   - Store outcomes in MongoDB (collection: `skill_feedback`)
+   - Schema: Same as `GenerationOutcome` (persisted)
+   - Index on `requestId`, `timestamp`, `selectedSkillIds`
+   - Method: `recordFeedback(outcome: GenerationOutcome): Promise<void>`
 
-**Learning Algorithm**:
-```typescript
-class SkillOptimizer {
-  async updateMetrics(outcome: GenerationOutcome): Promise<void> {
-    // Bayesian updating of success rates
-    for (const skillId of outcome.selectedSkills) {
-      const skill = this.skillRegistry.get(skillId);
-      const prior = skill.effectiveness.successRate;
-      const likelihood = outcome.validationPassed ? 1 : 0;
-      const updated = this.bayesianUpdate(prior, likelihood, outcome.weight);
-      skill.effectiveness.successRate = updated;
-    }
+3. **Implement `SkillEffectivenessTracker`** (`feedback.ts`)
+   - Query MongoDB for outcomes by skill ID
+   - Calculate metrics:
+     - `successRate`: % of outcomes with `validationPassed === true`
+     - `avgRetries`: Mean `requiredRetries`
+     - `avgQualityScore`: Weighted score from `codeQuality` fields
+     - `lastUsed`: Timestamp of most recent use
+   - Bayesian smoothing: `successRate = (successes + 1) / (total + 2)` to avoid 0/1 extremes
+   - Cache calculated metrics in memory (refresh hourly)
 
-    // Detect ineffective skills (success rate < threshold)
-    // Suggest merging or deprecation
-  }
+4. **Update `SkillScorer` to use effectiveness**
+   ```typescript
+   score += (
+     baseScore * 
+     skillEffectiveness.successRate *  // learned effectiveness
+     (1 + Math.log10(skillUsage.count + 1) * 0.1)  // slight bonus for frequently used
+   );
+   ```
 
-  async suggestNewSkills(profile: SpecProfile, failedMatches: SkillMatch[]): Promise<SkillVariant[]> {
-    // Cluster failed matches by profile characteristics
-    // Identify gaps in skill coverage
-    // Generate proposals for new skill fragments
-  }
-}
-```
+5. **Skill gap detection** (periodic, e.g., daily)
+   - Find high-frequency errors that don't match any skill
+   - Cluster by `specProfile` features
+   - Suggest new skill: "For APIs with X, Y, Z, consider adding skill for W"
+   - Output to `SKILL_GAPS.md` for developer review
+
+6. **Write tests**
+   - `feedback.test.ts`: Test metric calculations, Bayesian updates
+   - `gap-detection.test.ts`: Test cluster analysis on synthetic failures
+
+**Deliverable**: Generation outcomes are logged and influence future skill selection. Dashboard (optional) shows skill effectiveness.
 
 ---
 
-## Phase 4: Advanced Features (Week 7-8) - **P3 Priority**
+## Phase 4: Advanced Features & Polish (Week 7-8)
 
-### 7. **RAG-Enhanced Selection**
-Integrate retrieval-augmented generation for example selection:
+### Objective
+Refine the system, add advanced features, prepare for production.
 
-- Store generation examples in vector database (ChromaDB, Pinecone)
-- Embed spec profiles + generated code
-- Retrieve top-k similar past generations as dynamic examples
-- Blend with static skill fragments
+### Tasks
 
-### 8. **A/B Testing Framework**
-Test skill selection strategies:
+1. **Performance Optimization**
+   - Cache `SpecProfile` results by spec hash (SHA-256 of spec content)
+   - Parallelize skill scoring (Promise.all on skill batches)
+   - Lazy load skill contents (only load when selected)
+   - Pre-warm registry at startup (avoid first-request latency)
 
-- Control: Current hardcoded logic
-- Variant A: Static skill scoring (no learning)
-- Variant B: Full dynamic selection with learning
-- Metrics: validation pass rate, retries, code quality score
+2. **RAG-Enhanced Example Selection** (Optional P3)
+   - Store past successful generations in vector DB (ChromaDB, LanceDB, or simple embeddings)
+   - Embed: `specProfile` + `selectedSkills` → generated code quality
+   - At generation time: retrieve top-3 similar past generations
+   - Use as dynamic examples in user prompt (in addition to static examples)
+   - Track: Does RAG improve success rate? A/B test.
 
-### 9. **Skill Marketplace**
-External skill plugins:
+3. **A/B Testing Framework**
+   ```typescript
+   // In config.ts
+   export const EXPERIMENT_CONFIG = {
+     skillSelectionVariant: process.env.SKILL_SELECTION_VARIANT || 'control', // 'control' | 'dynamic' | 'hybrid'
+     trafficAllocation: { control: 0.1, dynamic: 0.45, hybrid: 0.45 },
+   };
+   
+   // In prompt.ts
+   const variant = assignVariant(requestId); // hash-based consistent assignment
+   if (variant === 'dynamic') {
+     useAgentSelection();
+   } else if (variant === 'hybrid') {
+     // Use agent but fall back if confidence < 0.7
+   } else {
+     // control: existing hardcoded
+   }
+   ```
+   - Metrics dashboard: Compare validation pass rate, retries, quality scores
+   - Gradual rollout: 10% → 50% → 100% if metrics improve
 
-- Skills can be contributed externally
-- Versioned skill packages from npm
-- Skill manifest format with compatibility matrix
-- Runtime skill loading from configured sources
+4. **Skill Health Dashboard** (CLI or simple HTML page)
+   ```
+   $ npx tsx src/skill-intelligence/cli.ts dashboard
+   
+   Skill Effectiveness Report:
+   ┌─────────────────────────────┬──────────┬────────────┬────────────┐
+   │ Skill ID                    │ Usage    │ Success %  │ Avg Retries│
+   ├─────────────────────────────┼──────────┼────────────┼────────────┤
+   │ auth.bearer                 │ 1,234    │ 94.2%      │ 0.3        │
+   │ auth.oauth2                 │ 456      │ 89.1%      │ 0.8        │
+   │ pagination.cursor           │ 789      │ 96.7%      │ 0.2        │
+   │ patterns.multipart         │ 123      │ 78.5%      │ 1.2        │ ← needs review
+   └─────────────────────────────┴──────────┴────────────┴────────────┘
+   
+   Skill Gaps Detected:
+   - 47 failures with "rate limiting" errors → consider `patterns.rate_limiting` skill
+   - 23 failures with "file upload" issues → enhance `patterns.multipart`
+   ```
+
+5. **Documentation**
+   - Update `README.md` with skill selection architecture
+   - Create `SKILL_REGISTRY.md` documenting all skills, their purpose, when they're used
+   - Add doc comments to all agent methods
+   - Migration guide: How to debug if dynamic selection fails
+
+6. **Monitoring & Alerting**
+   - Log skill selection decisions: `console.log('[SkillSelect] profile=..., selected=..., score=...')`
+   - Emit metrics (Prometheus format or JSON logs):
+     - `skill_selection_duration_ms`
+     - `skills_selected_count`
+     - `selection_confidence`
+     - `cache_hit_rate`
+   - Alert if success rate drops below threshold (e.g., 80%)
+
+7. **Safety & Fallbacks**
+   - Hard token limit: If `totalTokens > 100000`, drop lowest-scoring skills
+   - Confidence threshold: If `avgConfidence < 0.6`, log warning and use fallback skills
+   - Fallback chain:
+     1. Dynamic selection with high confidence → use it
+     2. Dynamic selection low confidence → use `always` skills only
+     3. Any error → fall back to hardcoded `hasAuth` logic
+   - Feature flag: Can disable entirely with `DYNAMIC_SKILL_SELECTION=false`
 
 ---
 
 ## Implementation Plan
 
 ### Week 1-2: Foundation
-- [ ] Create `src/skill-selection/` directory
-- [ ] Implement `SpecProfileAnalyzer` agent
-- [ ] Implement `SkillRegistryBuilder` (scan skills directory)
-- [ ] Write unit tests for profile extraction
+- [ ] Create `src/skill-intelligence/` directory
+- [ ] Implement `SkillRegistry` with metadata parsing
+- [ ] Implement `SpecProfileAnalyzer` for capability extraction
+- [ ] Add YAML frontmatter to all 11 existing skill files
+- [ ] Write unit tests for analyzer and registry
 
 ### Week 3-4: Core Selection
-- [ ] Implement `SkillMatcher` with scoring algorithm
-- [ ] Implement `SkillComposer` with conflict resolution
-- [ ] Integrate into `prompt.ts` (feature flag controlled)
-- [ ] Benchmark against current approach
+- [ ] Implement `SkillScorer` with multi-dimensional scoring
+- [ ] Implement `SkillSelector` with conflict resolution & token budgeting
+- [ ] Implement `PromptAssembler` with injection point system
+- [ ] Integrate into `prompt.ts` with feature flag
+- [ ] Write integration tests for spec profiles
 
 ### Week 5-6: Learning Loop
-- [ ] Implement `FeedbackCollector` (store outcomes in MongoDB)
-- [ ] Implement `SkillOptimizer` with Bayesian updates
-- [ ] Create feedback dashboard (simple HTML/CLI)
-- [ ] Add skill effectiveness reporting
+- [ ] Define `GenerationOutcome` schema
+- [ ] Implement `FeedbackCollector` with MongoDB storage
+- [ ] Implement `SkillEffectivenessTracker` with Bayesian metrics
+- [ ] Update `SkillScorer` to incorporate learned effectiveness
+- [ ] Implement skill gap detection
+- [ ] Write feedback and gap detection tests
 
-### Week 7-8: Polish
-- [ ] RAG integration (optional)
-- [ ] A/B testing framework
-- [ ] Documentation and migration guide
+### Week 7-8: Polish & Launch
 - [ ] Performance optimization (caching, parallelization)
+- [ ] Optional: RAG-enhanced example selection
+- [ ] A/B testing framework with gradual rollout
+- [ ] Skill health dashboard (CLI)
+- [ ] Documentation updates
+- [ ] Monitoring & alerting setup
+- [ ] Safety fallbacks and feature flag configuration
+
+**Total: 8 weeks** (can compress to 4-6 weeks with parallel development)
 
 ---
 
-## Risk Mitigation
+## Specialized Agent Assignments (Single Agent Architecture)
 
-| Risk | Mitigation |
-|------|------------|
-| **Over-engineering** - Solution too complex for current scale | Phase gate reviews; start with minimal viable matcher |
-| **Performance regression** - Analysis adds latency | Cache spec profiles; parallelize analysis |
-| **Skill selection brittleness** - New system less reliable than current | Feature flag; fallback to hardcoded if confidence too low |
-| **Learning from bad examples** - Poor generations poison metrics | Quality-weighted updates; human-in-the-loop validation |
-| **Token budget overflow** - Dynamic selection adds overhead | Hard token limit enforcement; skill token budgeting |
-
----
-
-## Success Metrics
-
-### Primary KPIs
-- **Validation pass rate**: Target > 95% (current ~85%)
-- **Average retries per generation**: Target < 0.5 (current ~1.2)
-- **Time to first success**: Target reduction by 30%
-
-### Secondary Metrics
-- **Skill diversity**: Number of distinct skill combinations used
-- **Adaptation speed**: Days to recover from new failure pattern
-- **False positive auth detection**: Target < 5%
-
-### Operational Metrics
-- **Selection latency**: < 100ms (P50)
-- **Memory overhead**: < 10MB per analysis
-- **Cache hit rate**: > 70% for recurring spec patterns
-
----
-
-## Specialized Agent Assignments
-
-Based on the user's agent ecosystem:
+Based on the user's agent ecosystem, the `SkillSelectionAgent` consolidates multiple responsibilities:
 
 | Agent | Role | Primary Files |
 |-------|------|---------------|
-| **code-explorer** | Analyze spec structure, detect patterns | `SpecProfileAnalyzer` |
-| **tdd-guide** | Write tests for skill selection | `test/skill-selection/` |
-| **code-reviewer** | Review selection algorithm implementation | All selection agents |
-| **security-reviewer** | Audit skill loading (path traversal, injection) | `SkillRegistryBuilder` |
+| **SkillSelectionAgent** (single unified agent) | Orchestrates entire skill selection pipeline | `src/skill-intelligence/agent.ts` |
+| └─ Analyzer component | Parse spec, extract capabilities | `analyzer.ts` |
+| └─ Scorer component | Match skills to profile | `scorer.ts` |
+| └─ Composer component | Select & assemble skills | `composer.ts` |
+| └─ Feedback component | Learn from outcomes | `feedback.ts` |
+| **code-explorer** | (Optional) Enhance spec analysis for complex patterns | Used by analyzer if needed |
+| **tdd-guide** | Write tests for skill selection | `src/skill-intelligence/__tests__/` |
+| **code-reviewer** | Review selection algorithm implementation | All selection files |
+| **security-reviewer** | Audit skill loading (path traversal, injection) | `registry.ts` |
 | **doc-updater** | Maintain skill registry documentation | `SKILL_REGISTRY.md` |
 | **refactor-cleaner** | Post-implementation cleanup | Dead skill detection |
 
@@ -505,9 +531,18 @@ Based on the user's agent ecosystem:
 ### 3. **LLM-as-Judge for Skill Selection** (Interesting)
 - Use LLM to analyze spec and choose skills
 - Prompt: "Given this OpenAPI spec, which skills should be included?"
-- **Rejected**: Adds LLM call overhead, inconsistent, harder to debug
+- **Rejected**: Adds LLM call overhead (~$0.02/analysis), inconsistent, harder to debug
 
-### 4. **Hybrid Approach** (✅ Selected)
+### 4. **Multi-Agent System** (Original Roadmap)
+- 6 separate agents orchestrated together
+- **Rejected in favor of single agent**:
+  - All steps naturally compose in one process
+  - No serialization/RPC overhead
+  - Shared state (registry, metrics) without distributed coordination
+  - Simpler to test, deploy, debug
+  - Single agent achieves same functionality with less complexity
+
+### 5. **Hybrid Approach** (✅ Selected)
 - Rule-based analysis for deterministic features (counts, presence)
 - Lightweight scoring algorithm for matching
 - Learning loop for continuous improvement
@@ -546,19 +581,19 @@ if (skillResult.confidence < 0.6 || skillResult.totalTokens > budget) {
 
 The current hardcoded skill selection, while functional, limits the system's ability to:
 
-1. **Scale** to new skill types without code changes
-2. **Adapt** to different API patterns and complexities
+1. **Scale** to new skill types (pagination, file ops, WebSocket, etc.)
+2. **Adapt** to different API patterns and complexity levels
 3. **Optimize** based on generation outcomes
 4. **Explain** why certain skills were selected
 
-The proposed Dynamic Skill Selection System addresses these limitations through:
+The proposed **Single-Agent Skill Intelligence System** addresses these limitations through:
 
 - **Multi-dimensional analysis** beyond binary auth detection
 - **Intelligent scoring and composition** with conflict resolution
 - **Continuous learning** from generation feedback
 - **Transparent, debuggable** decision process
 
-**Recommendation**: Proceed with Phase 1 (Enhanced Analysis) as a proof-of-concept. The modular architecture already in place (`SkillRouter`) provides a solid foundation. The investment in dynamic selection will pay dividends as the skill library grows and the system encounters more diverse API specifications.
+**Recommendation**: Proceed with Phase 1 (Foundation) implementation using TDD methodology. The modular architecture already in place (`SkillRouter`) provides a solid foundation. The investment in dynamic selection will pay dividends as the skill library grows and the system encounters more diverse API specifications.
 
 ---
 
@@ -603,3 +638,27 @@ skills/
 ```
 
 This granular taxonomy enables precise skill selection and composition, reducing contamination while maximizing relevance.
+
+---
+
+## Appendix: Spec Profile Detection Reference
+
+### Capability Detection Rules
+
+| Capability | Detection Method | Example |
+|------------|-----------------|---------|
+| `auth.types` | Parse `components.securitySchemes` | `type: oauth2` → `oauth2` |
+| `pagination` | Query param names: `cursor`/`after` → cursor; `offset`/`page` → offset | Reddit uses `after` → cursor |
+| `rateLimiting` | Response headers: `X-RateLimit-Limit`, `Retry-After` | GitHub API has both |
+| `fileUpload` | RequestBody with `multipart/form-data` content type | File upload endpoints |
+| `batchOperations` | Path contains `/batch` or method `POST` with array schema | `/users/batch-create` |
+| `idempotencyKeys` | Header parameter named `Idempotency-Key` | Stripe API |
+| `webhooks` | `x-webhooks` extension or callback object in OpenAPI | GitHub webhooks |
+| `graphql` | GraphQL endpoint pattern or `application/graphql` | `/graphql` path |
+| `longRunning` | `202 Accepted` responses with `Location` header | Async job submission |
+
+---
+
+**Document Version**: 2.0 (Single-Agent Architecture)  
+**Last Updated**: 2026-05-01  
+**Status**: Draft for Implementation
