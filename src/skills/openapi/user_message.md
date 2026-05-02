@@ -1,3 +1,11 @@
+---
+id: openapi_user_message
+category: openapi
+tags: [user-message, generation, openapi]
+priority: 100
+tokenCost: 300
+---
+
 {{LAST_ERROR}}Generate a complete OpenAPI specification following these exact patterns:
 
 {{EXAMPLES_SECTION}}

@@ -1,3 +1,15 @@
+---
+id: mcp_requirements
+category: auth
+tags: [auth, mcp, security]
+priority: 95
+tokenCost: 300
+conditions:
+  - field: auth.hasAuth
+    operator: equals
+    value: true
+---
+
 🔐 AUTHENTICATION REQUIREMENTS (SPEC HAS SECURITY SCHEMES):
 1. Check components.securitySchemes for authentication types
 2. For each operation, check operation.security array

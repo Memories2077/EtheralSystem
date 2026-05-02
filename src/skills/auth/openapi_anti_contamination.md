@@ -1,3 +1,15 @@
+---
+id: openapi_anti_contamination
+category: auth
+tags: [auth, openapi, anti-contamination]
+priority: 90
+tokenCost: 150
+conditions:
+  - field: auth.hasAuth
+    operator: equals
+    value: false
+---
+
 🚫 NO AUTHENTICATION DETECTED IN INPUT - ANTI-CONTAMINATION GUARD:
 The input API does NOT mention any authentication mechanism.
 - DO NOT add any securitySchemes section to the output

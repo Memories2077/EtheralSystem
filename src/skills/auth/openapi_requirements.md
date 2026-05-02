@@ -1,3 +1,15 @@
+---
+id: openapi_requirements
+category: auth
+tags: [auth, openapi, security]
+priority: 90
+tokenCost: 250
+conditions:
+  - field: auth.hasAuth
+    operator: equals
+    value: true
+---
+
 🚨 AUTHENTICATION REQUIREMENTS - CRITICAL:
 {{INPUT_FORMAT}}
 

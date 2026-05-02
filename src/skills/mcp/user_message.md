@@ -1,3 +1,11 @@
+---
+id: mcp_user_message
+category: mcp
+tags: [user-message, generation, typescript]
+priority: 100
+tokenCost: 600
+---
+
 {{LAST_ERROR}}Generate a complete MCP server following this exact pattern:
 
 TYPESCRIPT REFERENCE STRUCTURE (ONLY FOR REFERENCING):
