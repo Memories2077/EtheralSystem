@@ -1,3 +1,11 @@
+---
+id: mcp_request_patterns
+category: mcp
+tags: [request, patterns, http, pagination]
+priority: 75
+tokenCost: 350
+---
+
 // For POST/PUT/PATCH endpoints with request body (Latest MCP Server Syntax)
 server.registerTool(
     "create-resource",

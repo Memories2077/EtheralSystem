@@ -1,5 +1,42 @@
 # Project History Log
 
+## [2026-05-03] - Phase 3: Learning Loop & Feedback-Driven Skill Selection
+
+- **Feature**: Implemented Phase 3 (Learning Loop) of the Skill Selection Optimization roadmap for autonomous MCP generation.
+- **FeedbackTracker** (`src/skill-intelligence/feedback.ts`):
+  - MongoDB persistence with `skill_feedback` and `skill_gaps` collections, reusing existing MongoDB infrastructure from `mcp-server-manager.ts`.
+  - Bayesian smoothed success rates: `(successes + 1) / (total + 2)` for robust skill scoring with sparse data.
+  - Running averages for build duration, token usage, retries, and code quality scores.
+  - Skill gap detection from validation errors — auto-suggests new skills (e.g., `patterns.rate_limiting`, `patterns.pagination`).
+  - In-memory cache with LRU eviction (500 entries max), warmed from DB on startup.
+- **SkillComposer** (`src/skill-intelligence/composer.ts`):
+  - Integrated feedback tracker — modulates skill scores by Bayesian success rate.
+  - Usage bonus for frequently successful skills: `log10(timesUsed + 1) * 0.1`.
+  - Only applies Bayesian modulation when skill has actual usage data (avoids cutting unknown skills' scores in half).
+- **GenerationOutcome Schema** (`src/skill-intelligence/types.ts`):
+  - Extended with `codeQuality`, `requiredRetries`, `generationTimeMs`, `tokenCount`, `llmCalls`, `reviewerRating`, `manualFixesRequired`.
+  - Backward compatible with legacy `success`/`skillsUsed` fields.
+- **CLI Dashboard** (`src/skill-intelligence/cli.ts`):
+  - `npx tsx src/skill-intelligence/cli.ts dashboard` — shows top skills by Bayesian success rate, usage counts, avg retries.
+  - `npx tsx src/skill-intelligence/cli.ts gaps` — generates `SKILL_GAPS.md` report from open skill gaps.
+- **Tests**: 10 new Phase 3 tests (`__tests__/phase3.test.ts`) covering Bayesian rates, skill gaps, gap status updates, top skills ranking, backward compatibility. All 49 tests passing.
+- **Bug Fixes During Phase 3**:
+  - Fixed `validationErrors.length` crash on legacy outcomes (added optional chaining).
+  - Fixed case-sensitive error pattern matching in `detectSkillGaps()` (now lowercases before matching).
+  - Fixed injection point replacement to use regex `/\{\{[^}]*\}\}/g` for graceful handling of unknown placeholders.
+  - Fixed Phase 2 tests: added `expect` to imports, corrected skill IDs (`mcp_zod_mapping` not `zod_mapping`).
+  - Wired `FeedbackTracker` to `Composer` via `agent.ts` `initialize()` method.
+- **Files Modified**:
+  - `src/skill-intelligence/feedback.ts` (rewrite: Phase 3 feedback system)
+  - `src/skill-intelligence/composer.ts` (Bayesian scoring integration)
+  - `src/skill-intelligence/agent.ts` (wiring feedback tracker)
+  - `src/skill-intelligence/types.ts` (GenerationOutcome schema extension)
+  - `src/skill-intelligence/cli.ts` (new: dashboard + gap report CLI)
+  - `src/skill-intelligence/__tests__/phase3.test.ts` (new: 10 tests)
+  - `src/skill-intelligence/__tests__/phase2.test.ts` (test fixes)
+  - `src/skills/mcp/request_patterns.md` (added `pagination` tag)
+  - `docs/SKILL_SELECTION_OPTIMIZATION_ROADMAP.md` (updated Phase 3 status)
+
 ## [2026-04-27] - Security & Code Quality Improvements
 
 - **Security Fix**: Replaced wildcard CORS (`Access-Control-Allow-Origin: *`) with configurable origin whitelist
