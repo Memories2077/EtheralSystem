@@ -7,6 +7,7 @@ import {
 } from "../utils/token-counter.ts";
 import { SkillRouter } from "../skills/skill-router.ts";
 import { SkillSelectionAgent } from "../skill-intelligence/agent.js";
+import type { SpecProfile, SkillComposition } from "../skill-intelligence/types.js";
 
 export interface ChatMessage {
   role: "user" | "model" | "assistant" | "system";
@@ -55,7 +56,8 @@ function useDynamicSkillSelection(): boolean {
 }
 
 /**
- * Enhanced system prompt for generating MCP Servers that work successfully
+ * Build prompt with skill selection (static or dynamic)
+ * Returns messages plus optional metadata for feedback tracking
  */
 export async function buildPromptWithExamples(
   openApiSpec: string,
@@ -65,7 +67,7 @@ export async function buildPromptWithExamples(
   authExample?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<ChatMessage[]> {
+): Promise<{ messages: ChatMessage[]; specProfile?: SpecProfile; composition?: SkillComposition; skillConfidences?: Record<string, number> }> {
   // Check for dynamic skill selection
   if (useDynamicSkillSelection()) {
     return buildPromptWithDynamicSelection(
@@ -135,14 +137,25 @@ ${outputExample}`;
     console.warn(
       `⚠️ Large context detected, applying truncation to fit within limits...`,
     );
-    return truncateMessages(messages, 120000);
+    return {
+      messages: truncateMessages(messages, 120000),
+      specProfile: undefined,
+      composition: undefined,
+      skillConfidences: undefined,
+    };
   }
 
-  return messages;
+  return {
+    messages,
+    specProfile: undefined,
+    composition: undefined,
+    skillConfidences: undefined,
+  };
 }
 
 /**
  * Dynamic skill selection path using SkillSelectionAgent
+ * Returns messages plus metadata for feedback tracking
  */
 async function buildPromptWithDynamicSelection(
   openApiSpec: string,
@@ -152,7 +165,7 @@ async function buildPromptWithDynamicSelection(
   authExample?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<ChatMessage[]> {
+): Promise<{ messages: ChatMessage[]; specProfile: SpecProfile; composition: SkillComposition; skillConfidences: Record<string, number> }> {
   const agent = SkillSelectionAgent.getInstance({
     tokenBudget: 30_000,
   });
@@ -258,10 +271,20 @@ ${outputExample}`;
     console.warn(
       `⚠️ Large context detected, applying truncation to fit within limits...`,
     );
-    return truncateMessages(messages, 120000);
+    return {
+      messages: truncateMessages(messages, 120000),
+      specProfile: profile,
+      composition,
+      skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+    };
   }
 
-  return messages;
+  return {
+    messages,
+    specProfile: profile,
+    composition,
+    skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+  };
 }
 
 /**
@@ -275,7 +298,7 @@ export async function buildOpenAPIPromptWithExamples(
   outputExampleTwilio?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<ChatMessage[]> {
+): Promise<{ messages: ChatMessage[]; specProfile?: SpecProfile; composition?: SkillComposition; skillConfidences?: Record<string, number> }> {
   // Check for dynamic skill selection
   if (useDynamicSkillSelection()) {
     return buildOpenAPIPromptWithDynamicSelection(
@@ -400,14 +423,25 @@ ${outputExampleTwilio}`;
     console.warn(
       `⚠️ Large context detected, applying truncation to fit within limits...`,
     );
-    return truncateMessages(messages, 120000);
+    return {
+      messages: truncateMessages(messages, 120000),
+      specProfile: undefined,
+      composition: undefined,
+      skillConfidences: undefined,
+    };
   }
 
-  return messages;
+  return {
+    messages,
+    specProfile: undefined,
+    composition: undefined,
+    skillConfidences: undefined,
+  };
 }
 
 /**
  * Dynamic skill selection path for OpenAPI generation
+ * Returns messages plus metadata for feedback tracking
  */
 async function buildOpenAPIPromptWithDynamicSelection(
   apiEndpoints: string,
@@ -417,7 +451,7 @@ async function buildOpenAPIPromptWithDynamicSelection(
   outputExampleTwilio?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<ChatMessage[]> {
+): Promise<{ messages: ChatMessage[]; specProfile: SpecProfile; composition: SkillComposition; skillConfidences: Record<string, number> }> {
   const agent = SkillSelectionAgent.getInstance({
     tokenBudget: 30_000,
   });
@@ -527,10 +561,20 @@ ${outputExampleTwilio}`;
     console.warn(
       `⚠️ Large context detected, applying truncation to fit within limits...`,
     );
-    return truncateMessages(messages, 120000);
+    return {
+      messages: truncateMessages(messages, 120000),
+      specProfile: profile,
+      composition,
+      skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+    };
   }
 
-  return messages;
+  return {
+    messages,
+    specProfile: profile,
+    composition,
+    skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+  };
 }
 
 // =============================================================================

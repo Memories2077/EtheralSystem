@@ -8,6 +8,20 @@ import { readFile, writeFileSafe, remove, exists } from "../utils/fs.ts";
 import { confirm } from "./validator.ts";
 import path from "path";
 import { fileURLToPath } from "url";
+import { SkillSelectionAgent } from "../skill-intelligence/agent.js";
+import type { GenerationOutcome, SpecProfile, SkillComposition, SkillScore } from "../skill-intelligence/types.js";
+
+// Helper to create a minimal SpecProfile when none is available
+function createMinimalSpecProfile(): SpecProfile {
+  return {
+    auth: { types: [], hasAuth: false, schemes: [] },
+    structure: { endpointCount: 0, pathCount: 0, hasStreaming: false, hasWebhooks: false },
+    data: { hasFileUpload: false, hasBinaryResponse: false, contentTypes: [] },
+    patterns: { pagination: 'none', rateLimiting: false, hasFiltering: false, hasSorting: false },
+    errors: { format: 'unknown', hasStandardErrorSchema: false },
+    guidance: { complexityScore: 0, recommendedSkills: [] },
+  };
+}
 
 // Lấy đường dẫn hiện tại
 const __filename = fileURLToPath(import.meta.url);
@@ -51,6 +65,112 @@ const openapi_spec_output_example_twilio = path.join(
 
 const outputDir_yaml = path.join(__dirname, "..", "..", "src-generated-yaml");
 
+/**
+ * Analyze generated code for quality metrics
+ */
+function analyzeCodeQuality(code: string, specProfile?: SpecProfile, skillIds?: string[]): GenerationOutcome['codeQuality'] {
+  const quality: GenerationOutcome['codeQuality'] = {
+    hasProperErrorHandling: false,
+    usesHelperFunctions: false,
+    structureCorrect: false,
+    authImplemented: false,
+    zodSchemasValid: false,
+  };
+
+  if (!code) return quality;
+
+  // Check for proper error handling (try/catch, error callbacks)
+  const hasTryCatch = /try\s*\{/.test(code) && /catch\s*\(/.test(code);
+  const hasErrorHandlingPatterns = /\.catch\s*\(/.test(code) || /handleError|handleException|onError/.test(code);
+  quality.hasProperErrorHandling = hasTryCatch || hasErrorHandlingPatterns;
+
+  // Check for helper functions (multiple function definitions, utility functions)
+  const functionCount = (code.match(/function\s+\w+|const\s+\w+\s*=\s*(?:async\s+)?\(|export\s+async\s+function/gi) || []).length;
+  quality.usesHelperFunctions = functionCount >= 2;
+
+  // Check structure: has main server structure for MCP (tool definitions, server initialization)
+  if (specProfile?.auth.hasAuth || skillIds?.some(id => id.includes('mcp_requirements'))) {
+    quality.structureCorrect = /newServer|createServer|McpServer|server\.setRequestHandler/.test(code);
+  } else {
+    quality.structureCorrect = /openapi:|components:|paths:/.test(code);
+  }
+
+  // Check if auth is implemented (for specs with auth)
+  if (specProfile?.auth.hasAuth) {
+    const hasAuthPatterns = /authorization|bearer|apiKey|basic.*auth|securitySchemes/.test(code);
+    const hasAuthImplementation = /authorization.*header|bearer.*token|api_key|security:\s*\[/.test(code);
+    quality.authImplemented = hasAuthPatterns && hasAuthImplementation;
+  } else {
+    quality.authImplemented = true; // Not required for no-auth specs
+  }
+
+  // Check for valid Zod schemas (z.object, z.string, z.number, etc.)
+  const zodPatterns = /z\.object\(|z\.string\(|z\.number\(|z\.boolean\(|z\.array\(|z\.optional\(/;
+  const zodSchemaCount = (code.match(zodPatterns) || []).length;
+  quality.zodSchemasValid = zodSchemaCount > 0;
+
+  return quality;
+}
+
+/**
+ * Record generation outcome to the learning feedback system
+ */
+async function recordGenerationFeedback(
+  requestId: string,
+  specProfile: SpecProfile,
+  selectedSkillIds: string[],
+  skillConfidences: Record<string, number>,
+  generationTimeMs: number,
+  tokenCount: number,
+  llmCalls: number,
+  validationPassed: boolean,
+  validationErrors: string[],
+  requiredRetries: number,
+  generatedCode?: string
+): Promise<void> {
+  try {
+    const agent = SkillSelectionAgent.getInstance({
+      tokenBudget: 30_000,
+    });
+
+    // Initialize agent (idempotent)
+    await agent.initialize();
+
+    const codeQuality = generatedCode
+      ? analyzeCodeQuality(generatedCode, specProfile, selectedSkillIds)
+      : undefined;
+
+    const outcome: GenerationOutcome = {
+      requestId,
+      timestamp: new Date(),
+      specProfile,
+      selectedSkillIds,
+      skillConfidences,
+      llmCalls,
+      tokenCount,
+      generationTimeMs,
+      validationPassed,
+      validationErrors,
+      requiredRetries,
+      codeQuality: codeQuality || {
+        hasProperErrorHandling: false,
+        usesHelperFunctions: false,
+        structureCorrect: validationPassed,
+        authImplemented: !specProfile.auth.hasAuth,
+        zodSchemasValid: false,
+      },
+      reviewerRating: undefined,
+      manualFixesRequired: [],
+    };
+
+    agent.recordFeedback(outcome);
+    console.log(`📊 Recorded feedback for request ${requestId} (validation: ${validationPassed ? 'PASS' : 'FAIL'})`);
+  } catch (error) {
+    console.warn('⚠️ Failed to record feedback:', error);
+    // Non-blocking: continue even if feedback recording fails
+  }
+}
+
 export interface GenerationResult {
   code: string;
   llmCallCount: number;
@@ -62,8 +182,22 @@ export async function generateOpenAPISpec(
   retryCount: number = 0,
   lastError?: string,
   ragContext?: string,
-) {
+  requestId?: string,
+  specProfile?: SpecProfile,
+  selectedSkillIds?: string[],
+  skillConfidences?: Record<string, number>,
+): Promise<GenerationResult> {
+  let startTime: number = 0;
+  let tokenCount = 0;
+  let llmCalls = retryCount + 1;
+  let aiCode = '';
+  let specProfileInternal: SpecProfile | undefined = specProfile;
+  let compositionInternal: SkillComposition | undefined;
+  let skillConfidencesInternal: Record<string, number> | undefined = skillConfidences;
+  const finalRequestId = requestId ?? `openapi-${Date.now()}`;
+
   try {
+    startTime = Date.now();
     console.log("📖 Reading Input...");
     const read_input = await readFile(input);
 
@@ -95,7 +229,7 @@ export async function generateOpenAPISpec(
       console.log("📖⚠️ Twilio example not found, skipping...");
     }
 
-    const messages = await buildOpenAPIPromptWithExamples(
+    const messagesResult = await buildOpenAPIPromptWithExamples(
       read_input,
       input_Example,
       output_Example,
@@ -105,12 +239,22 @@ export async function generateOpenAPISpec(
       ragContext,
     );
 
+    // Extract metadata for feedback recording (may be undefined if static selection)
+    const { messages, specProfile: extractedSpecProfile, composition: extractedComposition, skillConfidences: extractedSkillConfidences } = messagesResult;
+    // Store in lifted variables for catch block access
+    if (extractedSpecProfile) specProfileInternal = extractedSpecProfile;
+    compositionInternal = extractedComposition;
+    if (extractedSkillConfidences) skillConfidencesInternal = extractedSkillConfidences;
+
     console.log(
       `🤖 Calling LLM to generate OpenAPI spec (Attempt ${retryCount + 1})...`,
     );
     const aiCode = await genaiCompletion({
       messages,
     });
+
+    // Estimate token count from response
+    tokenCount = messages.reduce((sum, msg) => sum + msg.content.length / 4, 0) + aiCode.length / 4;
 
     console.log("🔧 Stitching code together...");
     // Strip markdown code blocks if present (```yaml ... ``` or ```...```)
@@ -273,7 +417,50 @@ export async function generateOpenAPISpec(
     console.log(
       `✅ OpenAPI spec generated successfully! (Total LLM calls: ${retryCount + 1})`,
     );
+
+    // Record feedback to close the learning loop
+    const endTime = Date.now();
+    try {
+      await recordGenerationFeedback(
+        finalRequestId,
+        specProfileInternal || createMinimalSpecProfile(),
+        compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
+        skillConfidencesInternal || {},
+        endTime - startTime,
+        Math.round(tokenCount),
+        llmCalls,
+        true,
+        [],
+        retryCount,
+        fullCode,
+      );
+      console.log(`📊 Recorded feedback for OpenAPI generation`);
+    } catch (feedbackError) {
+      console.warn('⚠️ Failed to record feedback:', feedbackError);
+    }
+
+    return { code: fullCode, llmCallCount: llmCalls };
   } catch (error) {
+    // Record failure feedback before re-throwing
+    const endTime = Date.now();
+    try {
+      await recordGenerationFeedback(
+        finalRequestId,
+        specProfileInternal || createMinimalSpecProfile(),
+        compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
+        skillConfidencesInternal || {},
+        endTime - startTime,
+        Math.round(tokenCount),
+        llmCalls,
+        false,
+        [error instanceof Error ? error.message : String(error)],
+        retryCount,
+        aiCode,
+      );
+      console.log(`📊 Recorded failure feedback for OpenAPI generation`);
+    } catch (feedbackError) {
+      console.warn('⚠️ Failed to record failure feedback:', feedbackError);
+    }
     console.error("❌ Error generating OpenAPI spec:", error);
     throw error;
   }
@@ -289,8 +476,21 @@ export async function generateMCP(
   retryCount: number = 0,
   lastError?: string,
   ragContext?: string,
+  requestId?: string,
+  specProfile?: SpecProfile,
+  selectedSkillIds?: string[],
+  skillConfidences?: Record<string, number>,
 ): Promise<GenerationResult> {
+  let startTime: number = 0;
+  let llmCalls = retryCount + 1;
+  let aiCode = '';
+  let specProfileInternal: SpecProfile | undefined = specProfile;
+  let compositionInternal: SkillComposition | undefined;
+  let skillConfidencesInternal: Record<string, number> | undefined = skillConfidences;
+  const finalRequestId = requestId ?? `mcp-${Date.now()}`;
+
   try {
+    startTime = Date.now();
     console.log("📖 Reading OpenAPI spec...");
     const spec = await readFile(specPath);
 
@@ -329,7 +529,7 @@ export async function generateMCP(
       console.log("📖⚠️ Auth example not found, skipping...");
     }
 
-    const messages = await buildPromptWithExamples(
+    const messagesResult = await buildPromptWithExamples(
       spec,
       structure,
       inputExample,
@@ -338,6 +538,13 @@ export async function generateMCP(
       lastError,
       ragContext,
     );
+
+    // Extract metadata for feedback recording (may be undefined if static selection)
+    const { messages, specProfile: extractedSpecProfile, composition: extractedComposition, skillConfidences: extractedSkillConfidences } = messagesResult;
+    // Store in lifted variables for catch block access
+    if (extractedSpecProfile) specProfileInternal = extractedSpecProfile;
+    compositionInternal = extractedComposition;
+    if (extractedSkillConfidences) skillConfidencesInternal = extractedSkillConfidences;
 
     // Gọi GenAI với messages thay vì prompt đơn giản
     console.log(
@@ -425,11 +632,53 @@ export async function generateMCP(
     console.log(
       `✅ MCP server generated successfully! (Total LLM calls: ${retryCount + 1})`,
     );
+    const endTime = Date.now();
+
+    // Record feedback to close the learning loop
+    try {
+      await recordGenerationFeedback(
+        finalRequestId,
+        specProfileInternal || createMinimalSpecProfile(),
+        compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
+        skillConfidencesInternal || {},
+        endTime - startTime,
+        0, // tokenCount not tracked for MCP yet
+        llmCalls,
+        true,
+        [],
+        retryCount,
+        fullCode,
+      );
+      console.log(`📊 Recorded feedback for MCP generation`);
+    } catch (feedbackError) {
+      console.warn('⚠️ Failed to record feedback:', feedbackError);
+    }
+
     return {
       code: fullCode,
       llmCallCount: retryCount + 1,
     };
   } catch (error) {
+    // Record failure feedback before re-throwing
+    const endTime = Date.now();
+    try {
+      await recordGenerationFeedback(
+        finalRequestId,
+        specProfileInternal || createMinimalSpecProfile(),
+        compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
+        skillConfidencesInternal || {},
+        endTime - startTime,
+        0,
+        llmCalls,
+        false,
+        [error instanceof Error ? error.message : String(error)],
+        retryCount,
+        aiCode,
+      );
+      console.log(`📊 Recorded failure feedback for MCP generation`);
+    } catch (feedbackError) {
+      console.warn('⚠️ Failed to record failure feedback:', feedbackError);
+    }
     console.error("❌ Error generating MCP server:", error);
     throw error;
   }

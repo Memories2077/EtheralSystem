@@ -233,7 +233,7 @@ Implement skill scoring, matching, and prompt composition.
 
 ---
 
-## Phase 3: Learning Loop (Week 5-6)
+## Phase 3: Learning Loop (Week 5-6) ✅ COMPLETED
 
 ### Objective
 
@@ -241,46 +241,17 @@ Close the loop: learn from generation outcomes to improve future selections.
 
 ### Tasks
 
-1. **Define `GenerationOutcome` schema** (`feedback.ts`)
+1. **Define `GenerationOutcome` schema** (`feedback.ts`) ✅
 
-   ```typescript
-   interface GenerationOutcome {
-     requestId: string;
-     timestamp: Date;
-     specProfile: SpecProfile;
-     selectedSkillIds: string[];
-     skillConfidences: Record<string, number>;
+   Implemented with full TypeScript interface including metrics, quality assessment, and human feedback fields.
 
-     // Metrics
-     llmCalls: number;
-     tokenCount: number;
-     generationTimeMs: number;
-     validationPassed: boolean;
-     validationErrors: string[];
-     requiredRetries: number;
-
-     // Quality assessment (from post-generation analysis)
-     codeQuality: {
-       hasProperErrorHandling: boolean;
-       usesHelperFunctions: boolean;
-       structureCorrect: boolean;
-       authImplemented: boolean;
-       zodSchemasValid: boolean;
-     };
-
-     // Human feedback (if available from UI)
-     reviewerRating?: number; // 1-5
-     manualFixesRequired: string[]; // e.g., ['added_missing_auth', 'fixed_pagination']
-   }
-   ```
-
-2. **Add `FeedbackCollector`** to `SkillSelectionAgent`
+2. **Add `FeedbackCollector`** to `SkillSelectionAgent` ✅
    - Store outcomes in MongoDB (collection: `skill_feedback`)
    - Schema: Same as `GenerationOutcome` (persisted)
    - Index on `requestId`, `timestamp`, `selectedSkillIds`
    - Method: `recordFeedback(outcome: GenerationOutcome): Promise<void>`
 
-3. **Implement `SkillEffectivenessTracker`** (`feedback.ts`)
+3. **Implement `SkillEffectivenessTracker`** (`feedback.ts`) ✅
    - Query MongoDB for outcomes by skill ID
    - Calculate metrics:
      - `successRate`: % of outcomes with `validationPassed === true`
@@ -288,28 +259,54 @@ Close the loop: learn from generation outcomes to improve future selections.
      - `avgQualityScore`: Weighted score from `codeQuality` fields
      - `lastUsed`: Timestamp of most recent use
    - Bayesian smoothing: `successRate = (successes + 1) / (total + 2)` to avoid 0/1 extremes
-   - Cache calculated metrics in memory (refresh hourly)
+   - Cache calculated metrics in memory (LRU with 500 entry limit)
 
-4. **Update `SkillScorer` to use effectiveness**
+4. **Update `SkillScorer` to use effectiveness** ✅
+
+   Implemented in `composer.ts` lines 148-163:
 
    ```typescript
-   score +=
-     baseScore *
-     skillEffectiveness.successRate * // learned effectiveness
-     (1 + Math.log10(skillUsage.count + 1) * 0.1); // slight bonus for frequently used
+   if (this.feedbackTracker) {
+     const eff = this.feedbackTracker.getEffectiveness(skill.id);
+     if (eff && eff.timesUsed > 0) {
+       const bayesianRate = this.feedbackTracker.getBayesianSuccessRate(
+         skill.id,
+       );
+       score *= bayesianRate; // modulate by learned effectiveness
+       reasons.push(
+         `Bayesian success rate: ${bayesianRate.toFixed(2)} (used ${eff.timesUsed} times)`,
+       );
+
+       // Slight bonus for frequently used skills
+       const usageBonus = Math.log10((eff.timesUsed || 0) + 1) * 0.1;
+       score += score * usageBonus;
+       reasons.push(
+         `Usage bonus: ${usageBonus.toFixed(2)} (used ${eff.timesUsed} times)`,
+       );
+     } else {
+       reasons.push("No effectiveness data yet (neutral)");
+     }
+   }
    ```
 
-5. **Skill gap detection** (periodic, e.g., daily)
+5. **Skill gap detection** ✅
    - Find high-frequency errors that don't match any skill
    - Cluster by `specProfile` features
-   - Suggest new skill: "For APIs with X, Y, Z, consider adding skill for W"
-   - Output to `SKILL_GAPS.md` for developer review
+   - Suggest new skill based on error patterns
+   - Persisted to MongoDB with status tracking
 
-6. **Write tests**
-   - `feedback.test.ts`: Test metric calculations, Bayesian updates
-   - `gap-detection.test.ts`: Test cluster analysis on synthetic failures
+6. **Write tests** ✅
+   - `feedback.test.ts`: 10 comprehensive tests covering:
+     - GenerationOutcome recording with quality metrics
+     - Failed outcome handling
+     - Bayesian smoothing calculations
+     - Skill gap detection and aggregation
+     - Gap status updates
+     - Top skills ranking
+     - Backward compatibility with legacy format
+   - All tests passing (10/10)
 
-**Deliverable**: Generation outcomes are logged and influence future skill selection. Dashboard (optional) shows skill effectiveness.
+**Deliverable**: Generation outcomes are logged and influence future skill selection. The `FeedbackTracker` class provides effectiveness metrics, gap detection, and MongoDB persistence. All tests passing.
 
 ---
 
