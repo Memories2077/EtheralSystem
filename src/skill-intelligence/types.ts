@@ -1,6 +1,6 @@
 export interface SkillMetadata {
   id: string;
-  category: 'auth' | 'mcp' | 'openapi';
+  category: "auth" | "mcp" | "openapi";
   tags: string[];
   priority: number;
   tokenCost: number;
@@ -12,7 +12,7 @@ export interface SkillMetadata {
 
 export interface SkillCondition {
   field: string;
-  operator: 'equals' | 'contains' | 'gte' | 'lte' | 'gt' | 'lt' | 'regex';
+  operator: "equals" | "contains" | "gte" | "lte" | "gt" | "lt" | "regex";
   value: unknown;
 }
 
@@ -34,13 +34,13 @@ export interface SpecProfile {
     contentTypes: string[];
   };
   patterns: {
-    pagination: 'offset' | 'cursor' | 'page' | 'none';
+    pagination: "offset" | "cursor" | "page" | "none";
     rateLimiting: boolean;
     hasFiltering: boolean;
     hasSorting: boolean;
   };
   errors: {
-    format: 'json' | 'xml' | 'html' | 'text' | 'unknown';
+    format: "json" | "xml" | "html" | "text" | "unknown";
     hasStandardErrorSchema: boolean;
   };
   guidance: {
@@ -70,21 +70,41 @@ export interface SkillComposition {
   explanations: Record<string, string>;
 }
 
-export interface GenerationOutcome {
-  requestId: string;
+export interface NormalizedHumanFeedback {
+  feedbackId: string;
+  type: "like" | "dislike";
+  comment?: string;
+  userId?: string;
   timestamp: Date;
+  serverId: string;
+  requestId?: string;
+  attributedSkillIds: string[];
+  issueTags: string[];
+}
+
+export interface HumanFeedbackImportSummary {
+  scannedLogs: number;
+  matchedOutcomes: number;
+  importedFeedbacks: number;
+  skippedDuplicates: number;
+  skippedEmptySignals: number;
+}
+
+export interface GenerationOutcome {
+  requestId?: string;
+  timestamp?: Date;
   specProfile: SpecProfile;
-  selectedSkillIds: string[];
-  skillConfidences: Record<string, number>;
+  selectedSkillIds?: string[];
+  skillConfidences?: Record<string, number>;
   // Metrics
-  llmCalls: number;
-  tokenCount: number;
-  generationTimeMs: number;
-  validationPassed: boolean;
-  validationErrors: string[];
-  requiredRetries: number;
+  llmCalls?: number;
+  tokenCount?: number;
+  generationTimeMs?: number;
+  validationPassed?: boolean;
+  validationErrors?: string[];
+  requiredRetries?: number;
   // Quality assessment
-  codeQuality: {
+  codeQuality?: {
     hasProperErrorHandling: boolean;
     usesHelperFunctions: boolean;
     structureCorrect: boolean;
@@ -93,7 +113,10 @@ export interface GenerationOutcome {
   };
   // Human feedback
   reviewerRating?: number;
-  manualFixesRequired: string[];
+  manualFixesRequired?: string[];
+  humanFeedback?: NormalizedHumanFeedback[];
+  importedFeedbackIds?: string[];
+  humanFeedbackScore?: number;
   // Legacy fields for backward compatibility
   serverId?: string;
   skillsUsed?: string[];
@@ -111,10 +134,11 @@ export interface SkillEffectiveness {
   averageBuildDurationMs: number;
   averageTokenUsage: number;
   lastUsed?: Date;
-  // Bayesian smoothed success rate: (successes + 1) / (total + 2)
+  // Bayesian smoothed success rate: (successes + 1) / (total + 2), adjusted by bounded human-feedback signal.
   bayesianSuccessRate: number;
   avgRetries: number;
   avgQualityScore: number;
+  humanFeedbackScore: number;
 }
 
 export interface SkillGap {
@@ -124,7 +148,7 @@ export interface SkillGap {
   errorPatterns: string[];
   suggestedSkill: string;
   specProfileFeatures: string[];
-  status: 'open' | 'addressed' | 'rejected';
+  status: "open" | "addressed" | "rejected";
 }
 
 export interface ScoringWeights {

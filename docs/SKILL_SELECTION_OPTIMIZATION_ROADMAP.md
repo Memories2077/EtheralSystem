@@ -246,10 +246,12 @@ Close the loop: learn from generation outcomes to improve future selections.
    Implemented with full TypeScript interface including metrics, quality assessment, and human feedback fields.
 
 2. **Add `FeedbackCollector`** to `SkillSelectionAgent` ✅
-   - Store outcomes in MongoDB (collection: `skill_feedback`)
+   - Store automated generation outcomes in MongoDB (collection: `skill_feedback`)
    - Schema: Same as `GenerationOutcome` (persisted)
    - Index on `requestId`, `timestamp`, `selectedSkillIds`
    - Method: `recordFeedback(outcome: GenerationOutcome): Promise<void>`
+   - Keep `skill_feedback` as the canonical per-skill learning collection because it contains `selectedSkillIds`, `specProfile`, validation metrics, retry counts, token usage, and quality signals needed by `SkillEffectivenessTracker`
+   - Treat the existing `logs.feedbacks` implementation from the MetaClaw integration plan as a human-opinion source, not as a replacement for `skill_feedback`
 
 3. **Implement `SkillEffectivenessTracker`** (`feedback.ts`) ✅
    - Query MongoDB for outcomes by skill ID
@@ -295,7 +297,27 @@ Close the loop: learn from generation outcomes to improve future selections.
    - Suggest new skill based on error patterns
    - Persisted to MongoDB with status tracking
 
-6. **Write tests** ✅
+6. **Bridge human feedback from Section 3.4 into skill learning** ✅ COMPLETED
+   - Reuses the implemented `POST /api/mcp/:serverId/feedback` flow that stores `likeCount`, `dislikeCount`, and `feedbacks[]` in the MongoDB `logs` collection
+   - Added bridge logic in `FeedbackTracker.importHumanFeedbackFromLogs()` that reads `logs.feedbacks` and links each feedback item to the corresponding `skill_feedback` record by `requestId` when available, with `serverId` as a fallback lookup key
+   - Extended `GenerationOutcome` persistence with human-feedback fields populated from Section 3.4:
+     - `reviewerRating`: maps `like` to positive rating and `dislike` to negative rating
+     - `manualFixesRequired`: captures actionable dislike comments that describe required corrections
+     - `humanFeedback`: normalized array preserving `feedbackId`, `type`, `comment`, `userId`, `timestamp`, `serverId`, `requestId`, attribution, and issue tags
+     - `importedFeedbackIds`: tracks processed feedback IDs for idempotency
+     - `humanFeedbackScore`: stores the bounded aggregate opinion signal
+   - Updated skill effectiveness scoring to combine automated validation and human opinion:
+     - validation success remains the primary signal through Bayesian smoothing
+     - likes provide a small positive modifier for selected skills
+     - dislikes provide a stronger negative modifier, especially when comments mention broken auth, schema, pagination, tool behavior, deployment, or runtime errors
+   - Handles edge cases where there are no comments, feedback entries, likes, or dislikes by returning an empty import summary and leaving learned effectiveness neutral
+   - Processes aggregate `likeCount`/`dislikeCount` even when `feedbacks[]` is absent or empty
+   - Ensures feedback is processed idempotently by tracking imported `feedbackId` values in `skill_feedback`
+   - Keeps privacy safeguards from the existing server-list API by keeping raw `userId` internal to normalized persistence and not exposing dashboards/exports here
+   - Added indexes for bridge queries: `logs.serverId`, `logs.feedbacks.feedbackId`, `skill_feedback.requestId`, `skill_feedback.importedFeedbackIds`, and `skill_feedback.serverId`
+   - Added tests for like/dislike mapping, comment-to-skill attribution, duplicate feedback imports, missing `requestId` fallback behavior, aggregate counts, missing links, and empty no-signal logs
+
+7. **Write tests** ✅
    - `feedback.test.ts`: 10 comprehensive tests covering:
      - GenerationOutcome recording with quality metrics
      - Failed outcome handling
@@ -306,7 +328,7 @@ Close the loop: learn from generation outcomes to improve future selections.
      - Backward compatibility with legacy format
    - All tests passing (10/10)
 
-**Deliverable**: Generation outcomes are logged and influence future skill selection. The `FeedbackTracker` class provides effectiveness metrics, gap detection, and MongoDB persistence. All tests passing.
+**Deliverable**: Generation outcomes are logged and influence future skill selection. The `FeedbackTracker` class provides effectiveness metrics, gap detection, and MongoDB persistence. Human likes/dislikes/opinions captured by the Section 3.4 feedback endpoint are planned to be bridged into `skill_feedback` so the roadmap benefits from both automated validation and real user opinion signals.
 
 ---
 
@@ -425,7 +447,10 @@ Refine the system, add advanced features, prepare for production.
 - [ ] Implement `SkillEffectivenessTracker` with Bayesian metrics
 - [ ] Update `SkillScorer` to incorporate learned effectiveness
 - [ ] Implement skill gap detection
-- [ ] Write feedback and gap detection tests
+- [x] Implement `SkillFeedbackBridge` to import Section 3.4 `logs.feedbacks` into `skill_feedback`
+- [x] Extend `GenerationOutcome` records with normalized human feedback and imported `feedbackId` tracking
+- [x] Update skill scoring to apply bounded human-opinion modifiers from likes, dislikes, and feedback comments
+- [x] Write feedback, bridge, idempotency, and gap detection tests
 
 ### Week 7-8: Polish & Launch
 

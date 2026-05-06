@@ -1,9 +1,14 @@
-import type { SpecProfile, SkillComposition, GenerationOutcome } from './types.js';
-import { SkillRegistry } from './registry.js';
-import { SpecProfileAnalyzer } from './analyzer.js';
-import { SkillComposer } from './composer.js';
-import { FeedbackTracker } from './feedback.js';
-import { ProfileCache } from './cache.js';
+import type {
+  SpecProfile,
+  SkillComposition,
+  GenerationOutcome,
+  HumanFeedbackImportSummary,
+} from "./types.js";
+import { SkillRegistry } from "./registry.js";
+import { SpecProfileAnalyzer } from "./analyzer.js";
+import { SkillComposer } from "./composer.js";
+import { FeedbackTracker } from "./feedback.js";
+import { ProfileCache } from "./cache.js";
 
 export class SkillSelectionAgent {
   private static instance: SkillSelectionAgent | null = null;
@@ -82,6 +87,10 @@ export class SkillSelectionAgent {
 
   recordFeedback(outcome: GenerationOutcome): void {
     this.feedback.recordOutcome(outcome);
+  }
+
+  importHumanFeedbackFromLogs(): Promise<HumanFeedbackImportSummary> {
+    return this.feedback.importHumanFeedbackFromLogs();
   }
 
   getSkillEffectiveness(skillId: string) {
