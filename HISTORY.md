@@ -1,5 +1,36 @@
 # Project History Log
 
+## [2026-05-06] - Human Feedback Bridge for Skill Learning
+
+- **Feature**: Completed the “Bridge human feedback from Section 3.4 into skill learning” phase of the Skill Selection Optimization roadmap.
+- **FeedbackTracker** (`src/skill-intelligence/feedback.ts`):
+  - Added `importHumanFeedbackFromLogs()` to import human opinion signals from the existing MCP feedback flow stored in MongoDB `logs`.
+  - Links feedback to `skill_feedback` by `requestId` when available, with `serverId` fallback for existing server feedback records.
+  - Imports explicit `feedbacks[]` entries and also supports aggregate `likeCount` / `dislikeCount` when feedback entries are absent.
+  - Handles no-signal edge cases safely: no comments, no feedback entries, no likes, and no dislikes return a neutral import summary without changing skill effectiveness.
+  - Tracks imported `feedbackId` values for idempotency and skips duplicate imports.
+  - Extracts issue tags from comments for auth, schema, pagination, tool behavior, deployment, and runtime problems.
+  - Applies bounded human-feedback modifiers to Bayesian skill effectiveness: small positive modifier for likes and stronger negative modifier for dislikes, especially actionable problem comments.
+  - Captures actionable dislike comments in `manualFixesRequired`.
+  - Added MongoDB indexes for bridge lookups: `logs.serverId`, `logs.feedbacks.feedbackId`, `skill_feedback.serverId`, and `skill_feedback.importedFeedbackIds`.
+- **SkillSelectionAgent** (`src/skill-intelligence/agent.ts`):
+  - Exposed `importHumanFeedbackFromLogs()` so the agent can trigger feedback imports through its public API.
+- **GenerationOutcome Schema** (`src/skill-intelligence/types.ts`):
+  - Added `NormalizedHumanFeedback`, `HumanFeedbackImportSummary`, `humanFeedback`, `importedFeedbackIds`, and `humanFeedbackScore`.
+  - Kept legacy outcome compatibility by allowing older partial feedback records to continue flowing through the tracker.
+- **Tests** (`src/skill-intelligence/__tests__/phase3.test.ts`):
+  - Added bridge tests for like/dislike mapping, comment-to-skill attribution, aggregate count imports, duplicate imports, `serverId` fallback, missing outcome links, and empty no-signal logs.
+- **Documentation**:
+  - Updated `docs/SKILL_SELECTION_OPTIMIZATION_ROADMAP.md` to mark the Section 3.4 feedback bridge as completed and document edge-case behavior.
+- **Verification**:
+  - Ran `npx tsc --noEmit`; remaining TypeScript output is limited to pre-existing test setup issues (`vitest` types missing and the existing private-constructor test in `agent.test.ts`). Filtering those known issues shows no bridge-related TypeScript errors.
+- **Files Modified**:
+  - `src/skill-intelligence/feedback.ts` (human feedback bridge, idempotency, scoring modifiers, indexes)
+  - `src/skill-intelligence/types.ts` (human feedback schema extensions)
+  - `src/skill-intelligence/agent.ts` (public bridge trigger)
+  - `src/skill-intelligence/__tests__/phase3.test.ts` (bridge and edge-case tests)
+  - `docs/SKILL_SELECTION_OPTIMIZATION_ROADMAP.md` (phase status and implementation notes)
+
 ## [2026-05-03] - Phase 3: Learning Loop & Feedback-Driven Skill Selection
 
 - **Feature**: Implemented Phase 3 (Learning Loop) of the Skill Selection Optimization roadmap for autonomous MCP generation.
