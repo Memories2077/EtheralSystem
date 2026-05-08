@@ -7,7 +7,10 @@ CHATBOT_DIR="../chatbot_mcp_client"
 
 # Hàm hiển thị hướng dẫn
 usage() {
-    echo "Sử dụng: $0 {up|down|restart|logs-agent|logs-backend|logs-frontend|logs|ps|rebuild}"
+    echo "Usage: $0 {up|down|restart|logs-agent|logs-backend|logs-frontend|logs|ps|rebuild}"
+    echo ""
+    echo "Requires Docker Compose and the external shared network 'mcp-network'."
+    echo "The 'up' command creates 'mcp-network' automatically if needed."
     exit 1
 }
 
@@ -27,10 +30,12 @@ case "$1" in
 
         echo "Hệ thống đã khởi chạy thành công!"
         echo "URLs:"
-        echo " - Frontend: http://localhost:3000"
+        echo " - Frontend: http://localhost:9002"
+        echo " - Chatbot backend: http://localhost:8000"
         echo " - LangGraph: http://localhost:2024"
-        echo " - MCP Gen: http://localhost:8080"
-        ;;  
+        echo " - mcp-gen manager: http://localhost:8080"
+        echo " - mcp-gen proxy: http://localhost:8081"
+        ;;
     down)
         echo "--- Dừng chatbot client ---"
         (cd "$CHATBOT_DIR" && docker compose down)

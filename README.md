@@ -1,107 +1,202 @@
 # 🧠 MCP Agent Engine: Autonomous Generation & RAG
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-black)](https://langchain-ai.github.io/langgraph/)
 [![RAG](https://img.shields.io/badge/Context-Hierarchical--RAG-orange)](https://vapi.ai)
 [![MetaClaw](https://img.shields.io/badge/MetaClaw-Provider-blueviolet)](https://github.com/metaclaw)
 
-The core agentic engine powering the **Gemini InsightLink** ecosystem. This repository contains the stateful LangGraph orchestration logic, hierarchical RAG systems, and specialized sub-agents designed to analyze codebases and generate fully functional MCP (Model Context Protocol) servers.
+The core agentic engine powering the **Gemini InsightLink** ecosystem. This repository contains the stateful LangGraph orchestration logic, hierarchical RAG systems, and specialized sub-agents designed to analyze API documentation, enrich generation context with RAG, invoke mcp-gen, and index generated MCP artifacts.
 
 ---
 
 ## 🤖 Multi-Agent Orchestration
 
-Driven by **LangGraph**, the engine utilizes a specialized multi-agent architecture to ensure precision in complex tasks:
+Driven by **LangGraph**, the engine uses a specialized multi-agent architecture:
 
-*   **Examiner Agent**: The "scout" of the system. It proactively explores the target environment or codebase, identifying patterns, dependencies, and integration points.
-*   **Generator Agent**: The architect. It consumes findings from the Examiner and produces production-ready MCP server implementations, configuration JSONs, and robust deployment scripts.
-*   **Supervisor Node**: The gatekeeper. It manages the state machine, validates agent outputs against strict schemas, and ensures the system remains resilient across long-running tasks.
+- **Supervisor Node**: Canonical orchestration entry point in `my_agent/agents/graph.py`. It routes work to sub-agents, tracks state, and detects completion.
+- **Examiner Agent**: Analyzes API documentation and enriches it with historical or related context from RAG.
+- **Generator Agent**: Sends validated MCP generation requests to mcp-gen, returns the generated configuration, and indexes generated artifacts when available.
 
 ---
 
 ## ✨ Advanced Capabilities
 
 ### 🛡️ MetaClaw Provider Integration
-Native support for **MetaClaw** as a high-fidelity LLM provider. This allows the agents to utilize advanced tool-calling capabilities and shared memory models across different sessions.
+
+Native support for **MetaClaw** as a high-fidelity LLM provider. This allows the agents to use advanced tool-calling capabilities and shared memory models across sessions.
 
 ### 📚 Hierarchical RAG (Retrieval-Augmented Generation)
-Combines codebase-wide indexing with deep semantic search. The engine maintains a hierarchical representation of your project, allowing it to retrieve relevant context without being overwhelmed by file size or quantity.
+
+Combines codebase-wide indexing with deep semantic search. The engine maintains a hierarchical representation of generated artifacts and related context, allowing it to retrieve relevant context without being overwhelmed by file size or quantity.
 
 ### 🏗️ Autonomous MCP Generation
-Simply describe your requirements, and the engine will:
-1.  Analyze the target API or environment.
-2.  Generate the Python/TypeScript boilerplate for the MCP server.
-3.  Produce a valid `mcp_config.json`.
-4.  Provide a deployment-ready Dockerfile.
+
+Provide API documentation and user metadata, and the engine will:
+
+1. Analyze the API documentation.
+2. Enrich the generation request with RAG context.
+3. Call mcp-gen through `POST /api/mcp/create`.
+4. Return the generated Claude/MCP configuration.
+5. Fetch generated artifacts from `GET /api/mcp/:serverId/files` and index them for future RAG retrieval when available.
 
 ### 📡 Real-time Telemetry
-Exposes granular internal state updates via the LangGraph SDK. This allows frontends (like the InsightLink Chatbot) to visualize the agent's progress, tool calls, and decision-making logic in real-time.
+
+Exposes granular internal state updates via the LangGraph SDK. This allows frontends, such as the InsightLink Chatbot, to visualize agent progress, tool calls, and routing decisions in real time.
 
 ---
 
 ## 🛠️ Technical Stack
 
-*   **Orchestration**: LangGraph, LangChain.
-*   **Vector Database**: ChromaDB (Support for hierarchical indexing).
-*   **LLM Support**: Google Gemini (2.0-Flash / 2.5-Series), MetaClaw Proxy, OpenAI-compatible APIs.
-*   **Persistence**: MongoDB (Storing agent checkpoints and thread states).
+- **Orchestration**: LangGraph, LangChain.
+- **Vector Database**: ChromaDB.
+- **Embeddings**: Ollama-backed embeddings.
+- **LLM Support**: Google Gemini, MetaClaw Proxy, Groq, OpenAI-compatible APIs.
+- **Persistence**: MongoDB-compatible checkpoint/state dependencies where configured.
+- **MCP generation backend**: mcp-gen manager API.
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-*   Python 3.10 or higher.
-*   Docker & Docker Compose (for MongoDB and ChromaDB).
+
+- Python 3.12 or higher. This matches `pyproject.toml` and the Docker image.
+- Docker and Docker Compose.
+- Git Bash or WSL on Windows if using `manage.sh`.
+- A sibling `../mcp-gen` repository and `../chatbot_mcp_client` repository when using `manage.sh up` for the full ecosystem.
+
+### Shared Docker network
+
+`docker-compose.yaml` uses an external Docker network named `mcp-network`. Create it before starting Compose if you are not using `manage.sh up`:
+
+```bash
+docker network create mcp-network
+```
+
+`manage.sh up` creates this network automatically if it does not already exist.
 
 ### Configuration
+
 Create a `.env` file based on `.env.example`:
 
 ```bash
-# 1. LLM & Tools
+cp .env.example .env
+```
+
+Key service URL convention:
+
+- `MCP_BASE_URL` is the mcp-gen API base URL and **must include `/api`**.
+  - Docker Compose default: `http://docker-manager:8080/api`
+  - Host-local default: `http://localhost:8080/api`
+- If a root manager URL is needed by future code, use `MCP_MANAGER_URL` such as `http://docker-manager:8080`.
+
+Example core variables:
+
+```bash
 GEMINI_API_KEY="your_api_key"
 TAVILY_API_KEY="your_tavily_key"
-
-# 2. MetaClaw (Brain) Configuration
-METACLAW_ENABLED=true
-METACLAW_BASE_URL="https://llmapi.iec-uit.com/v1"
-METACLAW_API_KEY="your_metaclaw_key"
-
-# 3. Persistence
+MCP_BASE_URL=http://localhost:8080/api
+MCP_MANAGER_URL=http://localhost:8080
 MONGO_URI=mongodb://localhost:27017
 MONGO_DB_NAME=mcp_agent_db
 ```
 
 ### Installation
-We provide a management script for ease of use:
+
+Install dependencies in a Python 3.12 environment:
+
 ```bash
-# Initialize environment and dependencies
-sh manage.sh setup
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-### Running the Engine
+### Running the LangGraph engine only
+
 ```bash
-# Start the LangGraph API server in development mode
-sh manage.sh start
+langgraph dev --host 0.0.0.0 --port 2024
 ```
+
+### Running with Docker Compose
+
+Start only this repository's services:
+
+```bash
+docker compose up -d
+```
+
+### Running the full local ecosystem
+
+`manage.sh` orchestrates sibling repositories and supports these commands:
+
+```bash
+sh manage.sh up
+sh manage.sh down
+sh manage.sh restart
+sh manage.sh logs
+sh manage.sh logs-agent
+sh manage.sh logs-backend
+sh manage.sh logs-frontend
+sh manage.sh ps
+sh manage.sh rebuild
+```
+
+Service URLs printed by `manage.sh up`:
+
+- Frontend: `http://localhost:9002`
+- Chatbot backend: `http://localhost:8000`
+- LangGraph: `http://localhost:2024`
+- mcp-gen manager: `http://localhost:8080`
+- mcp-gen proxy: `http://localhost:8081`
+
+---
+
+## 🔌 mcp-gen API Contract
+
+The generator tool sends this request to `POST /api/mcp/create`:
+
+```json
+{
+  "request": "string",
+  "userId": "string",
+  "email": "string",
+  "rag_context": []
+}
+```
+
+It expects a response like:
+
+```json
+{
+  "serverId": "string",
+  "claudeConfig": {},
+  "status": "running"
+}
+```
+
+After creation, the generator fetches artifacts from `GET /api/mcp/:serverId/files`. The final user response distinguishes:
+
+- server creation success or failure,
+- artifact fetch success, skipped, or failure,
+- RAG indexing success, skipped, or failure,
+- warnings from post-creation processing.
 
 ---
 
 ## 🧪 Testing & Verification
 
-The suite includes dedicated tools for verifying the RAG pipeline and agent logic:
+Useful smoke checks:
+
 ```bash
-# Verify RAG & Embeddings
-python tests/verify_embeddings.py
-
-# Test Hierarchical RAG indexing
-python tests/test_hierarchical_rag.py
-
-# Run interactive Examiner loop
-python tests/test_with_examiner.py
+python -m compileall my_agent
+python my_agent/scripts/check_chroma.py
+python my_agent/scripts/check_ollama.py
+python my_agent/scripts/check_deps.py
 ```
+
+Additional verification scripts may require local services and provider API keys.
 
 ---
 
 ## 📄 License
-MIT License. See [LICENSE](LICENSE) for details.
+
+MIT License. See `LICENSE` for details.

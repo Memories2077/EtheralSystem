@@ -1,16 +1,22 @@
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
 
-from typing import Dict, Any, Optional, List, Sequence
-from pydantic import SecretStr
+from typing import Dict, Any, Optional, List, Tuple
 from my_agent.tools.generator_tools import create_MCPServer, test_mcp_server
 from my_agent.utils.vector_db import save_mcp_artifacts
 
-from my_agent.config import load_prompt, AGENT_CONFIG, API_CONFIG, PROVIDER_CONFIG
+from my_agent.config import load_prompt, AGENT_CONFIG
 from my_agent.utils.state import AgentState, get_message_content # Import from centralized location
 
-import os
+import json
 import httpx
 import re
+
+from my_agent.utils.mcp_client import (
+    MCPResponseValidationError,
+    MCPTimeoutError,
+    MCPUnavailableError,
+    fetch_mcp_files,
+)
 
 custom_client = httpx.Client(
     timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
@@ -30,7 +36,7 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     llm = get_llm(temperature=config["temperature"])
 
 
-    llm_with_tools = llm.bind_tools([create_MCPServer])
+    llm_with_tools = llm.bind_tools([create_MCPServer, test_mcp_server])
     
     # 1. State-backed Data Extraction (Primary Source)
     raw_api_doc = state.get("raw_api_doc", "")
@@ -55,7 +61,7 @@ async def generator_agent_node(state: AgentState) -> AgentState:
         print("[Generator] ⚠️ WARNING: No task content or raw_api_doc found!")
         task_content = "Generate content based on the user's request"
     
-    def parse_task_metadata(content: str) -> tuple:
+    def parse_task_metadata(content: str) -> Tuple[str, str]:
         """Parse task metadata (userId, email) from message content"""
         user_id = "default_user"
         email = "user@example.com"
@@ -127,15 +133,18 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     ]
     
     response = await llm_with_tools.ainvoke(generator_messages)
+    tool_calls = list(getattr(response, "tool_calls", None) or [])
     
     # If tool calls exist, execute them
-    if response.tool_calls:
-        tool_results = []
+    if tool_calls:
+        tool_results: List[Tuple[str, str]] = []
         has_error = False
         error_message = ""
         
-        for tool_call in response.tool_calls:
-            if tool_call["name"] == "create_MCPServer":
+        for tool_call in tool_calls:
+            tool_call_id = tool_call.get("id", f"tool_call_{len(tool_results)}")
+            tool_name = tool_call.get("name", "")
+            if tool_name == "create_MCPServer":
                 # CRITICAL: Use our pre-constructed query with FULL API doc
                 query = constructed_query
                 
@@ -144,7 +153,7 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                 # Properly await the async tool
                 result = await create_MCPServer.ainvoke({"query": query})
                 result_str = str(result)
-                tool_results.append(result_str)
+                tool_results.append((tool_call_id, result_str))
 
                 # Check for error in tool result
                 if result_str.startswith("❌"):
@@ -153,50 +162,85 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                     print(f"[Generator] ❌ Tool returned error: {error_message[:100]}...")
                     continue
 
-                import json
                 try:
                     tool_data = json.loads(result_str)
                     server_id = tool_data.get("serverId")
                     
                     if server_id:
-                        print(f"[Generator] 🔄 Server created with ID: {server_id}. Indexing for RAG...")
-                        # ... (RAG indexing logic remains the same)
-                        mcp_base_url = os.environ.get("MCP_BASE_URL", "http://localhost:8080")
-                        manager_url = mcp_base_url.rstrip('/')
-                        if manager_url.endswith("/api"):
-                            manager_url = manager_url[:-4]
-                        manager_url = manager_url.rstrip('/')
+                        post_creation_metadata = {
+                            "serverCreated": True,
+                            "serverId": server_id,
+                            "artifactFetchStatus": "skipped",
+                            "ragIndexStatus": "skipped",
+                            "warnings": []
+                        }
+                        print(f"[Generator] 🔄 Server created with ID: {server_id}. Fetching artifacts for RAG indexing...")
 
-                        async with httpx.AsyncClient(timeout=30.0) as client:
-                            files_response = await client.get(f"{manager_url}/api/mcp/{server_id}/files")
-                            if files_response.status_code == 200:
-                                artifacts_data = files_response.json().get("files", {})
-                                save_result = await save_mcp_artifacts(
-                                    server_id=server_id,
-                                    user_id=user_id,
-                                    email=email,
-                                    artifacts=artifacts_data,
-                                    skip_if_similar=True
-                                )
-                                if save_result["status"] == "success":
-                                    print(f"[Generator] ✅ Artifacts indexed successfully")
+                        try:
+                            artifacts_data = await fetch_mcp_files(server_id)
+                            post_creation_metadata["artifactFetchStatus"] = "success"
+                            save_result = await save_mcp_artifacts(
+                                server_id=server_id,
+                                user_id=user_id,
+                                email=email,
+                                artifacts=artifacts_data,
+                                skip_if_similar=True
+                            )
+                            if save_result.get("status") == "success":
+                                post_creation_metadata["ragIndexStatus"] = "success"
+                                print(f"[Generator] ✅ Artifacts indexed successfully")
+                            else:
+                                post_creation_metadata["ragIndexStatus"] = "failed"
+                                warning = f"RAG indexing failed: {save_result}"
+                                post_creation_metadata["warnings"].append(warning)
+                                print(f"[Generator] ⚠️ {warning}")
+                        except httpx.HTTPStatusError as status_error:
+                            post_creation_metadata["artifactFetchStatus"] = "failed"
+                            post_creation_metadata["ragIndexStatus"] = "skipped"
+                            warning = f"Artifact fetch failed with status {status_error.response.status_code}"
+                            post_creation_metadata["warnings"].append(warning)
+                            print(f"[Generator] ⚠️ {warning}")
+                        except (MCPTimeoutError, MCPUnavailableError, MCPResponseValidationError) as fetch_error:
+                            post_creation_metadata["artifactFetchStatus"] = "failed"
+                            post_creation_metadata["ragIndexStatus"] = "skipped"
+                            warning = f"Artifact fetch failed: {fetch_error}"
+                            post_creation_metadata["warnings"].append(warning)
+                            print(f"[Generator] ⚠️ {warning}")
+                        except Exception as index_error:
+                            post_creation_metadata["artifactFetchStatus"] = post_creation_metadata.get("artifactFetchStatus", "failed")
+                            post_creation_metadata["ragIndexStatus"] = "failed"
+                            warning = f"Artifact indexing failed: {index_error}"
+                            post_creation_metadata["warnings"].append(warning)
+                            print(f"[Generator] ⚠️ {warning}")
+
+                        tool_data["postCreation"] = post_creation_metadata
+                        tool_results[-1] = (tool_call_id, json.dumps(tool_data, indent=2))
                 except Exception as e:
                     print(f"[Generator] Warning during post-creation processing: {e}")
             
-            elif tool_call["name"] == "test_mcp_server":
-                mcp_link = tool_call["args"].get("MCPLink", "")
+            elif tool_name == "test_mcp_server":
+                args = tool_call.get("args", {}) or {}
+                mcp_link = args.get("MCPLink", "")
                 if mcp_link:
                     result = await test_mcp_server.ainvoke({"MCPLink": mcp_link})
-                    tool_results.append(str(result))
+                    tool_results.append((tool_call_id, str(result)))
                 else:
-                    tool_results.append("❌ Error: MCPLink parameter is required for testing")
+                    tool_results.append((tool_call_id, "❌ Error: MCPLink parameter is required for testing"))
+            else:
+                tool_results.append((tool_call_id, f"❌ Error: Unsupported tool call: {tool_name}"))
 
         # If there was an error, return it directly
         if has_error:
             return {
                 "messages": [AIMessage(content=error_message)],
                 "next_agent": "supervisor_final",
-                "final_response": error_message
+                "final_response": error_message,
+                "history": [],
+                "retry_count": state.get("retry_count", 0),
+                "current_plan": state.get("current_plan", ""),
+                "is_complete": state.get("is_complete", False),
+                "raw_api_doc": raw_api_doc,
+                "enriched_context": enriched_context_json
             }
         
         # Generate final response with tool results
@@ -205,13 +249,15 @@ async def generator_agent_node(state: AgentState) -> AgentState:
         1. The exact phrase: "✅ MCP Server created successfully!"
         2. The 'Server Details:' section including "Server ID: [id]".
         3. The full JSON configuration object for the user to copy.
+        4. A short 'Post-creation status' section that clearly distinguishes server creation from artifact fetching and RAG indexing.
+           Include any warnings if artifact fetching or indexing failed.
         
-        This will signal the supervisor that the task is complete.
+        This will signal the supervisor that the task is complete while preserving indexing warnings.
         """
         
         final_messages = generator_messages + [response] + [
-            ToolMessage(content=str(result), tool_call_id=tc["id"])
-            for result, tc in zip(tool_results, response.tool_calls)
+            ToolMessage(content=result, tool_call_id=tool_call_id)
+            for tool_call_id, result in tool_results
         ] + [
             HumanMessage(content=final_prompt)
         ]
@@ -222,14 +268,26 @@ async def generator_agent_node(state: AgentState) -> AgentState:
         return {
             "messages": [AIMessage(content=content)],
             "next_agent": "supervisor_final",
-            "final_response": content
+            "final_response": content,
+            "history": [],
+            "retry_count": state.get("retry_count", 0),
+            "current_plan": state.get("current_plan", ""),
+            "is_complete": state.get("is_complete", False),
+            "raw_api_doc": raw_api_doc,
+            "enriched_context": enriched_context_json
         }
 
     
     return {
         "messages": [response],
         "next_agent": "supervisor_final",
-        "final_response": str(response.content) if hasattr(response, 'content') else str(response)
+        "final_response": str(response.content) if hasattr(response, 'content') else str(response),
+        "history": [],
+        "retry_count": state.get("retry_count", 0),
+        "current_plan": state.get("current_plan", ""),
+        "is_complete": state.get("is_complete", False),
+        "raw_api_doc": raw_api_doc,
+        "enriched_context": enriched_context_json
     }
 
 

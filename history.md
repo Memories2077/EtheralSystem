@@ -1,5 +1,28 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-05-08] - Chuẩn hóa Luồng mcp-gen & RAG Artifact Indexing (mcp-gen Flow Alignment)
+
+### 🚀 Cải tiến Luồng Sinh MCP (MCP Generation Flow Improvements)
+
+- **Chuẩn hóa MCP API Contract**: Cập nhật cấu hình và tài liệu để `MCP_BASE_URL` luôn trỏ tới mcp-gen API base URL có `/api`, đồng thời bổ sung `MCP_MANAGER_URL` cho manager root URL khi cần.
+- **Tách MCP Client**: Bổ sung client tiện ích riêng cho việc gọi mcp-gen, fetch generated artifacts, xử lý timeout/unavailable/validation errors, và tránh trộn logic HTTP trực tiếp trong Generator Agent.
+- **Post-Creation Artifact Pipeline**: Generator Agent hiện fetch artifacts sau khi tạo server, ghi nhận trạng thái `artifactFetchStatus`, `ragIndexStatus`, warnings, và index artifacts vào RAG khi dữ liệu hợp lệ.
+- **Tooling Reliability**: Mở rộng Generator với `test_mcp_server`, cải thiện xử lý tool calls, chuẩn hóa metadata người dùng, và giữ phản hồi cuối có thông tin server/config rõ ràng hơn.
+
+### 🛠️ Tối ưu hóa Điều phối & RAG (Orchestration & RAG Reliability)
+
+- **Supervisor Fast-path Stabilization**: Cải thiện luồng Examiner → Generator bằng cách ưu tiên task delegation rõ ràng và fallback từ state (`raw_api_doc`, `enriched_context`) khi cần.
+- **Examiner State Preservation**: Giữ `raw_api_doc` làm nguồn dữ liệu canonical, cải thiện parser `API_DOCUMENTATION`, và bảo toàn metadata state trong kết quả trả về.
+- **VectorDB Dependency Guard**: Thêm kiểm tra dependency lazy-loading cho LlamaIndex/Chroma, typing casts để giảm lỗi runtime/type-checking, và làm rõ cách diễn giải similarity score.
+
+### 📚 Tài liệu & Vận hành (Documentation & Operations)
+
+- **README Refresh**: Cập nhật mô tả kiến trúc, yêu cầu Python 3.12, workflow chạy local/Docker/full ecosystem, API contract của mcp-gen, và smoke checks.
+- **Docker/Script Alignment**: Làm rõ shared network `mcp-network`, cập nhật service URLs trong `manage.sh`, và bổ sung cấu hình MCP manager/API trong Docker Compose và `.env.example`.
+- **Tài liệu Kiến trúc & Kế hoạch**: Bổ sung tài liệu kiến trúc graph và kế hoạch thay đổi để mô tả rõ hơn luồng điều phối hiện tại.
+
+---
+
 ## [2026-04-28] - Tối ưu hóa MetaClaw Memory & Model Selection (MetaClaw Memory Optimization)
 
 - **Cập nhật Logic chọn Model**: Sử dụng trực tiếp cấu hình `metaclaw` từ `PROVIDER_CONFIG`.
@@ -35,7 +58,7 @@
 ### 🛠️ Tối ưu hóa Generator & Sửa lỗi (Generator Optimization & Bug Fixes)
 
 - **Truyền tải Documentation Toàn vẹn (Full Doc Transmission)**: Generator Agent hiện tự xây dựng tham số query cho tool `create_MCPServer` bằng cách lấy trực tiếp từ state, đảm bảo 100% dữ liệu API specification (ngay cả khi rất dài) được gửi đi mà không bị LLM làm hư hại hay cắt cụt.
-- **Fix Import & Reliability**: 
+- **Fix Import & Reliability**:
   - Sửa lỗi `NameError: get_message_content` trong `generator_agent.py`.
   - Tập trung hóa logic xử lý tin nhắn vào `my_agent/utils/state.py`.
   - Cập nhật prompt điều phối để Supervisor nhận diện tốt hơn các tín hiệu hoàn thành từ MetaClaw Proxy.
@@ -54,7 +77,7 @@
 ### 🛠️ Tối ưu hóa RAG & Sửa lỗi (RAG Optimization & Bug Fixes)
 
 - **Giảm nhiễu RAG (Noise Reduction)**: Tăng ngưỡng độ tương đồng (`similarity threshold`) từ `0.35` lên `0.45` lên `0.45` để lọc bỏ các tài liệu lịch sử không liên quan (ví dụ: không lấy Reddit khi đang yêu cầu ArXiv).
-- **Sửa lỗi Code (Bug Fixes)**: 
+- **Sửa lỗi Code (Bug Fixes)**:
   - Khắc phục lỗi `NameError: name 're' is not defined` trong `generator_agent.py`.
   - Sửa lỗi `tools_node_wrapper` cố gắng "sửa" tham số cho các tool không phải là delegation (như `mark_task_complete`).
 

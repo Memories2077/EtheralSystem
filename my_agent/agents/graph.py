@@ -30,7 +30,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from typing import Literal
+from typing import Literal, Any, cast
 
 from my_agent.utils.state import AgentState, InputState, is_human_message, is_ai_message, get_message_content
 from my_agent.utils.llm_factory import get_llm
@@ -114,17 +114,20 @@ async def tools_node_wrapper(state: AgentState) -> AgentState:
         for idx, msg in enumerate(reversed(messages)):
             actual_idx = len(messages) - 1 - idx
             # Use robust helper instead of brittle type check
-            if not (is_ai_message(msg) and getattr(msg, "tool_calls", None)):
+            msg_any = cast(Any, msg)
+            if not (is_ai_message(msg) and getattr(msg_any, "tool_calls", None)):
                 continue
 
             print(f"[ToolNode] Checking tool_calls at index {actual_idx}")
             fixed_tool_calls = []
             needs_fix = False
 
-            for tc in msg.tool_calls:
+            for tc in msg_any.tool_calls:
                 tc_copy = dict(tc)
                 tc_name = tc_copy.get("name", "")
                 args = tc_copy.get("args", {})
+                if not isinstance(args, dict):
+                    args = {}
                 
                 # Delegation tools repair logic
                 if tc_name in ["delegate_to_examiner_agent", "delegate_to_generator_agent"]:
@@ -148,7 +151,7 @@ async def tools_node_wrapper(state: AgentState) -> AgentState:
 
             if needs_fix:
                 messages[actual_idx] = AIMessage(
-                    content=msg.content,
+                    content=get_message_content(msg),
                     tool_calls=fixed_tool_calls,
                     id=getattr(msg, "id", None)
                 )
@@ -210,9 +213,13 @@ async def supervisor_node(state: AgentState) -> AgentState:
         return {
             "messages": [response],
             "next_agent": "tools",
+            "final_response": "",
             "history": [],
             "retry_count": retry_count,
-            "is_complete": True
+            "current_plan": "forced_completion_marker",
+            "is_complete": True,
+            "raw_api_doc": state.get("raw_api_doc", ""),
+            "enriched_context": state.get("enriched_context", "")
         }
 
     # ── Guard: max retries reached → force completion ──────────────────────
@@ -225,7 +232,10 @@ async def supervisor_node(state: AgentState) -> AgentState:
             "final_response": last_content,
             "history": history + [f"supervisor: forced completion after {retry_count} retries"],
             "retry_count": retry_count,
-            "current_plan": "forced_completion"
+            "current_plan": "forced_completion",
+            "is_complete": state.get("is_complete", False),
+            "raw_api_doc": state.get("raw_api_doc", ""),
+            "enriched_context": state.get("enriched_context", "")
         }
 
     # ── Build context summary for LLM decision ─────────────────────────────
@@ -370,18 +380,26 @@ async def supervisor_final_node(state: AgentState) -> AgentState:
     if agent_that_ran == "examiner":
         # Find the examiner's delegation message (the content after DELEGATE_TO_GENERATOR)
         # We also look in enriched_context state field which is safer
-        examiner_output = state.get("enriched_context", "")
+        examiner_output = ""
+        for msg in reversed(messages):
+            if is_ai_message(msg) and "DELEGATE_TO_GENERATOR:" in get_message_content(msg):
+                raw = get_message_content(msg)
+                examiner_output = raw[raw.index("DELEGATE_TO_GENERATOR:") + len("DELEGATE_TO_GENERATOR:"):].strip()
+                break
 
-        # Fallback to message parsing if state is somehow missing it
+        # Fallback to a compact task assembled from state if the delegation message is missing.
         if not examiner_output:
-            for msg in reversed(messages):
-                if is_ai_message(msg) and "DELEGATE_TO_GENERATOR:" in get_message_content(msg):
-                    raw = get_message_content(msg)
-                    examiner_output = raw[raw.index("DELEGATE_TO_GENERATOR:") + len("DELEGATE_TO_GENERATOR:"):].strip()
-                    break
+            raw_api_doc = state.get("raw_api_doc", "")
+            enriched_context = state.get("enriched_context", "")
+            if raw_api_doc or enriched_context:
+                examiner_output = f"""API_DOCUMENTATION:
+{raw_api_doc}
+
+ENRICHED_CONTEXT (RAG):
+{enriched_context}"""
 
         if examiner_output:
-            print("[SupervisorFinal] ⚡ Fast-path: Examiner produced enriched context. Injecting generator tool call.")
+            print("[SupervisorFinal] ⚡ Fast-path: Examiner produced generator task. Injecting generator tool call.")
             injected_response = AIMessage(
                 content="Examiner completed. Delegating enriched task to Generator.",
                 tool_calls=[{
