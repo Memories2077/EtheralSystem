@@ -1,3 +1,23 @@
+export type SkillSelectionVariant = "control" | "dynamic" | "hybrid";
+
+export interface SkillSelectionMetrics {
+  initializationDurationMs: number;
+  analysisCount: number;
+  analysisCacheHits: number;
+  analysisCacheMisses: number;
+  lastAnalysisDurationMs: number;
+  lastCompositionDurationMs: number;
+  lastSelectedCount: number;
+  lastSelectionConfidence: number;
+  cacheHitRate: number;
+}
+
+export interface SkillSelectionInitializationResult {
+  registryErrors: Record<string, string[]>;
+  durationMs: number;
+  warmedSkillCount: number;
+}
+
 export interface SkillMetadata {
   id: string;
   category: "auth" | "mcp" | "openapi";
@@ -68,6 +88,8 @@ export interface SkillComposition {
   skills: SkillScore[];
   totalTokens: number;
   explanations: Record<string, string>;
+  averageConfidence?: number;
+  fallbackReason?: string;
 }
 
 export interface NormalizedHumanFeedback {

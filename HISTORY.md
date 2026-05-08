@@ -1,5 +1,49 @@
 # Project History Log
 
+## [2026-05-07] - Phase 4: Advanced Skill Selection Polish
+
+- **Feature**: Completed Phase 4 “Advanced Features & Polish” of the Skill Selection Optimization roadmap.
+- **SkillSelectionAgent** (`src/skill-intelligence/agent.ts`):
+  - Added guarded initialization with `initialized` and `initializationPromise` so concurrent first requests share one startup path.
+  - Added `prewarm()` support for startup warm-up and exposed initialization status plus runtime metrics.
+  - Added timing and operational logs for initialization, spec analysis, skill composition duration, selected skill count, selection confidence, and cache hit rate.
+- **ProfileCache** (`src/skill-intelligence/cache.ts`):
+  - Added hit/miss counters, hit-rate reporting, and LRU-style refresh on cache reads.
+  - Reset cache metrics on `clear()` for clean test and runtime state.
+- **SkillComposer** (`src/skill-intelligence/composer.ts`):
+  - Added average selection confidence to skill compositions.
+  - Added low-confidence safe fallback behavior using always/coverage/system/auth/schema skills.
+  - Added hard token-ceiling enforcement to prevent prompt assembly from exceeding production safety limits.
+- **Rollout & Fallbacks** (`src/generator/prompt.ts`, `src/utils/config.ts`):
+  - Added feature-flagged dynamic skill selection via `DYNAMIC_SKILL_SELECTION`.
+  - Added A/B/hybrid rollout configuration with `control`, `dynamic`, and `hybrid` variants.
+  - Added deterministic hash-based traffic assignment when no fixed variant is configured.
+  - Added hybrid fallback to the static prompt path when selection confidence is below the configured threshold.
+- **Startup Integration** (`src/mcp-server-manager.ts`):
+  - Pre-warms the `SkillSelectionAgent` during manager startup when dynamic skill selection is enabled.
+  - Logs and safely continues if prewarm fails, preserving per-request fallback behavior.
+- **Tests** (`src/skill-intelligence/__tests__/phase4.test.ts`):
+  - Added Phase 4 coverage for initialization concurrency, cache metrics, selection metrics, cache hit-rate behavior, and low-confidence fallback.
+- **Tooling** (`package.json`, `package-lock.json`):
+  - Added `test`, `test:phase4`, and `typecheck` scripts.
+  - Pinned compatible test tooling to `vitest@3.2.4` and `vite@6.3.7` after Vitest 4 and Vitest 1 showed runtime issues under Node v24.4.1.
+- **Documentation** (`README.md`):
+  - Documented dynamic skill selection configuration, rollout variants, monitoring signals, safety behavior, dashboard command, and validation commands.
+- **Verification**:
+  - Ran `npm run typecheck`; passed.
+  - Ran `npm run test:phase4`; passed with 5 Phase 4 tests.
+- **Files Modified**:
+  - `src/skill-intelligence/types.ts` (Phase 4 metrics and composition metadata types)
+  - `src/skill-intelligence/cache.ts` (cache statistics and LRU refresh)
+  - `src/skill-intelligence/composer.ts` (confidence, hard token limit, safety fallback)
+  - `src/skill-intelligence/agent.ts` (initialization guard, prewarm, metrics, logs)
+  - `src/utils/config.ts` (feature flags and experiment config)
+  - `src/generator/prompt.ts` (dynamic/control/hybrid rollout and fallback integration)
+  - `src/mcp-server-manager.ts` (startup prewarm)
+  - `src/skill-intelligence/__tests__/phase4.test.ts` (new Phase 4 tests)
+  - `package.json` and `package-lock.json` (test scripts and Vitest/Vite tooling)
+  - `README.md` (Phase 4 usage and operations documentation)
+
 ## [2026-05-06] - Human Feedback Bridge for Skill Learning
 
 - **Feature**: Completed the “Bridge human feedback from Section 3.4 into skill learning” phase of the Skill Selection Optimization roadmap.

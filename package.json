@@ -8,9 +8,12 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:phase4": "vitest run src/skill-intelligence/__tests__/phase4.test.ts",
+    "typecheck": "tsc --noEmit",
     "start": "npx tsx src/launcher.ts",
-    "server": "npx tsx src/server.ts",
+    "manager": "npx tsx src/mcp-server-manager.ts",
+    "proxy": "npx tsx src/dynamic-proxy.ts",
     "build": "npx tsx test/test-generation.ts"
   },
   "keywords": [],
@@ -27,7 +30,9 @@
     "@types/node": "^25.0.8",
     "@types/tar-fs": "^2.0.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^6.3.7",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

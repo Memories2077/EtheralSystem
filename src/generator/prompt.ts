@@ -6,8 +6,14 @@ import {
   getContextWarningLevel,
 } from "../utils/token-counter.ts";
 import { SkillRouter } from "../skills/skill-router.ts";
+import { createHash } from "node:crypto";
 import { SkillSelectionAgent } from "../skill-intelligence/agent.js";
-import type { SpecProfile, SkillComposition } from "../skill-intelligence/types.js";
+import type {
+  SpecProfile,
+  SkillComposition,
+  SkillSelectionVariant,
+} from "../skill-intelligence/types.js";
+import { EXPERIMENT_CONFIG, FEATURE_FLAGS } from "../utils/config.ts";
 
 export interface ChatMessage {
   role: "user" | "model" | "assistant" | "system";
@@ -35,8 +41,8 @@ export function detectAuthInInput(input: string): boolean {
     /\bsign(ed|ing|ature)\b/i,
     /\bJWT\b/,
     /\bhmac\b/i,
-    /--user\s+/,                          // curl --user (basic auth)
-    /-H\s+["']Authorization:/i,          // curl -H "Authorization: ..."
+    /--user\s+/, // curl --user (basic auth)
+    /-H\s+["']Authorization:/i, // curl -H "Authorization: ..."
   ];
   return authKeywords.some((pattern) => pattern.test(input));
 }
@@ -45,14 +51,35 @@ export function detectAuthInInput(input: string): boolean {
  * Detect if a YAML/OpenAPI spec contains securitySchemes.
  */
 export function detectAuthInSpec(spec: string): boolean {
-  return /securitySchemes\s*:/i.test(spec) || /security\s*:\s*\n\s*-/.test(spec);
+  return (
+    /securitySchemes\s*:/i.test(spec) || /security\s*:\s*\n\s*-/.test(spec)
+  );
 }
 
 /**
  * Check if dynamic skill selection is enabled via feature flag.
  */
 function useDynamicSkillSelection(): boolean {
-  return process.env.DYNAMIC_SKILL_SELECTION === 'true';
+  return (
+    FEATURE_FLAGS.DYNAMIC_SKILL_SELECTION &&
+    process.env.DYNAMIC_SKILL_SELECTION !== "false"
+  );
+}
+
+function assignSkillSelectionVariant(
+  requestKey: string,
+): SkillSelectionVariant {
+  const configured = EXPERIMENT_CONFIG.skillSelectionVariant;
+  if (["control", "dynamic", "hybrid"].includes(configured)) {
+    return configured as SkillSelectionVariant;
+  }
+
+  const hash = createHash("sha256").update(requestKey).digest();
+  const bucket = hash.readUInt32BE(0) / 0xffffffff;
+  const { control, dynamic } = EXPERIMENT_CONFIG.trafficAllocation;
+  if (bucket < control) return "control";
+  if (bucket < control + dynamic) return "dynamic";
+  return "hybrid";
 }
 
 /**
@@ -67,9 +94,19 @@ export async function buildPromptWithExamples(
   authExample?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<{ messages: ChatMessage[]; specProfile?: SpecProfile; composition?: SkillComposition; skillConfidences?: Record<string, number> }> {
+): Promise<{
+  messages: ChatMessage[];
+  specProfile?: SpecProfile;
+  composition?: SkillComposition;
+  skillConfidences?: Record<string, number>;
+}> {
+  const variant = assignSkillSelectionVariant(openApiSpec);
+  console.log(
+    `[SkillSelect] variant=${useDynamicSkillSelection() ? variant : "control"}`,
+  );
+
   // Check for dynamic skill selection
-  if (useDynamicSkillSelection()) {
+  if (useDynamicSkillSelection() && variant !== "control") {
     return buildPromptWithDynamicSelection(
       openApiSpec,
       referenceStructure,
@@ -78,12 +115,15 @@ export async function buildPromptWithExamples(
       authExample,
       lastError,
       ragContext,
+      variant,
     );
   }
 
   // 🔍 Detect if the YAML spec actually has security schemes
   const specHasAuth = detectAuthInSpec(openApiSpec);
-  console.log(`🔐 Auth detection in spec: ${specHasAuth ? "YES - will include auth patterns" : "NO - skipping auth patterns to prevent contamination"}`);
+  console.log(
+    `🔐 Auth detection in spec: ${specHasAuth ? "YES - will include auth patterns" : "NO - skipping auth patterns to prevent contamination"}`,
+  );
 
   // Load skills via router
   const skills = await SkillRouter.assembleMCPSkills({ hasAuth: specHasAuth });
@@ -102,17 +142,27 @@ ${outputExample}`;
 
   // Interpolate System Prompt
   const systemContent = skills.system
-    .replace('{{ZOD_MAPPING}}', skills.zodMapping)
-    .replace('{{REQUEST_PATTERNS}}', skills.requestPatterns);
+    .replace("{{ZOD_MAPPING}}", skills.zodMapping)
+    .replace("{{REQUEST_PATTERNS}}", skills.requestPatterns);
 
   // Interpolate User Prompt
   const userContent = skills.userMessage
-    .replace('{{LAST_ERROR}}', lastError ? `the mcp server has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n` : "")
-    .replace('{{REFERENCE_STRUCTURE}}', referenceStructure)
-    .replace('{{EXAMPLES_SECTION}}', examplesSection)
-    .replace('{{OPENAPI_SPEC}}', openApiSpec)
-    .replace('{{RAG_CONTEXT}}', ragContext ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n` : "")
-    .replace('{{AUTH_SECTION}}', skills.auth);
+    .replace(
+      "{{LAST_ERROR}}",
+      lastError
+        ? `the mcp server has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n`
+        : "",
+    )
+    .replace("{{REFERENCE_STRUCTURE}}", referenceStructure)
+    .replace("{{EXAMPLES_SECTION}}", examplesSection)
+    .replace("{{OPENAPI_SPEC}}", openApiSpec)
+    .replace(
+      "{{RAG_CONTEXT}}",
+      ragContext
+        ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n`
+        : "",
+    )
+    .replace("{{AUTH_SECTION}}", skills.auth);
 
   const messages: ChatMessage[] = [
     {
@@ -165,7 +215,13 @@ async function buildPromptWithDynamicSelection(
   authExample?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<{ messages: ChatMessage[]; specProfile: SpecProfile; composition: SkillComposition; skillConfidences: Record<string, number> }> {
+  variant: SkillSelectionVariant = "dynamic",
+): Promise<{
+  messages: ChatMessage[];
+  specProfile: SpecProfile;
+  composition: SkillComposition;
+  skillConfidences: Record<string, number>;
+}> {
   const agent = SkillSelectionAgent.getInstance({
     tokenBudget: 30_000,
   });
@@ -175,11 +231,39 @@ async function buildPromptWithDynamicSelection(
 
   // Analyze the spec
   const profile = agent.analyzeSpec(openApiSpec);
-  console.log(`🧠 Dynamic selection: auth=${profile.auth.hasAuth}, complexity=${profile.guidance.complexityScore}, pagination=${profile.patterns.pagination}`);
+  console.log(
+    `🧠 Dynamic selection: auth=${profile.auth.hasAuth}, complexity=${profile.guidance.complexityScore}, pagination=${profile.patterns.pagination}`,
+  );
 
   // Select skills based on profile
   const composition = agent.selectSkills(profile);
-  console.log(`🧠 Selected ${composition.skills.length} skills (${composition.totalTokens} tokens): ${composition.skills.map(s => s.skillId).join(', ')}`);
+  if (
+    variant === "hybrid" &&
+    (composition.averageConfidence ?? 0) <
+      EXPERIMENT_CONFIG.hybridConfidenceThreshold
+  ) {
+    console.warn(
+      `[SkillSelect] Hybrid confidence ${(composition.averageConfidence ?? 0).toFixed(2)} below ${EXPERIMENT_CONFIG.hybridConfidenceThreshold}; falling back to static prompt`,
+    );
+    const previousFlag = process.env.DYNAMIC_SKILL_SELECTION;
+    process.env.DYNAMIC_SKILL_SELECTION = "false";
+    try {
+      return (await buildPromptWithExamples(
+        openApiSpec,
+        referenceStructure,
+        inputExample,
+        outputExample,
+        authExample,
+        lastError,
+        ragContext,
+      )) as any;
+    } finally {
+      process.env.DYNAMIC_SKILL_SELECTION = previousFlag;
+    }
+  }
+  console.log(
+    `🧠 Selected ${composition.skills.length} skills (${composition.totalTokens} tokens): ${composition.skills.map((s) => s.skillId).join(", ")}`,
+  );
 
   // Build examples section (same as static path)
   let examplesSection = `YAML INPUT EXAMPLE (OpenAPI Spec):
@@ -218,35 +302,57 @@ ${outputExample}`;
   let userContent = baseUser;
 
   // Replace injection points
-  systemContent = systemContent.replace('{{SYSTEM_HEADER}}',
+  systemContent = systemContent.replace(
+    "{{SYSTEM_HEADER}}",
     composition.skills
-      .filter(s => agent.getRegistry().getSkill(s.skillId)?.category === 'mcp' && agent.getRegistry().getSkill(s.skillId)?.id.includes('system'))
-      .map(s => agent.getRegistry().getSkill(s.skillId)?.content || '')
-      .join('\n\n---\n\n') || '');
+      .filter(
+        (s) =>
+          agent.getRegistry().getSkill(s.skillId)?.category === "mcp" &&
+          agent.getRegistry().getSkill(s.skillId)?.id.includes("system"),
+      )
+      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+      .join("\n\n---\n\n") || "",
+  );
 
-  systemContent = systemContent.replace('{{ZOD_MAPPING}}',
+  systemContent = systemContent.replace(
+    "{{ZOD_MAPPING}}",
     composition.skills
-      .filter(s => s.skillId === 'zod_mapping')
-      .map(s => agent.getRegistry().getSkill(s.skillId)?.content || '')
-      .join('') || '');
+      .filter((s) => s.skillId === "zod_mapping")
+      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+      .join("") || "",
+  );
 
-  systemContent = systemContent.replace('{{REQUEST_PATTERNS}}',
+  systemContent = systemContent.replace(
+    "{{REQUEST_PATTERNS}}",
     composition.skills
-      .filter(s => s.skillId === 'request_patterns')
-      .map(s => agent.getRegistry().getSkill(s.skillId)?.content || '')
-      .join('') || '');
+      .filter((s) => s.skillId === "request_patterns")
+      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+      .join("") || "",
+  );
 
   userContent = userContent
-    .replace('{{REFERENCE_STRUCTURE}}', referenceStructure)
-    .replace('{{EXAMPLES_SECTION}}', examplesSection)
-    .replace('{{LAST_ERROR}}', lastError ? `the mcp server has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n` : "")
-    .replace('{{OPENAPI_SPEC}}', openApiSpec)
-    .replace('{{RAG_CONTEXT}}', ragContext ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n` : "")
-    .replace('{{AUTH_SECTION}}',
+    .replace("{{REFERENCE_STRUCTURE}}", referenceStructure)
+    .replace("{{EXAMPLES_SECTION}}", examplesSection)
+    .replace(
+      "{{LAST_ERROR}}",
+      lastError
+        ? `the mcp server has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n`
+        : "",
+    )
+    .replace("{{OPENAPI_SPEC}}", openApiSpec)
+    .replace(
+      "{{RAG_CONTEXT}}",
+      ragContext
+        ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n`
+        : "",
+    )
+    .replace(
+      "{{AUTH_SECTION}}",
       composition.skills
-        .filter(s => s.skillId.includes('mcp_'))
-        .map(s => agent.getRegistry().getSkill(s.skillId)?.content || '')
-        .join('\n\n---\n\n') || '');
+        .filter((s) => s.skillId.includes("mcp_"))
+        .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+        .join("\n\n---\n\n") || "",
+    );
 
   const messages: ChatMessage[] = [
     {
@@ -275,7 +381,10 @@ ${outputExample}`;
       messages: truncateMessages(messages, 120000),
       specProfile: profile,
       composition,
-      skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+      skillConfidences: composition.skills.reduce(
+        (acc, s) => ({ ...acc, [s.skillId]: s.confidence }),
+        {},
+      ),
     };
   }
 
@@ -283,7 +392,10 @@ ${outputExample}`;
     messages,
     specProfile: profile,
     composition,
-    skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+    skillConfidences: composition.skills.reduce(
+      (acc, s) => ({ ...acc, [s.skillId]: s.confidence }),
+      {},
+    ),
   };
 }
 
@@ -298,9 +410,19 @@ export async function buildOpenAPIPromptWithExamples(
   outputExampleTwilio?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<{ messages: ChatMessage[]; specProfile?: SpecProfile; composition?: SkillComposition; skillConfidences?: Record<string, number> }> {
+): Promise<{
+  messages: ChatMessage[];
+  specProfile?: SpecProfile;
+  composition?: SkillComposition;
+  skillConfidences?: Record<string, number>;
+}> {
+  const variant = assignSkillSelectionVariant(apiEndpoints);
+  console.log(
+    `[SkillSelect] variant=${useDynamicSkillSelection() ? variant : "control"}`,
+  );
+
   // Check for dynamic skill selection
-  if (useDynamicSkillSelection()) {
+  if (useDynamicSkillSelection() && variant !== "control") {
     return buildOpenAPIPromptWithDynamicSelection(
       apiEndpoints,
       inputExample,
@@ -309,15 +431,20 @@ export async function buildOpenAPIPromptWithExamples(
       outputExampleTwilio,
       lastError,
       ragContext,
+      variant,
     );
   }
 
   // 🔍 Detect if the user's input actually mentions authentication
   const inputHasAuth = detectAuthInInput(apiEndpoints);
-  console.log(`🔐 Auth detection in input: ${inputHasAuth ? "YES - will include auth examples" : "NO - skipping auth examples to prevent contamination"}`);
+  console.log(
+    `🔐 Auth detection in input: ${inputHasAuth ? "YES - will include auth examples" : "NO - skipping auth examples to prevent contamination"}`,
+  );
 
   // Load skills via router
-  const skills = await SkillRouter.assembleOpenAPISkills({ hasAuth: inputHasAuth });
+  const skills = await SkillRouter.assembleOpenAPISkills({
+    hasAuth: inputHasAuth,
+  });
 
   // Build the examples section - always include the basic HTTPBin example
   let examplesSection = `EXAMPLE 1 - HTTPBin API (Simple GET/POST, NO authentication):
@@ -336,7 +463,9 @@ ${outputExample}`;
         /\/\/ Reddit API with OAuth2\s*\nconst redditInput = `([^`]+)`/s,
       );
       if (!redditInputMatch) {
-        console.warn("⚠️ Reddit input regex did not match — input_example.ts format may have changed. Falling back to generic label.");
+        console.warn(
+          "⚠️ Reddit input regex did not match — input_example.ts format may have changed. Falling back to generic label.",
+        );
       }
       const redditInput = redditInputMatch
         ? redditInputMatch[1]
@@ -357,7 +486,9 @@ ${outputExampleReddit}`;
         /\/\/ Twilio WhatsApp API with Basic Auth\s*\nconst twilioInput = `([^`]+)`/s,
       );
       if (!twilioInputMatch) {
-        console.warn("⚠️ Twilio input regex did not match — input_example.ts format may have changed. Falling back to generic label.");
+        console.warn(
+          "⚠️ Twilio input regex did not match — input_example.ts format may have changed. Falling back to generic label.",
+        );
       }
       const twilioInput = twilioInputMatch
         ? twilioInputMatch[1]
@@ -375,7 +506,7 @@ ${outputExampleTwilio}`;
 
   // Build auth-specific or anti-contamination instructions
   const authSection = inputHasAuth
-    ? skills.requirements.replace('{{INPUT_FORMAT}}', skills.inputFormat)
+    ? skills.requirements.replace("{{INPUT_FORMAT}}", skills.inputFormat)
     : skills.antiContamination;
 
   const authOutputSection = inputHasAuth
@@ -393,12 +524,22 @@ ${outputExampleTwilio}`;
 
   // Interpolate User message
   const userContent = skills.userMessage
-    .replace('{{LAST_ERROR}}', lastError ? `the yaml file has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n` : "")
-    .replace('{{EXAMPLES_SECTION}}', examplesSection)
-    .replace('{{AUTH_SECTION}}', authSection)
-    .replace('{{API_ENDPOINTS}}', apiEndpoints)
-    .replace('{{RAG_CONTEXT}}', ragContext ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n` : "")
-    .replace('{{AUTH_OUTPUT_SECTION}}', authOutputSection);
+    .replace(
+      "{{LAST_ERROR}}",
+      lastError
+        ? `the yaml file has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n`
+        : "",
+    )
+    .replace("{{EXAMPLES_SECTION}}", examplesSection)
+    .replace("{{AUTH_SECTION}}", authSection)
+    .replace("{{API_ENDPOINTS}}", apiEndpoints)
+    .replace(
+      "{{RAG_CONTEXT}}",
+      ragContext
+        ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n`
+        : "",
+    )
+    .replace("{{AUTH_OUTPUT_SECTION}}", authOutputSection);
 
   const messages: ChatMessage[] = [
     {
@@ -451,7 +592,13 @@ async function buildOpenAPIPromptWithDynamicSelection(
   outputExampleTwilio?: string,
   lastError?: string,
   ragContext?: string,
-): Promise<{ messages: ChatMessage[]; specProfile: SpecProfile; composition: SkillComposition; skillConfidences: Record<string, number> }> {
+  variant: SkillSelectionVariant = "dynamic",
+): Promise<{
+  messages: ChatMessage[];
+  specProfile: SpecProfile;
+  composition: SkillComposition;
+  skillConfidences: Record<string, number>;
+}> {
   const agent = SkillSelectionAgent.getInstance({
     tokenBudget: 30_000,
   });
@@ -460,10 +607,38 @@ async function buildOpenAPIPromptWithDynamicSelection(
 
   // Analyze the input (treat input as spec-like for profile analysis)
   const profile = agent.analyzeSpec(apiEndpoints);
-  console.log(`🧠 Dynamic OpenAPI selection: auth=${profile.auth.hasAuth}, complexity=${profile.guidance.complexityScore}`);
+  console.log(
+    `🧠 Dynamic OpenAPI selection: auth=${profile.auth.hasAuth}, complexity=${profile.guidance.complexityScore}`,
+  );
 
   const composition = agent.selectSkills(profile);
-  console.log(`🧠 Selected ${composition.skills.length} skills (${composition.totalTokens} tokens): ${composition.skills.map(s => s.skillId).join(', ')}`);
+  if (
+    variant === "hybrid" &&
+    (composition.averageConfidence ?? 0) <
+      EXPERIMENT_CONFIG.hybridConfidenceThreshold
+  ) {
+    console.warn(
+      `[SkillSelect] Hybrid confidence ${(composition.averageConfidence ?? 0).toFixed(2)} below ${EXPERIMENT_CONFIG.hybridConfidenceThreshold}; falling back to static OpenAPI prompt`,
+    );
+    const previousFlag = process.env.DYNAMIC_SKILL_SELECTION;
+    process.env.DYNAMIC_SKILL_SELECTION = "false";
+    try {
+      return (await buildOpenAPIPromptWithExamples(
+        apiEndpoints,
+        inputExample,
+        outputExample,
+        outputExampleReddit,
+        outputExampleTwilio,
+        lastError,
+        ragContext,
+      )) as any;
+    } finally {
+      process.env.DYNAMIC_SKILL_SELECTION = previousFlag;
+    }
+  }
+  console.log(
+    `🧠 Selected ${composition.skills.length} skills (${composition.totalTokens} tokens): ${composition.skills.map((s) => s.skillId).join(", ")}`,
+  );
 
   // Build examples section (same as static path)
   let examplesSection = `EXAMPLE 1 - HTTPBin API (Simple GET/POST, NO authentication):
@@ -511,10 +686,15 @@ ${outputExampleTwilio}`;
   }
 
   // Build auth section based on selected skills
-  const authSkills = composition.skills.filter(s => s.skillId.includes('openapi_'));
-  const authContent = authSkills.length > 0
-    ? authSkills.map(s => agent.getRegistry().getSkill(s.skillId)?.content || '').join('\n\n---\n\n')
-    : '';
+  const authSkills = composition.skills.filter((s) =>
+    s.skillId.includes("openapi_"),
+  );
+  const authContent =
+    authSkills.length > 0
+      ? authSkills
+          .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+          .join("\n\n---\n\n")
+      : "";
 
   const authOutputSection = profile.auth.hasAuth
     ? `- ⚠️ DO NOT CREATE UNNECESSARY PARAMETERS - Only include parameters that are explicitly defined in the OpenAPI spec.
@@ -523,21 +703,34 @@ ${outputExampleTwilio}`;
     : `- 🚫 DO NOT include any securitySchemes or security sections - the input API has NO authentication`;
 
   // Build messages
-  const systemContent = composition.skills
-    .filter(s => {
-      const skill = agent.getRegistry().getSkill(s.skillId);
-      return skill?.category === 'openapi' && skill.id.includes('system');
-    })
-    .map(s => agent.getRegistry().getSkill(s.skillId)?.content || '')
-    .join('\n\n---\n\n') || '';
+  const systemContent =
+    composition.skills
+      .filter((s) => {
+        const skill = agent.getRegistry().getSkill(s.skillId);
+        return skill?.category === "openapi" && skill.id.includes("system");
+      })
+      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+      .join("\n\n---\n\n") || "";
 
-  const userContent = (agent.getRegistry().getSkill('openapi/user_message')?.content || '')
-    .replace('{{LAST_ERROR}}', lastError ? `the yaml file has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n` : "")
-    .replace('{{EXAMPLES_SECTION}}', examplesSection)
-    .replace('{{AUTH_SECTION}}', authContent)
-    .replace('{{API_ENDPOINTS}}', apiEndpoints)
-    .replace('{{RAG_CONTEXT}}', ragContext ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n` : "")
-    .replace('{{AUTH_OUTPUT_SECTION}}', authOutputSection);
+  const userContent = (
+    agent.getRegistry().getSkill("openapi/user_message")?.content || ""
+  )
+    .replace(
+      "{{LAST_ERROR}}",
+      lastError
+        ? `the yaml file has been generated successfully but there are errors and need to be generated again:\n${lastError}\n\n`
+        : "",
+    )
+    .replace("{{EXAMPLES_SECTION}}", examplesSection)
+    .replace("{{AUTH_SECTION}}", authContent)
+    .replace("{{API_ENDPOINTS}}", apiEndpoints)
+    .replace(
+      "{{RAG_CONTEXT}}",
+      ragContext
+        ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n`
+        : "",
+    )
+    .replace("{{AUTH_OUTPUT_SECTION}}", authOutputSection);
 
   const messages: ChatMessage[] = [
     {
@@ -565,7 +758,10 @@ ${outputExampleTwilio}`;
       messages: truncateMessages(messages, 120000),
       specProfile: profile,
       composition,
-      skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+      skillConfidences: composition.skills.reduce(
+        (acc, s) => ({ ...acc, [s.skillId]: s.confidence }),
+        {},
+      ),
     };
   }
 
@@ -573,7 +769,10 @@ ${outputExampleTwilio}`;
     messages,
     specProfile: profile,
     composition,
-    skillConfidences: composition.skills.reduce((acc, s) => ({ ...acc, [s.skillId]: s.confidence }), {}),
+    skillConfidences: composition.skills.reduce(
+      (acc, s) => ({ ...acc, [s.skillId]: s.confidence }),
+      {},
+    ),
   };
 }
 
