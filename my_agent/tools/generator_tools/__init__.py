@@ -2,7 +2,6 @@
 Generate Tools - Tools for generating MCP Server
 """
 
-import os
 import httpx
 import json
 import base64
@@ -13,6 +12,14 @@ import logging
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from my_agent.utils.mcp_client import (
+    MCPCreateRequest,
+    MCPResponseValidationError,
+    MCPTimeoutError,
+    MCPUnavailableError,
+    create_mcp_server,
+    get_mcp_urls,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -165,101 +172,45 @@ async def create_MCPServer(query: List[str]) -> str:
             logger.warning(f"Failed to parse RAG context from request: {e}")
             rag_context = []
 
-    # Prepare the payload
-    payload = {
-        "request": sanitized_request,
-        "userId": user_id,
-        "email": email,
-        "rag_context": rag_context
-    }
+    create_request = MCPCreateRequest(
+        request=sanitized_request,
+        userId=user_id,
+        email=email,
+        rag_context=rag_context,
+    )
+    mcp_urls = get_mcp_urls()
     
     try:
-        # Send POST request to create MCP server using async httpx
-        # Increased timeout to allow backend enough time to process and respond
-        # Using a longer read timeout since MCP server creation can take time
-        mcp_base_url = os.environ.get("MCP_BASE_URL", "http://docker-manager:8080/api")
-        create_url = f"{mcp_base_url}/mcp/create"
-        timeout_config = httpx.Timeout(
-            connect=10.0,    # Time to establish connection
-            read=300.0,      # Time to wait for backend response (5 minutes)
-            write=10.0,      # Time to send request
-            pool=10.0        # Time to get connection from pool
-        )
-        
-        async with httpx.AsyncClient(timeout=timeout_config) as client:
-            response = await client.post(
-                create_url,
-                json=payload,
-                headers={"Content-Type": "application/json"}
-            )
-        
-        # Log response details for debugging
-        logger.info(f"Received response with status code: {response.status_code}")
-        
-        # Check response status - only conclude when we have a definitive response
-        if response.status_code == 200 or response.status_code == 201:
-            try:
-                result = response.json()
-                
-                # Format the success response
-                server_id = result.get("serverId", "unknown")
-                claude_config = result.get("claudeConfig", {})
-                status = result.get("status", "success")
+        result = await create_mcp_server(create_request)
+        tool_result = result.to_tool_result()
+        logger.info(f"MCP Server created successfully: {result.serverId}")
+        return json.dumps(tool_result, indent=2)
+    except httpx.HTTPStatusError as status_error:
+        response = status_error.response
+        logger.error(f"mcp-gen returned status code {response.status_code}: {response.text[:500]}")
+        error_detail = ""
+        try:
+            error_data = response.json()
+            error_detail = error_data.get("message", error_data.get("error", ""))
+        except Exception:
+            error_detail = response.text[:200]
 
-                config_str = json.dumps(claude_config, indent=4)
-                
-                tool_result = {
-                    "status": status,
-                    "serverId": server_id,
-                    "config": claude_config
-                }
-                
-                logger.info(f"MCP Server created successfully: {server_id}")
-                
-                return json.dumps(tool_result, indent=2)
-            except Exception as json_error:
-                logger.error(f"Failed to parse success response: {json_error}")
-                return f"✅ MCP Server created (Status {response.status_code}), but response format was unexpected. Raw response: {response.text[:500]}"
-        
-        elif response.status_code == 400:
-            error_detail = ""
-            try:
-                error_data = response.json()
-                error_detail = error_data.get("message", error_data.get("error", ""))
-            except:
-                error_detail = response.text[:200]
-            return f"❌ Bad Request: Invalid input data. {error_detail}"
-        
-        elif response.status_code == 401:
-            return f"❌ Unauthorized: Authentication failed."
-        
-        elif response.status_code == 500:
-            error_detail = ""
-            try:
-                error_data = response.json()
-                error_detail = error_data.get("message", error_data.get("error", ""))
-            except:
-                error_detail = response.text[:200]
-            return f"❌ Server Error: The MCP server creation service encountered an error. {error_detail}"
-        
-        else:
-            return f"❌ Error: Received status code {response.status_code}. Response: {response.text[:500]}"
-    
-    except httpx.TimeoutException as timeout_error:
+        if response.status_code == 400:
+            return f"❌ Error: Server creation failed due to invalid input data. {error_detail}"
+        if response.status_code == 401:
+            return "❌ Error: Server creation failed because mcp-gen authentication failed."
+        if response.status_code >= 500:
+            return f"❌ Error: Server creation failed because mcp-gen returned a server error. {error_detail}"
+        return f"❌ Error: Server creation failed with status code {response.status_code}. {error_detail}"
+    except MCPTimeoutError as timeout_error:
         logger.error(f"Request timed out after waiting for backend: {timeout_error}")
-        return f"""❌ Error: Request timed out after 5 minutes. 
-
-        The MCP server creation service did not respond in time. This could mean:
-        1. The backend is still processing your request (check backend logs)
-        2. The API documentation is very large and requires more processing time
-        3. The backend service may be experiencing issues
-
-        Please check the backend service status and try again. If the issue persists, contact support."""
-    
-    except httpx.ConnectError as connect_error:
+        return "❌ Error: mcp-gen timed out while creating the MCP server. The backend may still be processing or unavailable."
+    except MCPUnavailableError as connect_error:
         logger.error(f"Connection failed: {connect_error}")
-        return f"❌ Error: Cannot connect to MCP server creation service at {create_url}. Ensure the backend service is accessible and MCP_BASE_URL is set correctly (currently: {mcp_base_url})."
-    
+        return f"❌ Error: mcp-gen unavailable at {mcp_urls.create_url}. Ensure the service is reachable and MCP_BASE_URL includes /api."
+    except MCPResponseValidationError as validation_error:
+        logger.error(f"Invalid mcp-gen response: {validation_error}")
+        return f"❌ Error: MCP Server may have been created, but mcp-gen returned an invalid response: {validation_error}"
     except httpx.RequestError as request_error:
         logger.error(f"Request error: {request_error}")
         return f"❌ Error: Request failed - {str(request_error)}"

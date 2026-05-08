@@ -1,12 +1,9 @@
 import json
 import re
-from typing import Dict, Any, List
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage
 
-from pydantic import SecretStr
-
-from my_agent.config import AGENT_CONFIG, API_CONFIG
-from my_agent.utils.state import AgentState, is_human_message, get_message_content
+from my_agent.config import AGENT_CONFIG
+from my_agent.utils.state import AgentState, get_message_content
 from my_agent.utils.vector_db import search_mcp_artifacts
 from my_agent.utils.llm_factory import get_llm
 
@@ -24,29 +21,31 @@ async def examiner_agent_node(state: AgentState) -> AgentState:
     """
     print("[Examiner] 🕵️ Examiner Node started.")
     
-    messages = state["messages"]
-    last_message = messages[-1]
+    messages = state.get("messages", [])
+    last_message = messages[-1] if messages else None
     
     # 1. Extract task content
-    task_content = str(last_message.content)
+    task_content = get_message_content(last_message) if last_message else ""
     if "DELEGATE_TO_EXAMINER:" in task_content:
         task_content = task_content.replace("DELEGATE_TO_EXAMINER:", "").strip()
     
-    # 2. Extract API documentation for RAG search
-    # PRIORITY: Check explicit state field first, then fallback to message parsing
-    api_doc = state.get("raw_api_doc", "")
+    # 2. Extract API documentation for RAG search.
+    # Keep state["raw_api_doc"] canonical if present; otherwise use parsed task content
+    # without pretending the fallback was the original user prompt.
+    canonical_raw_api_doc = state.get("raw_api_doc", "") or ""
+    api_doc = canonical_raw_api_doc
     
     if not api_doc:
         print("[Examiner] ⚠️ raw_api_doc not found in state, falling back to message parsing.")
-        api_doc_match = re.search(r"API_DOCUMENTATION:\s*(.*?)(?=\s*\n\nUSER_ID:|\s*\Z)", task_content, re.DOTALL)
-        if api_doc_match:
-            api_doc = api_doc_match.group(1).strip()
-        else:
-            api_doc = task_content # Fallback to whole task
+        api_doc_match = re.search(
+            r"API_DOCUMENTATION:\s*(.*?)(?=\s*\n\nUSER_ID:|\s*\n\nEMAIL:|\s*\Z)",
+            task_content,
+            re.DOTALL,
+        )
+        api_doc = api_doc_match.group(1).strip() if api_doc_match else task_content.strip()
 
-    # 3. Use raw_api_doc from state as the canonical original prompt
-    # DO NOT scan messages here - messages[0] is the supervisor's delegation, not the user's raw input
-    original_prompt = state.get("raw_api_doc", api_doc)
+    # 3. Preserve original prompt separately from extracted API documentation.
+    original_prompt = canonical_raw_api_doc or task_content
         
     print(f"[Examiner] 🔍 API Doc ready ({len(api_doc)} chars). Searching for related content...")
     
@@ -92,6 +91,10 @@ USER_ID: {user_id}
         "messages": [AIMessage(content=delegation_msg)],
         "next_agent": "generator",
         "final_response": "",
+        "history": [],
+        "retry_count": state.get("retry_count", 0),
+        "current_plan": state.get("current_plan", ""),
+        "is_complete": state.get("is_complete", False),
         "enriched_context": rag_context_json,  # Store RAG data explicitly in state
-        "raw_api_doc": api_doc  # Ensure raw_api_doc is propagated through
+        "raw_api_doc": canonical_raw_api_doc or api_doc  # Preserve original if available
     }

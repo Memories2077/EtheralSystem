@@ -34,7 +34,9 @@ services:
       - CHROMA_HOST=chromadb-server
       - CHROMA_PORT=8000
       - OLLAMA_BASE_URL=http://ollama-server:11434
+      # MCP_BASE_URL is the mcp-gen API base URL and must include /api.
       - MCP_BASE_URL=http://docker-manager:8080/api
+      - MCP_MANAGER_URL=http://docker-manager:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -46,5 +48,7 @@ services:
 
 networks:
   mcp-network:
+    # External shared network used by langChain-application, mcp-gen, and chatbot services.
+    # Create it before running docker compose directly:
+    #   docker network create mcp-network
     external: true
-
