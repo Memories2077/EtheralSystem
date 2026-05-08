@@ -3,6 +3,8 @@ import type {
   SkillComposition,
   GenerationOutcome,
   HumanFeedbackImportSummary,
+  SkillSelectionInitializationResult,
+  SkillSelectionMetrics,
 } from "./types.js";
 import { SkillRegistry } from "./registry.js";
 import { SpecProfileAnalyzer } from "./analyzer.js";
@@ -19,7 +21,22 @@ export class SkillSelectionAgent {
   private feedback: FeedbackTracker;
   private cache: ProfileCache;
 
-  private constructor(options?: {
+  private initialized = false;
+  private initializationPromise: Promise<SkillSelectionInitializationResult> | null =
+    null;
+  private metrics: SkillSelectionMetrics = {
+    initializationDurationMs: 0,
+    analysisCount: 0,
+    analysisCacheHits: 0,
+    analysisCacheMisses: 0,
+    lastAnalysisDurationMs: 0,
+    lastCompositionDurationMs: 0,
+    lastSelectedCount: 0,
+    lastSelectionConfidence: 0,
+    cacheHitRate: 0,
+  };
+
+  constructor(options?: {
     skillsBaseDir?: string;
     tokenBudget?: number;
     cacheSize?: number;
@@ -50,13 +67,60 @@ export class SkillSelectionAgent {
     SkillSelectionAgent.instance = null;
   }
 
-  async initialize(): Promise<{ registryErrors: Record<string, string[]> }> {
+  static async prewarm(options?: {
+    skillsBaseDir?: string;
+    tokenBudget?: number;
+    cacheSize?: number;
+  }): Promise<SkillSelectionInitializationResult> {
+    return SkillSelectionAgent.getInstance(options).initialize();
+  }
+
+  /**
+   * Initialize registry, skill indexes/content, and feedback effectiveness exactly once.
+   * Concurrent callers share the same promise to avoid duplicate file scans or MongoDB setup.
+   */
+  async initialize(): Promise<SkillSelectionInitializationResult> {
+    if (this.initialized) {
+      return {
+        registryErrors: {
+          missingId: [],
+          missingCategory: [],
+          duplicateIds: [],
+          invalidPriority: [],
+        },
+        durationMs: 0,
+        warmedSkillCount: this.registry.getSkillCount(),
+      };
+    }
+
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
+
+    this.initializationPromise = this.initializeInternal();
+    try {
+      const result = await this.initializationPromise;
+      this.initialized = true;
+      return result;
+    } finally {
+      this.initializationPromise = null;
+    }
+  }
+
+  private async initializeInternal(): Promise<SkillSelectionInitializationResult> {
+    const start = performance.now();
     const errors = await this.registry.initialize();
     this.composer.setRegistry(this.registry);
     this.composer.setFeedbackTracker(this.feedback);
 
-    // Initialize feedback tracker (MongoDB connection)
     await this.feedback.initialize();
+
+    const durationMs = Math.round(performance.now() - start);
+    this.metrics.initializationDurationMs = durationMs;
+    const warmedSkillCount = this.registry.getSkillCount();
+    console.log(
+      `[SkillSelect] initialization_duration_ms=${durationMs} warmed_skills=${warmedSkillCount}`,
+    );
 
     return {
       registryErrors: {
@@ -65,20 +129,51 @@ export class SkillSelectionAgent {
         duplicateIds: errors.duplicateIds,
         invalidPriority: errors.invalidPriority,
       },
+      durationMs,
+      warmedSkillCount,
     };
   }
 
+  /** Analyze an OpenAPI/input document, using the hash cache and recording cache metrics. */
   analyzeSpec(specContent: string): SpecProfile {
+    const start = performance.now();
+    this.metrics.analysisCount++;
     const cached = this.cache.get(specContent);
-    if (cached) return cached;
+    if (cached) {
+      this.metrics.analysisCacheHits++;
+      this.updateCacheMetrics(start, true);
+      return cached;
+    }
 
+    this.metrics.analysisCacheMisses++;
     const profile = this.analyzer.analyzeSpec(specContent);
     this.cache.set(specContent, profile);
+    this.updateCacheMetrics(start, false);
     return profile;
   }
 
+  /** Select and score skills for a profile with timing and decision logs. */
   selectSkills(profile: SpecProfile): SkillComposition {
-    return this.composer.composeSkills(profile);
+    const start = performance.now();
+    const composition = this.composer.composeSkills(profile);
+    const durationMs = Math.round(performance.now() - start);
+    this.metrics.lastCompositionDurationMs = durationMs;
+    this.metrics.lastSelectedCount = composition.skills.length;
+    this.metrics.lastSelectionConfidence = composition.averageConfidence ?? 0;
+    console.log(
+      `[SkillSelect] skill_selection_duration_ms=${durationMs} skills_selected_count=${composition.skills.length} selection_confidence=${this.metrics.lastSelectionConfidence.toFixed(2)} selected=${composition.skills.map((s) => s.skillId).join(",")}`,
+    );
+    return composition;
+  }
+
+  private updateCacheMetrics(start: number, cacheHit: boolean): void {
+    const durationMs = Math.round(performance.now() - start);
+    const cacheStats = this.cache.getStats();
+    this.metrics.lastAnalysisDurationMs = durationMs;
+    this.metrics.cacheHitRate = cacheStats.hitRate;
+    console.log(
+      `[SkillSelect] spec_analysis_duration_ms=${durationMs} cache_hit=${cacheHit} cache_hit_rate=${cacheStats.hitRate.toFixed(2)}`,
+    );
   }
 
   assemblePrompt(basePrompt: string, composition: SkillComposition): string {
@@ -115,5 +210,13 @@ export class SkillSelectionAgent {
 
   getCache(): ProfileCache {
     return this.cache;
+  }
+
+  getMetrics(): SkillSelectionMetrics {
+    return { ...this.metrics };
+  }
+
+  isInitialized(): boolean {
+    return this.initialized;
   }
 }

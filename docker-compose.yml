@@ -15,7 +15,6 @@ services:
     networks:
       - mcp-network
 
-
   mongo-express:
     image: mongo-express
     container_name: mongo-express
@@ -32,7 +31,6 @@ services:
     restart: unless-stopped
     networks:
       - mcp-network
-
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -53,7 +51,6 @@ services:
       retries: 5
     networks:
       - mcp-network
-
 
   docker-manager:
     build:
@@ -76,11 +73,12 @@ services:
     environment:
       - USE_DOCKER_PING=false
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8081}
-      - MONGO_URI=mongodb://mongodb:27017
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
+      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       - NODE_ENV=production
       - PORT=8080
-      - MANAGER_URL=http://host.docker.internal:8080
+      - MANAGER_URL=${MANAGER_URL:-http://docker-manager:8080}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:9002}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -122,7 +120,6 @@ services:
     restart: unless-stopped
     networks:
       - mcp-network
-
 
 volumes:
   mongodb_data:

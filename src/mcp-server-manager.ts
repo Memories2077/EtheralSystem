@@ -14,6 +14,8 @@ import { MongoClient, Db, Collection } from "mongodb";
 import { writeFileSafe, remove, exists } from "./utils/fs.ts";
 import { confirm } from "./generator/validator.ts";
 import { generateOpenAPISpec } from "./generator/index.ts";
+import { SkillSelectionAgent } from "./skill-intelligence/agent.js";
+import { FEATURE_FLAGS } from "./utils/config.ts";
 
 // Simple in-memory rate limiter for feedback endpoint
 interface RateLimitWindow {
@@ -54,7 +56,9 @@ class SimpleRateLimiter {
     }
 
     // Remove timestamps outside the current window
-    window.timestamps = window.timestamps.filter(ts => now - ts < this.windowMs);
+    window.timestamps = window.timestamps.filter(
+      (ts) => now - ts < this.windowMs,
+    );
 
     if (window.timestamps.length >= this.maxRequests) {
       return true;
@@ -73,7 +77,7 @@ class SimpleRateLimiter {
 
 const feedbackRateLimiter = new SimpleRateLimiter(
   Number(process.env.FEEDBACK_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  Number(process.env.FEEDBACK_RATE_LIMIT_MAX) || 100
+  Number(process.env.FEEDBACK_RATE_LIMIT_MAX) || 100,
 );
 
 import {
@@ -127,7 +131,7 @@ interface PersistedData {
   status: boolean;
 }
 
-// Lấy đường dẫn hiện tại
+// Resolve the current module directory for artifact and data paths.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -184,7 +188,7 @@ class MCPServerManager {
   }
 
   private async checkDependencies(): Promise<void> {
-    const usePing = process.env.USE_DOCKER_PING !== "false"; // default true nếu ko set
+    const usePing = process.env.USE_DOCKER_PING !== "false"; // Defaults to true when not configured.
 
     if (usePing) {
       try {
@@ -515,7 +519,10 @@ class MCPServerManager {
     }
   }
 
-  private async SaveToDB(server: ServerLogEntry, action: "created" | "error" | "deleted" | "updated") {
+  private async SaveToDB(
+    server: ServerLogEntry,
+    action: "created" | "error" | "deleted" | "updated",
+  ) {
     try {
       if (!this.logsCollection) {
         console.warn("MongoDB not initialized, skipping database save");
@@ -767,12 +774,12 @@ class MCPServerManager {
     res: express.Response,
     status: number,
     message: string,
-    error?: unknown
+    error?: unknown,
   ): void {
     const response: { error: string; details?: unknown } = { error: message };
 
     // Only include error details in development mode
-    if (process.env.NODE_ENV === 'development' && error) {
+    if (process.env.NODE_ENV === "development" && error) {
       response.details = error instanceof Error ? error.message : String(error);
     }
 
@@ -780,21 +787,29 @@ class MCPServerManager {
   }
 
   private setupRoutes() {
-    // Enable CORS for configured origins (Docker-friendly configuration)
-    // Set CORS_ORIGINS env var as comma-separated list, e.g., "http://localhost:9002,http://frontend:3000"
+    // Enable CORS for configured origins (Docker-friendly configuration).
+    // Set CORS_ORIGINS as a comma-separated list, for example: "http://localhost:9002,http://frontend:3000".
     const corsOrigins = process.env.CORS_ORIGINS
-      ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
+      ? process.env.CORS_ORIGINS.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
       : [];
+
+    if (corsOrigins.length === 0 && process.env.NODE_ENV !== "production") {
+      console.warn(
+        "⚠️ CORS_ORIGINS is empty. Browser clients such as http://localhost:9002 will not be able to call manager APIs.",
+      );
+    }
 
     this.app.use((req, res, next) => {
       const origin = req.headers.origin;
       if (origin && corsOrigins.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Access-Control-Allow-Credentials', 'true');
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Access-Control-Allow-Credentials", "true");
       }
-      res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-      if (req.method === 'OPTIONS') {
+      res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      if (req.method === "OPTIONS") {
         return res.sendStatus(200);
       }
       next();
@@ -806,14 +821,19 @@ class MCPServerManager {
     this.app.use(express.urlencoded({ limit: "5mb", extended: true }));
     this.app.use(express.text({ limit: "5mb", type: "*/*" }));
 
-    // API tạo MCP server mới
+    // API to create a new MCP server.
     this.app.post("/api/mcp/create", async (req, res) => {
       try {
-        const { request, name, dockerImage, userId, email, rag_context } = req.body;
+        const { request, name, dockerImage, userId, email, rag_context } =
+          req.body;
 
         // ✅ Validate required fields
         if (!request || !userId || !email) {
-          return this.sendError(res, 400, "Missing required fields: request, userId, email");
+          return this.sendError(
+            res,
+            400,
+            "Missing required fields: request, userId, email",
+          );
         }
 
         const serverId = randomUUID();
@@ -822,7 +842,7 @@ class MCPServerManager {
         const now = Math.floor(Date.now() / 1000);
         const expiration = now + 365 * 24 * 60 * 60; // 1 year
 
-        // Tạo JWT token
+        // Create JWT token.
         const token = jwt.sign(
           {
             sub: userId,
@@ -834,7 +854,7 @@ class MCPServerManager {
           this.jwtSecret,
         );
 
-        // Lấy public url của server, nếu không có thì fallback localhost
+        // Resolve the public proxy URL for generated MCP clients.
         const baseUrl = process.env.PUBLIC_URL || "http://localhost:8081";
 
         const serverConfig: ServerLogEntry = {
@@ -842,7 +862,7 @@ class MCPServerManager {
           //serverName: name,
           dockerImage:
             dockerImage || process.env.DEFAULT_MCP_IMAGE || "mcp-gen",
-          containerPort: 3000, // Port mặc định trong container
+          containerPort: 3000, // Default port inside the generated container.
           hostPort: hostPort,
           status: "created",
           publicUrl: `${baseUrl}/mcp/${serverId}`,
@@ -862,16 +882,16 @@ class MCPServerManager {
 
         await this.SaveToDB(serverConfig, "created");
 
-        // Kiểm tra loại input: JSON, YAML, hay plain text
+        // Detect input type: JSON, YAML, or plain text.
         let inputType: "json" | "yaml" | "text" = "text";
         try {
-          // Kiểm tra JSON
+          // Check JSON first.
           const jsonObj = JSON.parse(request);
           if (typeof jsonObj === "object" && jsonObj !== null) {
             inputType = "json";
           }
         } catch {
-          // Nếu không phải JSON, thử kiểm tra YAML
+          // If it is not JSON, try YAML.
           try {
             const yamlObj = yaml.load(request);
             if (typeof yamlObj === "object" && yamlObj !== null) {
@@ -886,11 +906,11 @@ class MCPServerManager {
         }
         serverConfig.buildLogs?.push(`Input type detected: ${inputType}`);
 
-        // Lấy đường dẫn hiện tại
+        // Resolve the current module directory for artifact paths.
         const __filename = fileURLToPath(import.meta.url);
         const __dirname = path.dirname(__filename);
 
-        // Đặt tên file dựa vào inputType
+        // Name the input artifact based on detected input type.
         let fileName: string;
         switch (inputType) {
           case "json":
@@ -928,7 +948,7 @@ class MCPServerManager {
           `${serverId}.yaml`,
         );
 
-        // Nếu inputType là yaml thì copy trực tiếp sang openapi_filepath
+        // YAML input can be copied directly to the OpenAPI artifact path.
         if (inputType === "yaml") {
           // Ensure output directory exists
           const openapi_dir = path.dirname(openapi_filepath);
@@ -957,7 +977,9 @@ class MCPServerManager {
 
           // Unified retry loop for text generation: handles both generation errors
           // (template syntax, API failures) and validation failures
-          let checking: { success: boolean; error?: string } = { success: false };
+          let checking: { success: boolean; error?: string } = {
+            success: false,
+          };
           let lastError: string | undefined;
           let retryCount = 0;
           const maxRetries = 5;
@@ -1006,7 +1028,12 @@ class MCPServerManager {
             this.usedPorts.delete(hostPort);
             await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
 
-            return this.sendError(res, 500, "Failed to generate valid OpenAPI specification", checking.error);
+            return this.sendError(
+              res,
+              500,
+              "Failed to generate valid OpenAPI specification",
+              checking.error,
+            );
           }
         }
 
@@ -1022,7 +1049,12 @@ class MCPServerManager {
             this.usedPorts.delete(hostPort);
             await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
 
-            return this.sendError(res, 500, "Failed to generate valid OpenAPI specification", checking.error);
+            return this.sendError(
+              res,
+              500,
+              "Failed to generate valid OpenAPI specification",
+              checking.error,
+            );
           }
           console.log("✅ OpenAPI spec validated successfully");
         }
@@ -1075,7 +1107,12 @@ class MCPServerManager {
           }
         } catch (waitError: any) {
           console.error(`Error waiting for server ${serverId}:`, waitError);
-          this.sendError(res, 504, "Timeout waiting for server to be ready", waitError);
+          this.sendError(
+            res,
+            504,
+            "Timeout waiting for server to be ready",
+            waitError,
+          );
         }
       } catch (error) {
         console.error("Error creating MCP server:", error);
@@ -1093,10 +1130,24 @@ class MCPServerManager {
         const serverList = await this.logsCollection.find({}).toArray();
 
         // Sanitize: remove sensitive fields and large/unnecessary data
-        const sanitizedServers = serverList.map(server => {
-          const { token, containerId, hostPort, containerPort, dockerImage, inputContent, action, buildLogs, ragContext, _id, ...rest } = server;
+        const sanitizedServers = serverList.map((server) => {
+          const {
+            token,
+            containerId,
+            hostPort,
+            containerPort,
+            dockerImage,
+            inputContent,
+            action,
+            buildLogs,
+            ragContext,
+            _id,
+            ...rest
+          } = server;
           // Also sanitize feedbacks: remove userId for privacy
-          const sanitizedFeedbacks: FeedbackEntry[] = (rest.feedbacks || []).map((fb: FeedbackEntry) => {
+          const sanitizedFeedbacks: FeedbackEntry[] = (
+            rest.feedbacks || []
+          ).map((fb: FeedbackEntry) => {
             const { userId, ...fbRest } = fb;
             return fbRest;
           });
@@ -1120,23 +1171,35 @@ class MCPServerManager {
     this.app.post("/api/mcp/:serverId/feedback", async (req, res) => {
       try {
         // Rate limiting check
-        const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+        const clientIp = req.ip || req.connection.remoteAddress || "unknown";
         if (feedbackRateLimiter.isLimited(clientIp)) {
-          return this.sendError(res, 429, "Too many feedback requests, please try again later");
+          return this.sendError(
+            res,
+            429,
+            "Too many feedback requests, please try again later",
+          );
         }
 
         const { serverId } = req.params;
         const { type, userId, comment } = req.body;
 
         // Validate required fields
-        if (!type || !['like', 'dislike'].includes(type)) {
-          return this.sendError(res, 400, "Invalid feedback type. Must be 'like' or 'dislike'");
+        if (!type || !["like", "dislike"].includes(type)) {
+          return this.sendError(
+            res,
+            400,
+            "Invalid feedback type. Must be 'like' or 'dislike'",
+          );
         }
 
         // Validate comment length if provided (max 1000 chars)
         const MAX_COMMENT_LENGTH = 1000;
         if (comment && comment.length > MAX_COMMENT_LENGTH) {
-          return this.sendError(res, 400, `Comment too long (maximum ${MAX_COMMENT_LENGTH} characters)`);
+          return this.sendError(
+            res,
+            400,
+            `Comment too long (maximum ${MAX_COMMENT_LENGTH} characters)`,
+          );
         }
 
         if (!this.logsCollection) {
@@ -1144,7 +1207,9 @@ class MCPServerManager {
         }
 
         // Create feedback entry (sanitize comment for potential HTML)
-        const sanitizedComment = comment ? comment.replace(/<[^>]*>/g, '') : undefined;
+        const sanitizedComment = comment
+          ? comment.replace(/<[^>]*>/g, "")
+          : undefined;
         const feedbackEntry = {
           feedbackId: randomUUID(),
           type,
@@ -1158,12 +1223,12 @@ class MCPServerManager {
           { serverId },
           {
             $inc: {
-              likeCount: type === 'like' ? 1 : 0,
-              dislikeCount: type === 'dislike' ? 1 : 0,
+              likeCount: type === "like" ? 1 : 0,
+              dislikeCount: type === "dislike" ? 1 : 0,
             },
             $push: { feedbacks: feedbackEntry },
           },
-          { upsert: false } // Only update existing servers
+          { upsert: false }, // Only update existing servers
         );
 
         if (result.matchedCount === 0) {
@@ -1175,7 +1240,7 @@ class MCPServerManager {
         // Fetch updated document to return current counts
         const updatedDoc = await this.logsCollection.findOne(
           { serverId },
-          { projection: { likeCount: 1, dislikeCount: 1, feedbacks: 1 } }
+          { projection: { likeCount: 1, dislikeCount: 1, feedbacks: 1 } },
         );
 
         res.json({
@@ -1194,7 +1259,7 @@ class MCPServerManager {
       }
     });
 
-    // API lấy Claude config cho server cụ thể
+    // API to get Claude config for a specific server.
     this.app.get("/api/mcp/:serverId/claude-config", async (req, res) => {
       try {
         const { serverId } = req.params;
@@ -1208,7 +1273,11 @@ class MCPServerManager {
           if (response.success) {
             res.json(response.config);
           } else {
-            return this.sendError(res, 404, response.error || "Failed to get Claude config");
+            return this.sendError(
+              res,
+              404,
+              response.error || "Failed to get Claude config",
+            );
           }
         } else {
           // Fallback to direct call when message queue is not available
@@ -1221,7 +1290,7 @@ class MCPServerManager {
       }
     });
 
-    // API xóa server
+    // API to delete a server.
     this.app.delete("/api/mcp/:serverId", async (req, res) => {
       try {
         const { serverId } = req.params;
@@ -1321,7 +1390,9 @@ class MCPServerManager {
 
         // Deep check if it survived processStatusUpdate
         if (!this.servers.has(serverId)) {
-          console.warn(`⚠️ Server ${serverId} still not found in memory after update attempt.`);
+          console.warn(
+            `⚠️ Server ${serverId} still not found in memory after update attempt.`,
+          );
           // We still return true because it might be being processed via RabbitMQ
         }
 
@@ -1367,40 +1438,46 @@ class MCPServerManager {
         const tsFileName = `${serverId}.ts`;
         const tsPath = path.join(tsDir, tsFileName);
 
-        // Check for existence
-        if (!inputPath || !fs.existsSync(yamlPath) || !fs.existsSync(tsPath)) {
-          return res.status(404).json({
-            error: "One or more artifacts not found",
-            exists: {
-              input: !!inputPath,
-              openapi: fs.existsSync(yamlPath),
-              typescript: fs.existsSync(tsPath),
-            },
-          });
-        }
+        const artifactExists = {
+          input: !!inputPath,
+          openapi: fs.existsSync(yamlPath),
+          typescript: fs.existsSync(tsPath),
+        };
+        const complete =
+          artifactExists.input &&
+          artifactExists.openapi &&
+          artifactExists.typescript;
 
-        // Read contents
-        const inputContent = fs.readFileSync(inputPath, "utf8");
-        const yamlContent = fs.readFileSync(yamlPath, "utf8");
-        const tsContent = fs.readFileSync(tsPath, "utf8");
-
-        res.json({
+        const response = {
           serverId,
+          complete,
+          ...(complete
+            ? {}
+            : { message: "One or more artifacts are not available yet" }),
+          exists: artifactExists,
           files: {
-            input: {
-              name: inputFileName,
-              content: inputContent,
-            },
-            openapi: {
-              name: yamlFileName,
-              content: yamlContent,
-            },
-            typescript: {
-              name: tsFileName,
-              content: tsContent,
-            },
+            input: artifactExists.input
+              ? {
+                  name: inputFileName,
+                  content: fs.readFileSync(inputPath, "utf8"),
+                }
+              : null,
+            openapi: artifactExists.openapi
+              ? {
+                  name: yamlFileName,
+                  content: fs.readFileSync(yamlPath, "utf8"),
+                }
+              : null,
+            typescript: artifactExists.typescript
+              ? {
+                  name: tsFileName,
+                  content: fs.readFileSync(tsPath, "utf8"),
+                }
+              : null,
           },
-        });
+        };
+
+        res.status(complete ? 200 : 206).json(response);
       } catch (error) {
         console.error(
           `Error retrieving files for ${req.params.serverId}:`,
@@ -1428,10 +1505,10 @@ class MCPServerManager {
     dockerfilePath?: string,
   ): Promise<string> {
     try {
-      // Kiểm tra image có tồn tại không
+      // Check whether the configured image already exists.
       let imageExists = await this.checkImageExists(config.dockerImage);
 
-      // Nếu image không tồn tại, build từ Dockerfile
+      // If the image does not exist, build it from the Dockerfile.
       if (!imageExists) {
         const buildPath = dockerfilePath || this.defaultDockerfilePath;
         if (!buildPath) {
@@ -1542,14 +1619,14 @@ class MCPServerManager {
       config.buildLogs?.push(`Build context: ${context}`);
       config.buildLogs?.push(`Dockerfile: ${dockerfileName}`);
 
-      // tạo tar stream của context directory
+      // Create a tar stream for the build context directory.
       const tarStream = tar.pack(context);
 
       await new Promise<void>((resolve, reject) => {
         this.docker.buildImage(
           tarStream,
           {
-            t: config.dockerImage, // tag cho image
+            t: config.dockerImage, // Image tag.
             dockerfile: "Dockerfile",
           },
           (err, output) => {
@@ -1558,10 +1635,10 @@ class MCPServerManager {
               return reject(err);
             }
 
-            // ép kiểu output sang NodeJS.ReadableStream
+            // Cast output to a Node.js readable stream.
             const stream = output as NodeJS.ReadableStream;
 
-            // đọc stream log từ docker
+            // Read Docker build progress from the stream.
             this.docker.modem.followProgress(
               stream,
               (doneErr, res) => {
@@ -1593,7 +1670,7 @@ class MCPServerManager {
     try {
       const container = this.docker.getContainer(containerId);
 
-      // Kiểm tra container có đang chạy không
+      // Check whether the container is currently running.
       const containerInfo = await container.inspect();
       if (containerInfo.State.Running) {
         await container.stop({ t: 10 }); // Graceful shutdown 10s
@@ -1602,7 +1679,7 @@ class MCPServerManager {
       await container.remove({ force: true });
     } catch (error) {
       console.error(`Error removing container ${containerId}:`, error);
-      // Không throw error để không block việc cleanup
+      // Do not throw here; cleanup should continue even if Docker removal fails.
     }
   }
 
@@ -1692,7 +1769,7 @@ class MCPServerManager {
         return;
       }
 
-      // Stop và remove container
+      // Stop and remove container.
       if (server.containerId) {
         await this.removeContainer(server.containerId);
       }
@@ -1712,6 +1789,20 @@ class MCPServerManager {
 
   public async start(port: number = 8080) {
     this.expressPort = port;
+
+    if (FEATURE_FLAGS.DYNAMIC_SKILL_SELECTION) {
+      try {
+        console.log(
+          "[SkillSelect] Pre-warming SkillSelectionAgent at startup...",
+        );
+        await SkillSelectionAgent.prewarm({ tokenBudget: 30_000 });
+      } catch (error) {
+        console.warn(
+          "[SkillSelect] Pre-warm failed; dynamic selection will fall back per request:",
+          error,
+        );
+      }
+    }
     this.usedPorts.add(port);
 
     // ✅ Ensure MongoDB is initialized before using it
