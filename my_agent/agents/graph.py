@@ -101,6 +101,63 @@ def mark_task_complete(summary: str) -> str:
 SUPERVISOR_TOOLS = [delegate_to_examiner_agent, delegate_to_generator_agent, mark_task_complete]
 
 
+STRUCTURED_TASK_MARKERS = (
+    "ORIGINAL_PROMPT:",
+    "API_DOCUMENTATION:",
+    "ENRICHED_CONTEXT (RAG):",
+    "USER_ID:",
+    "EMAIL:",
+)
+
+PLACEHOLDER_TASK_PHRASES = (
+    "process user request",
+    "process the user request",
+    "process the provided api documentation",
+    "process the provided specification",
+    "generate content based on",
+    "use the provided documentation",
+)
+
+
+def _has_structured_task_payload(task: str) -> bool:
+    return any(marker in task for marker in STRUCTURED_TASK_MARKERS)
+
+
+def _needs_task_repair(task: str) -> bool:
+    normalized = " ".join(task.strip().lower().split())
+    if not normalized:
+        return True
+    if _has_structured_task_payload(task):
+        return False
+    if len(normalized) < 25:
+        return True
+    return any(phrase in normalized for phrase in PLACEHOLDER_TASK_PHRASES)
+
+
+def _build_generator_task(raw_api_doc: str, enriched_context: str, fallback: str) -> str:
+    if raw_api_doc and enriched_context:
+        return f"""API_DOCUMENTATION:
+{raw_api_doc}
+
+ENRICHED_CONTEXT (RAG):
+{enriched_context}"""
+    return raw_api_doc or fallback
+
+
+def _is_successful_generator_output(output: str) -> bool:
+    try:
+        payload = json.loads(output)
+        if isinstance(payload, dict):
+            has_server_id = bool(payload.get("serverId"))
+            status = str(payload.get("status", "")).lower()
+            return has_server_id and not status.startswith("error")
+    except Exception:
+        pass
+
+    lowered = output.lower()
+    return any(kw in lowered for kw in ["successfully created", "server id:", "server created"])
+
+
 async def tools_node_wrapper(state: AgentState) -> AgentState:
     """
     Wrapper around ToolNode that repairs tool call arguments using the explicit state.
@@ -132,20 +189,17 @@ async def tools_node_wrapper(state: AgentState) -> AgentState:
                 # Delegation tools repair logic
                 if tc_name in ["delegate_to_examiner_agent", "delegate_to_generator_agent"]:
                     task_val = str(args.get("task", ""))
-                    # If task is missing, generic, or too short, inject from state
-                    is_generic = any(kw in task_val.lower() for kw in ["process", "specification", "history", "provided"])
-                    
-                    if not task_val or len(task_val) < 25 or is_generic:
+                    if _needs_task_repair(task_val):
                         needs_fix = True
                         if tc_name == "delegate_to_examiner_agent":
                             # Examiner always needs the raw documentation
                             tc_copy["args"] = {"task": raw_api_doc if raw_api_doc else task_val}
                             print(f"[ToolNode] ✅ Injected raw_api_doc into {tc_name}")
                         else:
-                            # Generator prefers enriched context, fallback to raw
-                            final_task = enriched_context if enriched_context else raw_api_doc
-                            tc_copy["args"] = {"task": final_task if final_task else task_val}
-                            print(f"[ToolNode] ✅ Injected enriched/raw doc into {tc_name}")
+                            # Generator needs API docs and RAG context as one structured task.
+                            final_task = _build_generator_task(raw_api_doc, enriched_context, task_val)
+                            tc_copy["args"] = {"task": final_task}
+                            print(f"[ToolNode] Injected structured generator task into {tc_name}")
                 
                 fixed_tool_calls.append(tc_copy)
 
@@ -427,8 +481,28 @@ ENRICHED_CONTEXT (RAG):
 
     # ── LLM-based Evaluation (for generator and unknown agents) ───────────
     is_complete = False
+    final_generator_output = ""
     if messages and agent_that_ran == "generator":
-        last_output = str(messages[-1].content)
+        last_output = get_message_content(messages[-1])
+        final_generator_output = last_output
+        if _is_successful_generator_output(last_output):
+            is_complete = True
+            print("[SupervisorFinal] Generator output contains successful server JSON.")
+            new_history_entries = []
+            if not any("generator: completed" in h for h in history):
+                new_history_entries.append("generator: completed creation attempt (success=True)")
+            new_history_entries.append("TASK_SUCCESSFULLY_COMPLETED: The sub-agent has delivered the final result.")
+            return {
+                "messages": [],
+                "next_agent": "end",
+                "final_response": last_output,
+                "history": new_history_entries,
+                "retry_count": retry_count,
+                "is_complete": True,
+                "current_plan": "evaluated_generator_output",
+                "raw_api_doc": state.get("raw_api_doc", ""),
+                "enriched_context": state.get("enriched_context", "")
+            }
         
         eval_prompt = f"""Analyze the following output from a Generator Agent and determine if the MCP Server creation was SUCCESSFUL.
 
@@ -464,8 +538,7 @@ Return ONLY a JSON object:
                 print(f"[SupervisorFinal] ❌ LLM confirmed incomplete: {evaluation.get('reason')}")
         except Exception as e:
             print(f"[SupervisorFinal] ⚠️ LLM Evaluation failed, falling back to keywords: {e}")
-            # Fallback to keywords if LLM fail
-            if any(kw in last_output.lower() for kw in ["successfully created", "server id:", "server created"]):
+            if _is_successful_generator_output(last_output):
                 is_complete = True
 
     # ── Update history (only new entries for operator.add) ────────────────
@@ -477,16 +550,20 @@ Return ONLY a JSON object:
 
     # If complete or if we've reached max retries, return to supervisor
     if is_complete:
-        print("[SupervisorFinal] Task marked complete. Returning to supervisor for final response.")
+        print("[SupervisorFinal] Task marked complete. Ending with generator output.")
         new_history_entries.append("TASK_SUCCESSFULLY_COMPLETED: The sub-agent has delivered the final result.")
         new_retry_count = retry_count
+        next_agent = "end"
+        final_response = final_generator_output
     else:
         new_retry_count = retry_count + 1
+        next_agent = "supervisor"
+        final_response = ""
     
     return {
         "messages": [],
-        "next_agent": "supervisor",
-        "final_response": "",
+        "next_agent": next_agent,
+        "final_response": final_response,
         "history": new_history_entries,
         "retry_count": new_retry_count,
         "is_complete": is_complete,
