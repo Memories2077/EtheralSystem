@@ -1,5 +1,14 @@
 # Project History Log
 
+## [2026-05-09] - MCP Runtime Safety Fixes
+
+- **Fix**: Hardened generated server lifecycle and proxy routing.
+- **Manager** (`src/mcp-server-manager.ts`): Fixed Docker build context, authenticated the ready callback with the per-server JWT, hydrated ready-state updates from MongoDB when needed, and persisted timeout failures as `error`.
+- **Launcher** (`src/launcher.ts`, `test/test-generation.ts`): Moved ready notification from generation testing into the real launcher after `/health` succeeds, using `JWT_TOKEN` as a bearer token.
+- **Proxy** (`src/dynamic-proxy.ts`): Unified HTTP/WebSocket token validation, running-state checks, backend port lookup, database-unavailable handling, and `BACKEND_HOST` usage.
+- **Docs** (`docs/API_CONTRACT.md`, `docs/SERVICE_CONTRACT.md`, `docs/ARTIFACT_LIFECYCLE.md`): Documented authenticated ready callbacks and generated-container `JWT_TOKEN` usage.
+- **Verification**: Ran `npm run typecheck` and `npm test`; both passed.
+
 ## [2026-05-07] - Phase 4: Advanced Skill Selection Polish
 
 - **Feature**: Completed Phase 4 “Advanced Features & Polish” of the Skill Selection Optimization roadmap.

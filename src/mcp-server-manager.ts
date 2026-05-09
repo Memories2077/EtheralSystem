@@ -270,7 +270,7 @@ class MCPServerManager {
       // Build and run container
       const containerId = await this.buildAndRunContainer(
         server,
-        dockerfilePath,
+        contextPath || dockerfilePath,
       );
 
       // Update status to created (instead of running, wait for "ready" signal)
@@ -786,6 +786,43 @@ class MCPServerManager {
     res.status(status).json(response);
   }
 
+  private extractRequestToken(req: express.Request): string | null {
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      return authHeader.slice("Bearer ".length).trim();
+    }
+
+    const queryToken = req.query.token;
+    return typeof queryToken === "string" && queryToken ? queryToken : null;
+  }
+
+  private validateServerToken(serverId: string, token: string): boolean {
+    const decoded = jwt.verify(token, this.jwtSecret) as jwt.JwtPayload;
+    return decoded.serverId === serverId;
+  }
+
+  private async ensureServerLoaded(
+    serverId: string,
+  ): Promise<ServerLogEntry | null> {
+    const inMemoryServer = this.servers.get(serverId);
+    if (inMemoryServer) {
+      return inMemoryServer;
+    }
+
+    if (!this.logsCollection) {
+      return null;
+    }
+
+    const persistedServer = await this.logsCollection.findOne({ serverId });
+    if (!persistedServer) {
+      return null;
+    }
+
+    const server = persistedServer as ServerLogEntry;
+    this.servers.set(serverId, server);
+    return server;
+  }
+
   private setupRoutes() {
     // Enable CORS for configured origins (Docker-friendly configuration).
     // Set CORS_ORIGINS as a comma-separated list, for example: "http://localhost:9002,http://frontend:3000".
@@ -1064,7 +1101,8 @@ class MCPServerManager {
           await this.messageQueue.publishBuildMessage({
             serverId: serverConfig.serverId,
             dockerImage: serverConfig.dockerImage,
-            dockerfilePath: "../Dockerfile",
+            dockerfilePath: ".",
+            contextPath: ".",
             hostPort,
             containerPort: serverConfig.containerPort,
           });
@@ -1072,7 +1110,7 @@ class MCPServerManager {
           // Fallback to synchronous processing
           const containerId = await this.buildAndRunContainer(
             serverConfig,
-            "../Dockerfile",
+            ".",
           );
 
           serverConfig.containerId = containerId;
@@ -1107,6 +1145,13 @@ class MCPServerManager {
           }
         } catch (waitError: any) {
           console.error(`Error waiting for server ${serverId}:`, waitError);
+          serverConfig.status = "error";
+          serverConfig.buildLogs = [
+            ...(serverConfig.buildLogs || []),
+            `Error: ${waitError instanceof Error ? waitError.message : String(waitError)}`,
+          ];
+          await this.SaveToDB(serverConfig, "error");
+
           this.sendError(
             res,
             504,
@@ -1373,28 +1418,35 @@ class MCPServerManager {
       try {
         console.log(`📡 Received ready notification for server ${serverId}`);
 
-        // If not in memory but we have high confidence it exists (e.g. from DB)
-        // processStatusUpdate will handle the missing server case by logging a warning.
-        // However, we want to be more proactive here.
+        const token = this.extractRequestToken(req);
+        if (!token) {
+          return this.sendError(res, 401, "Token required");
+        }
+
+        try {
+          if (!this.validateServerToken(serverId, token)) {
+            return this.sendError(res, 403, "Invalid token for this server");
+          }
+        } catch (authError) {
+          console.error("Ready notification authentication error:", authError);
+          return this.sendError(res, 401, "Invalid token");
+        }
+
+        const server = await this.ensureServerLoaded(serverId);
+        if (!server) {
+          const status = this.logsCollection ? 404 : 503;
+          const message = this.logsCollection
+            ? "Server not found"
+            : "Database not available";
+          return this.sendError(res, status, message);
+        }
 
         const message: StatusUpdateMessage = {
           serverId,
           status: "running",
         };
 
-        if (this.messageQueue.connected) {
-          await this.messageQueue.publishStatusUpdate(message);
-        } else {
-          await this.processStatusUpdate(message);
-        }
-
-        // Deep check if it survived processStatusUpdate
-        if (!this.servers.has(serverId)) {
-          console.warn(
-            `⚠️ Server ${serverId} still not found in memory after update attempt.`,
-          );
-          // We still return true because it might be being processed via RabbitMQ
-        }
+        await this.processStatusUpdate(message);
 
         res.json({ success: true, message: "Status updated to running" });
       } catch (error) {
