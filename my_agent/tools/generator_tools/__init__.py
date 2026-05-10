@@ -50,7 +50,7 @@ def sanitize_api_documentation(doc: str) -> str:
 
 
 @tool
-async def create_MCPServer(query: List[str], rag_context: Optional[List[Any]] = None) -> str:
+async def create_MCPServer(query: List[str], rag_context: Optional[List[dict]] = None) -> str:
     """
         The tool for creating MCP server
         
@@ -80,11 +80,8 @@ async def create_MCPServer(query: List[str], rag_context: Optional[List[Any]] = 
             }
             
         ARGS:
-            query: List of parameters
-            query[0] - request
-            query[1] - userId
-            query[2] - email
-            rag_context: Optional structured RAG context from the Examiner Agent.
+            query: List of parameters [request, userId, email]
+            rag_context: Optional list of dictionaries containing structured RAG context items.
     """
     if not query:
         logger.warning("Empty query provided to create_MCPServer")
