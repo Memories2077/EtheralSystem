@@ -4,21 +4,30 @@
 
 ## 🧠 Architecture: Brain + Arms
 
-This repository is the browser-facing Next.js chat client plus a FastAPI bridge. It talks to these services with explicit URL boundaries:
+This repository owns the browser-facing chat client and the FastAPI bridge. External ecosystem services stay behind explicit URL boundaries so the browser never depends on Docker-only hostnames.
 
-| Component               | Role                                                 | Browser-facing URL                              | Backend/container URL                                                                    |
-| ----------------------- | ---------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Next.js frontend        | Chat UI                                              | `http://localhost:9002`                         | n/a                                                                                      |
-| FastAPI backend         | Chat streaming, MCP connection checks, mcp-gen proxy | `NEXT_PUBLIC_BACKEND_URL=http://localhost:8000` | `BACKEND_PORT=8000`                                                                      |
-| LangGraph agent service | MCP server generation/build orchestration            | n/a                                             | `LANGGRAPH_API_URL=http://agent-service:2024` in Docker, `http://localhost:2024` locally |
-| mcp-gen manager         | Generated MCP server list and feedback               | proxied through FastAPI by default              | `MCP_GEN_URL=http://docker-manager:8080` in Docker, `http://localhost:8080` locally      |
-| MongoDB                 | Feedback/history storage integrations                | n/a                                             | `MONGODB_URL=mongodb://mongodb:27017` in Docker                                          |
+| Component               | Role                                                                 | Browser-facing URL                              | Backend/container URL                                                                    |
+| ----------------------- | -------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Next.js frontend        | Chat UI, settings panel, generated-server feedback UI, local history | `http://localhost:9002`                         | n/a                                                                                      |
+| FastAPI backend         | Chat SSE, provider routing, MCP checks, mcp-gen proxy                | `NEXT_PUBLIC_BACKEND_URL=http://localhost:8000` | `BACKEND_PORT=8000`                                                                      |
+| MetaClaw gateway        | Optional intent router and memory/context layer                      | n/a                                             | `METACLAW_BASE_URL`, commonly `http://host.docker.internal:30000/v1` in Docker           |
+| LangGraph agent service | MCP server generation/build orchestration                            | n/a                                             | `LANGGRAPH_API_URL=http://agent-service:2024` in Docker, `http://localhost:2024` locally |
+| mcp-gen manager         | Generated MCP server list and feedback API                           | proxied through FastAPI by default              | `MCP_GEN_URL=http://docker-manager:8080` in Docker, `http://localhost:8080` locally      |
+| MongoDB                 | Backend feedback/log storage dependency for the wider MCP ecosystem  | n/a                                             | `MONGODB_URL=mongodb://mongodb:27017` in Docker                                          |
 
-Core runtime flow:
+Runtime request paths:
 
-- **Brain (MetaClaw Proxy)**: Optional reasoning and intent-routing layer. When `METACLAW_ENABLED=true`, FastAPI routes all chat requests through MetaClaw regardless of the selected frontend provider.
-- **Fallback/direct providers (Gemini/Groq)**: Used directly when MetaClaw is disabled and as fallback/execution providers when MetaClaw delegates.
-- **Orchestrator (FastAPI Backend)**: Streams SSE responses, connects to MCP servers, proxies generated-server list/feedback calls to mcp-gen, and delegates MCP build requests to LangGraph.
+- **Chat**: Browser `POST /chat` -> FastAPI -> MetaClaw when `METACLAW_ENABLED=true`, otherwise Gemini/Groq directly.
+- **MetaClaw build handoff**: MetaClaw detects MCP-build intent -> Gemini executor confirms/normalizes the tool call -> FastAPI streams LangGraph build progress back over SSE.
+- **Connected MCP tools**: Browser submits active MCP URLs -> FastAPI verifies them with `POST /mcp/metadata` and attaches streamable HTTP MCP tools to the standard LangChain agent.
+- **Generated MCP servers**: Browser calls FastAPI `GET /mcp/servers` and `POST /mcp/{server_id}/feedback`; FastAPI proxies those calls to mcp-gen to avoid browser CORS and Docker service-name leakage.
+- **Chat history**: The current frontend stores chat history/settings locally with Zustand `persist` and `localStorage`; it is not persisted through MongoDB by this app.
+
+Core runtime roles:
+
+- **Brain (MetaClaw Proxy)**: Optional reasoning, memory/context, and intent-routing layer. When `METACLAW_ENABLED=true`, FastAPI routes chat requests through MetaClaw regardless of the selected frontend provider.
+- **Execution providers (Gemini/Groq)**: Used directly when MetaClaw is disabled, and used as fallback/execution providers when MetaClaw delegates.
+- **Orchestrator (FastAPI Backend)**: Owns SSE streaming, provider selection, MCP session setup, generated-server proxy routes, and LangGraph build streaming.
 
 ## ✨ Key Features
 
@@ -26,7 +35,8 @@ Core runtime flow:
 - Autonomous MCP server build handoff through LangGraph.
 - MCP server connection metadata checks with structured error codes.
 - Generated MCP server feedback list proxied through FastAPI, avoiding browser CORS and Docker service-name assumptions.
-- Persistent chat history and responsive Next.js UI.
+- Local persistent chat history/settings via Zustand and `localStorage`.
+- Responsive Next.js UI with chat, archive, MCP tool settings, and generated-server feedback views.
 
 ## 🛠️ Technical Stack
 
