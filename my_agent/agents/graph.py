@@ -488,12 +488,17 @@ ENRICHED_CONTEXT (RAG):
         if _is_successful_generator_output(last_output):
             is_complete = True
             print("[SupervisorFinal] Generator output contains successful server JSON.")
+
+            # Add a clear success marker for the frontend to detect
+            final_msg = f"✅ MCP Server created successfully!\n\n{last_output}"
+
             new_history_entries = []
             if not any("generator: completed" in h for h in history):
                 new_history_entries.append("generator: completed creation attempt (success=True)")
             new_history_entries.append("TASK_SUCCESSFULLY_COMPLETED: The sub-agent has delivered the final result.")
+
             return {
-                "messages": [],
+                "messages": [AIMessage(content=final_msg)],
                 "next_agent": "end",
                 "final_response": last_output,
                 "history": new_history_entries,
@@ -554,14 +559,23 @@ Return ONLY a JSON object:
         new_history_entries.append("TASK_SUCCESSFULLY_COMPLETED: The sub-agent has delivered the final result.")
         new_retry_count = retry_count
         next_agent = "end"
+
+        # Ensure we have the success marker here too
+        if "✅" not in final_generator_output:
+             display_response = f"✅ MCP Server created successfully!\n\n{final_generator_output}"
+        else:
+             display_response = final_generator_output
+
         final_response = final_generator_output
+        final_messages = [AIMessage(content=display_response)]
     else:
         new_retry_count = retry_count + 1
         next_agent = "supervisor"
         final_response = ""
+        final_messages = []
     
     return {
-        "messages": [],
+        "messages": final_messages,
         "next_agent": next_agent,
         "final_response": final_response,
         "history": new_history_entries,
