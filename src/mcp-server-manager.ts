@@ -233,7 +233,7 @@ class MCPServerManager {
       },
       // Status update handler
       async (message: StatusUpdateMessage) => {
-        await this.processStatusUpdate(message);
+        await this.processStatusUpdate(message, true);
       },
 
       // Get config Handler
@@ -321,6 +321,7 @@ class MCPServerManager {
 
   private async processStatusUpdate(
     message: StatusUpdateMessage,
+    skipPublish: boolean = false,
   ): Promise<void> {
     const { serverId, status, containerId, buildLogs, error } = message;
 
@@ -354,6 +355,17 @@ class MCPServerManager {
 
       // Emit status update event
       this.events.emit(`status:${serverId}`, status);
+
+      // Publish to RabbitMQ for external consumers
+      if (!skipPublish && this.messageQueue.connected) {
+        await this.messageQueue.publishStatusUpdate({
+          serverId,
+          status,
+          containerId,
+          buildLogs,
+          error,
+        });
+      }
     } catch (error) {
       console.error(`Failed to process status update for ${serverId}:`, error);
     }

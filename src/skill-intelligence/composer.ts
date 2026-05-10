@@ -4,6 +4,8 @@ import type {
   SkillScore,
   SkillComposition,
   ScoringWeights,
+  SkillCompositionOptions,
+  SkillSelectionTarget,
 } from "./types.js";
 import { SkillRegistry } from "./registry.js";
 import { FeedbackTracker } from "./feedback.js";
@@ -15,7 +17,7 @@ export class SkillComposer {
     authMatch: 3.0,
     patternMatch: 2.0,
     complexityFit: 1.5,
-    priority: 1.0,
+    priority: 0.2,
     tokenPenaltyThreshold: 0.3,
     tokenPenaltyFactor: 0.7,
   };
@@ -39,19 +41,38 @@ export class SkillComposer {
     this.feedbackTracker = tracker;
   }
 
-  composeSkills(profile: SpecProfile): SkillComposition {
+  private inferTarget(profile: SpecProfile): SkillSelectionTarget {
+    return profile.source === "endpoint_text" ? "openapi" : "mcp";
+  }
+
+  private skillMatchesTarget(
+    skill: SkillMetadata,
+    target: SkillSelectionTarget,
+  ): boolean {
+    if (skill.category === target) return true;
+    if (skill.category !== "auth") return false;
+    return skill.id.startsWith(`${target}_`);
+  }
+
+  composeSkills(
+    profile: SpecProfile,
+    options: SkillCompositionOptions = {},
+  ): SkillComposition {
     if (!this.registry) {
       return { skills: [], totalTokens: 0, explanations: {} };
     }
 
+    const target = options.target ?? this.inferTarget(profile);
     const weights = this.defaultWeights;
     const scores: SkillScore[] = [];
     const explanations: Record<string, string> = {};
 
     // Score all skills across categories
-    const allSkills = this.registry.getAllSkills();
+    const allSkills = this.registry
+      .getAllSkills()
+      .filter((skill) => this.skillMatchesTarget(skill, target));
     for (const skill of allSkills) {
-      const score = this.scoreSkill(skill, profile, weights);
+      const score = this.scoreSkill(skill, profile, weights, target);
       if (score.score > 0) {
         scores.push(score);
         explanations[skill.id] = score.reasons.join("; ");
@@ -87,7 +108,7 @@ export class SkillComposer {
     }
 
     // Ensure coverage: at least one skill per active category
-    this.ensureCoverage(selected, profile, allSkills, explanations);
+    this.ensureCoverage(selected, profile, allSkills, explanations, target);
 
     // Apply dependencies
     this.applyDependencies(selected, allSkills, explanations);
@@ -125,14 +146,31 @@ export class SkillComposer {
     skill: SkillMetadata,
     profile: SpecProfile,
     weights: ScoringWeights,
+    target: SkillSelectionTarget,
   ): SkillScore {
     let score = 0;
     const reasons: string[] = [];
 
-    // 1. Base priority score (0-50)
+    const conditionResult = this.evaluateConditions(skill, profile);
+    if (!conditionResult.matches) {
+      return {
+        skillId: skill.id,
+        score: 0,
+        confidence: 0,
+        reasons: conditionResult.reasons,
+        metadata: skill,
+      };
+    }
+    reasons.push(...conditionResult.reasons);
+
+    // 1. Base score for core target skills only. Priority should break ties,
+    // not pull every prompt fragment into every generation.
     const priorityScore = skill.priority ?? 50;
-    score += priorityScore * weights.priority;
-    reasons.push(`priority=${priorityScore}`);
+    const coreScore = this.scoreCoreSkill(skill, target);
+    if (coreScore > 0) {
+      score += coreScore;
+      reasons.push(`core target skill=${coreScore}`);
+    }
 
     // 2. Auth type matching (high weight: 3.0)
     if (skill.category === "auth") {
@@ -142,7 +180,7 @@ export class SkillComposer {
     }
 
     // 3. Pattern matching (medium weight: 2.0)
-    if (skill.category === "mcp" || skill.category === "openapi") {
+    if (skill.category === target) {
       const match = this.scorePatternMatch(
         skill,
         profile,
@@ -161,23 +199,17 @@ export class SkillComposer {
     score += complexityFit.score;
     reasons.push(...complexityFit.reasons);
 
+    if (score <= 0) {
+      return { skillId: skill.id, score: 0, confidence: 0, reasons, metadata: skill };
+    }
+
+    score += priorityScore * weights.priority;
+    reasons.push(`priority=${priorityScore}`);
+
     // 5. Token budget awareness (penalty for overspend)
     if (skill.tokenCost > this.tokenBudget * weights.tokenPenaltyThreshold) {
       score *= weights.tokenPenaltyFactor;
       reasons.push("High token cost penalty applied");
-    }
-
-    // 6. Condition-based scoring
-    if (skill.conditions && skill.conditions.length > 0) {
-      let conditionScore = 0;
-      for (const cond of skill.conditions) {
-        const result = this.evaluateCondition(cond, profile);
-        if (result.match) {
-          conditionScore += result.weight;
-          reasons.push(result.reason);
-        }
-      }
-      score += conditionScore;
     }
 
     // Normalize confidence to 0-1 range
@@ -246,6 +278,17 @@ export class SkillComposer {
     return { score, reasons };
   }
 
+  private scoreCoreSkill(
+    skill: SkillMetadata,
+    target: SkillSelectionTarget,
+  ): number {
+    if (skill.category !== target) return 0;
+    if (skill.id === `${target}_system`) return 80;
+    if (skill.id === `${target}_user_message`) return 70;
+    if (target === "mcp" && skill.id === "mcp_zod_mapping") return 45;
+    return 0;
+  }
+
   private scorePatternMatch(
     skill: SkillMetadata,
     profile: SpecProfile,
@@ -288,6 +331,17 @@ export class SkillComposer {
         score += 15 * weight;
         reasons.push("Rate limiting detected, pattern matched");
       }
+    }
+
+    if (
+      skill.id.includes("request_patterns") &&
+      (profile.features?.requestBodies ||
+        profile.features?.formUrlEncoded ||
+        profile.features?.multipart ||
+        profile.data.hasFileUpload)
+    ) {
+      score += 20 * weight;
+      reasons.push("Request/body handling patterns matched");
     }
 
     return { score, reasons };
@@ -351,6 +405,9 @@ export class SkillComposer {
       case "equals":
         match = current === value;
         break;
+      case "notEquals":
+        match = current !== value;
+        break;
       case "contains":
         if (Array.isArray(current)) {
           match = current.some(
@@ -378,6 +435,9 @@ export class SkillComposer {
           match = new RegExp(value).test(current);
         }
         break;
+      case "exists":
+        match = Boolean(current) === Boolean(value);
+        break;
     }
 
     const reason = match
@@ -385,6 +445,25 @@ export class SkillComposer {
       : `Condition ${cond.field} ${cond.operator} ${value}: no match`;
 
     return { match, weight, reason };
+  }
+
+  private evaluateConditions(
+    skill: SkillMetadata,
+    profile: SpecProfile,
+  ): { matches: boolean; reasons: string[] } {
+    const conditions = (skill.conditions || []).filter(
+      (condition) => condition.field !== "dependsOn",
+    );
+    if (conditions.length === 0) return { matches: true, reasons: [] };
+
+    const reasons: string[] = [];
+    for (const condition of conditions) {
+      const result = this.evaluateCondition(condition, profile);
+      reasons.push(result.reason);
+      if (!result.match) return { matches: false, reasons };
+    }
+
+    return { matches: true, reasons };
   }
 
   private calculateAverageConfidence(skills: SkillScore[]): number {
@@ -481,6 +560,7 @@ export class SkillComposer {
     profile: SpecProfile,
     allSkills: SkillMetadata[],
     explanations: Record<string, string>,
+    target: SkillSelectionTarget,
   ): void {
     // Ensure at least one auth skill
     const hasAuthSkill = selected.some((s) => s.metadata.category === "auth");
@@ -505,14 +585,13 @@ export class SkillComposer {
       }
     }
 
-    // Ensure at least one mcp or openapi system skill
+    // Ensure at least one target system skill
     const hasSystemSkill = selected.some(
       (s) => s.metadata.category !== "auth" && s.metadata.id.includes("system"),
     );
     if (!hasSystemSkill) {
-      const category = profile.auth.hasAuth ? "mcp" : "openapi";
       const systemSkill = allSkills.find(
-        (s) => s.category === category && s.id.includes("system"),
+        (s) => s.category === target && s.id.includes("system"),
       );
       if (systemSkill) {
         const score: SkillScore = {
@@ -524,7 +603,7 @@ export class SkillComposer {
         };
         selected.push(score);
         explanations[systemSkill.id] =
-          `Auto-included for category coverage (${category} system)`;
+          `Auto-included for category coverage (${target} system)`;
       }
     }
   }

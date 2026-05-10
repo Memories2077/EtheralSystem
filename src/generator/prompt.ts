@@ -236,7 +236,7 @@ async function buildPromptWithDynamicSelection(
   );
 
   // Select skills based on profile
-  const composition = agent.selectSkills(profile);
+  const composition = agent.selectSkills(profile, { target: "mcp" });
   if (
     variant === "hybrid" &&
     (composition.averageConfidence ?? 0) <
@@ -276,61 +276,36 @@ ${outputExample}`;
     examplesSection += `\n\n${"=".repeat(80)}\n\nAUTHENTICATION EXAMPLE (WITH BASIC AUTH, BEARER TOKEN, API KEY):\n\nTYPESCRIPT REFERENCE WITH FULL AUTHENTICATION SUPPORT:\n${authExample}\n\n🔐 KEY AUTHENTICATION PATTERNS FROM THIS EXAMPLE:\n- Basic Auth: Adds username + password parameters to inputSchema\n- Bearer Token: Adds bearer_token parameter to inputSchema\n- API Key: Adds api_key parameter to inputSchema\n- Security schemes are extracted from components.securitySchemes\n- Auth headers are built dynamically in the handler\n- All auth parameters are USER-PROVIDED (not from .env)\n- Use base64 encoding for Basic Auth: btoa(\`\${username}:\${password}\`)\n- Use Bearer format for tokens: \`Bearer \${bearer_token}\`\n- Apply security per operation using operation.security array`;
   }
 
-  // Build base prompt with injection points
-  const baseSystem = `You are an expert MCP Server generator. Generate a complete, production-ready MCP server from the OpenAPI specification.
+  const registry = agent.getRegistry();
+  const getSkillContent = (id: string) => registry.getSkill(id)?.content || "";
+  const selectedIds = new Set(composition.skills.map((s) => s.skillId));
+  const zodMapping = selectedIds.has("mcp_zod_mapping")
+    ? getSkillContent("mcp_zod_mapping")
+    : "";
+  const requestPatterns = selectedIds.has("mcp_request_patterns")
+    ? getSkillContent("mcp_request_patterns")
+    : "";
+  const authContent = composition.skills
+    .filter(
+      (s) =>
+        s.skillId === "mcp_requirements" ||
+        s.skillId === "mcp_anti_contamination",
+    )
+    .map((s) => getSkillContent(s.skillId))
+    .join("\n\n---\n\n");
 
-{{SYSTEM_HEADER}}
+  const systemTemplate =
+    getSkillContent("mcp_system") ||
+    "You are an expert MCP Server generator.\n\n{{ZOD_MAPPING}}\n\n{{REQUEST_PATTERNS}}";
+  const userTemplate =
+    getSkillContent("mcp_user_message") ||
+    "{{REFERENCE_STRUCTURE}}\n\n{{EXAMPLES_SECTION}}\n\n{{LAST_ERROR}}\n\n{{OPENAPI_SPEC}}\n\n{{RAG_CONTEXT}}\n\n{{AUTH_SECTION}}";
 
-{{ZOD_MAPPING}}
+  const systemContent = systemTemplate
+    .replaceAll("{{ZOD_MAPPING}}", zodMapping)
+    .replaceAll("{{REQUEST_PATTERNS}}", requestPatterns);
 
-{{REQUEST_PATTERNS}}`;
-
-  const baseUser = `{{REFERENCE_STRUCTURE}}
-
-{{EXAMPLES_SECTION}}
-
-{{LAST_ERROR}}
-
-{{OPENAPI_SPEC}}
-
-{{RAG_CONTEXT}}
-
-{{AUTH_SECTION}}`;
-
-  // Assemble prompt with selected skills
-  let systemContent = baseSystem;
-  let userContent = baseUser;
-
-  // Replace injection points
-  systemContent = systemContent.replace(
-    "{{SYSTEM_HEADER}}",
-    composition.skills
-      .filter(
-        (s) =>
-          agent.getRegistry().getSkill(s.skillId)?.category === "mcp" &&
-          agent.getRegistry().getSkill(s.skillId)?.id.includes("system"),
-      )
-      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
-      .join("\n\n---\n\n") || "",
-  );
-
-  systemContent = systemContent.replace(
-    "{{ZOD_MAPPING}}",
-    composition.skills
-      .filter((s) => s.skillId === "zod_mapping")
-      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
-      .join("") || "",
-  );
-
-  systemContent = systemContent.replace(
-    "{{REQUEST_PATTERNS}}",
-    composition.skills
-      .filter((s) => s.skillId === "request_patterns")
-      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
-      .join("") || "",
-  );
-
-  userContent = userContent
+  const userContent = userTemplate
     .replace("{{REFERENCE_STRUCTURE}}", referenceStructure)
     .replace("{{EXAMPLES_SECTION}}", examplesSection)
     .replace(
@@ -346,13 +321,7 @@ ${outputExample}`;
         ? `🚨 REFERENCE CONTEXT (ONLY FOR REFERENCE - DO NOT COPY DIRECTLY):\n${ragContext}\n`
         : "",
     )
-    .replace(
-      "{{AUTH_SECTION}}",
-      composition.skills
-        .filter((s) => s.skillId.includes("mcp_"))
-        .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
-        .join("\n\n---\n\n") || "",
-    );
+    .replace("{{AUTH_SECTION}}", authContent);
 
   const messages: ChatMessage[] = [
     {
@@ -605,13 +574,13 @@ async function buildOpenAPIPromptWithDynamicSelection(
 
   await agent.initialize();
 
-  // Analyze the input (treat input as spec-like for profile analysis)
-  const profile = agent.analyzeSpec(apiEndpoints);
+  // Analyze free-form endpoint descriptions with text-aware heuristics.
+  const profile = agent.getAnalyzer().analyzeEndpointDescription(apiEndpoints);
   console.log(
     `🧠 Dynamic OpenAPI selection: auth=${profile.auth.hasAuth}, complexity=${profile.guidance.complexityScore}`,
   );
 
-  const composition = agent.selectSkills(profile);
+  const composition = agent.selectSkills(profile, { target: "openapi" });
   if (
     variant === "hybrid" &&
     (composition.averageConfidence ?? 0) <
@@ -686,13 +655,22 @@ ${outputExampleTwilio}`;
   }
 
   // Build auth section based on selected skills
+  const registry = agent.getRegistry();
+  const getSkillContent = (id: string) => registry.getSkill(id)?.content || "";
+  const authInputFormat = getSkillContent("auth_input_format");
   const authSkills = composition.skills.filter((s) =>
-    s.skillId.includes("openapi_"),
+    s.skillId === "openapi_requirements" ||
+    s.skillId === "openapi_anti_contamination",
   );
   const authContent =
     authSkills.length > 0
       ? authSkills
-          .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+          .map((s) =>
+            getSkillContent(s.skillId).replaceAll(
+              "{{INPUT_FORMAT}}",
+              authInputFormat,
+            ),
+          )
           .join("\n\n---\n\n")
       : "";
 
@@ -706,14 +684,14 @@ ${outputExampleTwilio}`;
   const systemContent =
     composition.skills
       .filter((s) => {
-        const skill = agent.getRegistry().getSkill(s.skillId);
+        const skill = registry.getSkill(s.skillId);
         return skill?.category === "openapi" && skill.id.includes("system");
       })
-      .map((s) => agent.getRegistry().getSkill(s.skillId)?.content || "")
+      .map((s) => getSkillContent(s.skillId))
       .join("\n\n---\n\n") || "";
 
   const userContent = (
-    agent.getRegistry().getSkill("openapi/user_message")?.content || ""
+    getSkillContent("openapi_user_message") || ""
   )
     .replace(
       "{{LAST_ERROR}}",

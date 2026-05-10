@@ -5,6 +5,7 @@ import type {
   HumanFeedbackImportSummary,
   SkillSelectionInitializationResult,
   SkillSelectionMetrics,
+  SkillCompositionOptions,
 } from "./types.js";
 import { SkillRegistry } from "./registry.js";
 import { SpecProfileAnalyzer } from "./analyzer.js";
@@ -113,7 +114,9 @@ export class SkillSelectionAgent {
     this.composer.setRegistry(this.registry);
     this.composer.setFeedbackTracker(this.feedback);
 
-    await this.feedback.initialize();
+    if (process.env.SKILL_FEEDBACK_ENABLED === "true") {
+      await this.feedback.initialize();
+    }
 
     const durationMs = Math.round(performance.now() - start);
     this.metrics.initializationDurationMs = durationMs;
@@ -153,9 +156,12 @@ export class SkillSelectionAgent {
   }
 
   /** Select and score skills for a profile with timing and decision logs. */
-  selectSkills(profile: SpecProfile): SkillComposition {
+  selectSkills(
+    profile: SpecProfile,
+    options: SkillCompositionOptions = {},
+  ): SkillComposition {
     const start = performance.now();
-    const composition = this.composer.composeSkills(profile);
+    const composition = this.composer.composeSkills(profile, options);
     const durationMs = Math.round(performance.now() - start);
     this.metrics.lastCompositionDurationMs = durationMs;
     this.metrics.lastSelectedCount = composition.skills.length;
