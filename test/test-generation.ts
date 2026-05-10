@@ -209,26 +209,6 @@ export async function main(options: Options = {}) {
       path.join(outputDir_ts, `${serverId}.ts`),
     );
 
-    // Notify manager that the server is ready
-    const managerUrl = process.env.MANAGER_URL || "http://localhost:8080";
-    try {
-      console.log(`📡 Notifying manager at ${managerUrl}...`);
-      const response = await fetch(`${managerUrl}/api/mcp/${serverId}/ready`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (response.ok) {
-        console.log("✅ Manager notified successfully!");
-      } else {
-        console.error(`⚠️ Failed to notify manager: ${response.statusText}`);
-      }
-    } catch (notifyError) {
-      console.error(`❌ Error notifying manager: ${notifyError}`);
-    }
-
     if (result && result.code) {
       console.log("📊 Generated code preview:");
       console.log("─".repeat(50));

@@ -214,12 +214,13 @@ curl http://localhost:8080/api/mcp/server-id/files
 
 ## `POST /api/mcp/{serverId}/ready`
 
-Generated containers call this endpoint after the generated MCP server is ready to accept traffic.
+Generated containers call this endpoint after the generated MCP server is ready to accept traffic. The request must include the JWT token created for the same server.
 
 ### Example
 
 ```bash
-curl -X POST http://localhost:8080/api/mcp/server-id/ready
+curl -X POST http://localhost:8080/api/mcp/server-id/ready \
+  -H "Authorization: Bearer jwt-token"
 ```
 
 ### Success response

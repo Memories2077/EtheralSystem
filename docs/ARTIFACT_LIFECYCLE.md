@@ -38,7 +38,7 @@ This document describes the generated MCP server artifact lifecycle owned by `mc
 7. The OpenAPI YAML is validated.
 8. The manager queues or directly performs generated container build/start.
 9. The generated server writes TypeScript output and starts serving MCP traffic.
-10. The generated server calls `POST /api/mcp/{serverId}/ready` using `MANAGER_URL`.
+10. The launcher waits for the generated server health check, then calls `POST /api/mcp/{serverId}/ready` using `MANAGER_URL` and `JWT_TOKEN`.
 11. The manager marks the server `running` and returns the stabilized create response.
 
 ## Files endpoint behavior

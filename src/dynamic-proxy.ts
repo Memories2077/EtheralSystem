@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { Duplex } from "stream";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -116,6 +117,104 @@ const proxy = httpProxy.createProxyServer({
 // Tối ưu agent (reuse connections to backends)
 const agent = new Agent({ keepAlive: true, maxSockets: 100 });
 
+type ProxyAuthResult =
+  | { ok: true; port: number }
+  | { ok: false; status: number; message: string };
+
+function getRequestToken(
+  reqUrl: URL,
+  authorizationHeader?: string,
+): string | null {
+  if (authorizationHeader?.startsWith("Bearer ")) {
+    return authorizationHeader.slice("Bearer ".length).trim();
+  }
+
+  return reqUrl.searchParams.get("token");
+}
+
+async function authenticateProxyRequest(
+  serverId: string,
+  reqUrl: URL,
+  authorizationHeader?: string,
+): Promise<ProxyAuthResult> {
+  const token = getRequestToken(reqUrl, authorizationHeader);
+
+  if (!token) {
+    return { ok: false, status: 401, message: "Token required" };
+  }
+
+  if (!jwtSecret) {
+    console.warn("JWT secret not found, rejecting all requests");
+    return { ok: false, status: 503, message: "Token not found or invalid!" };
+  }
+
+  try {
+    const decoded = jwt.verify(token, jwtSecret);
+    if (
+      typeof decoded !== "object" ||
+      decoded === null ||
+      decoded.serverId !== serverId
+    ) {
+      console.log("Token serverId mismatch");
+      return {
+        ok: false,
+        status: 403,
+        message: "Invalid token for this server",
+      };
+    }
+  } catch (error) {
+    console.error("Authentication error:", error);
+    return { ok: false, status: 401, message: "Invalid token" };
+  }
+
+  if (!logsCollection) {
+    return { ok: false, status: 503, message: "Database not available" };
+  }
+
+  try {
+    const serverData = await logsCollection.findOne({ serverId });
+    if (!serverData) {
+      console.log("Server not found in database");
+      return { ok: false, status: 404, message: "Server not found" };
+    }
+
+    if (serverData.status !== "running") {
+      return {
+        ok: false,
+        status: 400,
+        message: `Server is not running: ${serverData.status}`,
+      };
+    }
+
+    const port = Number(backends.get(serverId) || serverData.hostPort);
+    if (!Number.isInteger(port)) {
+      return { ok: false, status: 404, message: "Server backend not found" };
+    }
+
+    backends.set(serverId, port);
+    return { ok: true, port };
+  } catch (error) {
+    console.error("Failed to validate server state:", error);
+    return { ok: false, status: 503, message: "Database not available" };
+  }
+}
+
+function sendJsonError(
+  res: http.ServerResponse,
+  status: number,
+  message: string,
+) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: message }));
+}
+
+function rejectUpgrade(socket: Duplex, status: number, message: string) {
+  socket.write(
+    `HTTP/1.1 ${status} ${message}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n${JSON.stringify({ error: message })}`,
+  );
+  socket.destroy();
+}
+
 // lỗi chung
 proxy.on("error", (err, req, res) => {
   console.error("proxy error", err);
@@ -151,84 +250,19 @@ const server = http.createServer(async (req, res) => {
     const serverId = match[1];
     const remainingPath = match[2] || "";
 
-    // Extract token from query parameters
-    const token = reqUrl.searchParams.get("token");
+    const authResult = await authenticateProxyRequest(
+      serverId,
+      reqUrl,
+      req.headers.authorization,
+    );
 
-    if (!token) {
-      res.writeHead(401);
-      return res.end(JSON.stringify({ error: "Token required" }));
-    }
-
-    // Verify JWT token
-    if (jwtSecret) {
-      try {
-        const decoded = jwt.verify(token, jwtSecret) as any;
-
-        console.log("Token decoded successfully");
-
-        if (decoded.serverId !== serverId) {
-          console.log("Token serverId mismatch");
-          res.writeHead(403);
-          return res.end(
-            JSON.stringify({ error: "Invalid token for this server" })
-          );
-        }
-
-        console.log("Token validation passed");
-
-        // Check if server exists and is running
-        if (logsCollection) {
-          const serverData = await logsCollection.findOne({ serverId });
-
-          if (!serverData) {
-            console.log("Server not found in database");
-            res.writeHead(404);
-            return res.end(JSON.stringify({ error: "Server not found" }));
-          }
-
-          if (serverData.status !== "running") {
-            res.writeHead(400);
-            return res.end(
-              JSON.stringify({
-                error: "Server is not running",
-                status: serverData.status,
-              })
-            );
-          }
-        }
-      } catch (error) {
-        console.error("Authentication error:", error);
-        res.writeHead(401);
-        return res.end(JSON.stringify({ error: "Invalid token" }));
-      }
-    }
-    else {
-      console.warn("JWT secret not found, rejecting all requests");
-      res.writeHead(503);
-      return res.end(JSON.stringify({ error: "Token not found or invalid!" }));
-    }
-
-    // Check if serverId exists in backends map
-    let port = backends.get(serverId);
-    if (!port) {
-      const hostPortDoc = await logsCollection
-        .find({
-          $and: [{ status: "running" }, { serverId: `${serverId}` }],
-        })
-        .project({ serverId: 1, hostPort: 1, _id: 0 })
-        .next();
-
-      port = hostPortDoc?.hostPort;
-    }
-
-    if (!port) {
-      res.writeHead(404);
-      return res.end("Server not found");
+    if (!authResult.ok) {
+      return sendJsonError(res, authResult.status, authResult.message);
     }
 
     const targetHost = process.env.BACKEND_HOST || "127.0.0.1";
 
-    const target = `http://${targetHost}:${port}`;
+    const target = `http://${targetHost}:${authResult.port}`;
 
     // Rewrite the URL to include /mcp path for the backend
     const newPath = `/mcp${remainingPath ? "/" + remainingPath : ""}`;
@@ -265,29 +299,26 @@ server.on("upgrade", async (req, socket, head) => {
     const serverId = match[1];
     const remainingPath = match[2] || "";
 
-    let port = backends.get(serverId);
+    const authResult = await authenticateProxyRequest(
+      serverId,
+      reqUrl,
+      req.headers.authorization,
+    );
 
-    if (!port) {
-      const hostPortDoc = await logsCollection
-        .find({
-          $and: [{ status: "running" }, { serverId: `${serverId}` }],
-        })
-        .project({ serverId: 1, hostPort: 1, _id: 0 })
-        .next();
-
-      port = hostPortDoc?.hostPort;
-    }
-
-    if (!port) {
-      socket.destroy();
+    if (!authResult.ok) {
+      rejectUpgrade(socket, authResult.status, authResult.message);
       return;
     }
 
-    const target = `http://127.0.0.1:${port}`;
+    const targetHost = process.env.BACKEND_HOST || "127.0.0.1";
+    const target = `http://${targetHost}:${authResult.port}`;
 
     // Rewrite the URL for WebSocket upgrade
     const newPath = `/mcp${remainingPath ? "/" + remainingPath : ""}`;
-    req.url = newPath + (reqUrl.search || "");
+    const searchParams = new URLSearchParams(reqUrl.search);
+    searchParams.delete("token");
+    const cleanQuery = searchParams.toString();
+    req.url = newPath + (cleanQuery ? "?" + cleanQuery : "");
 
     console.log(`WebSocket upgrade ${reqUrl.pathname} -> ${target}${req.url}`);
 

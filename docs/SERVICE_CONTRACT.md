@@ -28,6 +28,7 @@ docker network create mcp-network
 | Browser UI            | `NEXT_PUBLIC_MCP_GEN_URL` | Browser-reachable manager URL    | `http://localhost:8080`     | Must satisfy CORS. For browser code, this must be reachable from the browser, not just from Docker. |
 | Generated MCP clients | `PUBLIC_URL`              | Externally reachable proxy URL   | `http://localhost:8081`     | Used by the manager to build generated MCP public URLs such as `/mcp/{serverId}`.                   |
 | Generated containers  | `MANAGER_URL`             | `http://docker-manager:8080`     | `http://localhost:8080`     | Ready callback target used by generated servers.                                                    |
+| Generated containers  | `JWT_TOKEN`               | Server JWT from manager          | Server JWT from manager     | Bearer token used by the launcher when calling the authenticated ready callback.                     |
 
 ## Required shared Docker volumes
 
