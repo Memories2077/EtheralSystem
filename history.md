@@ -1,5 +1,24 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-05-09] - Fix Logic Luong MCP Generation & Bao Toan JSON Cuoi
+
+### Bug Fixes
+
+- **Final Response Preservation**: Cap nhat `supervisor_final_node` de ket thuc graph bang dung JSON tu Generator khi ket qua co `serverId`, tranh mat config do vong `mark_task_complete`.
+- **Delegation Payload Safety**: Sua logic repair tool args de khong overwrite payload da co `API_DOCUMENTATION`, `ORIGINAL_PROMPT`, hoac `ENRICHED_CONTEXT (RAG)`.
+- **Structured RAG Context**: Mo rong `create_MCPServer` voi optional `rag_context`, Generator parse `enriched_context` va truyen RAG rieng theo API contract thay vi nhet vao `api_doc`.
+- **OpenAPI/YAML Preservation**: Don gian hoa sanitizer de chi normalize newline va loai control chars nguy hiem, giu nguyen indentation/spacing cua YAML.
+- **Generator Prompt Loading**: Sua Generator Agent de load noi dung prompt that bang `load_prompt(...)` va bo buoc LLM rewrite final response.
+- **Regression Tests**: Them tests cho YAML preservation, explicit RAG payload, RAG parsing, task repair, va final JSON preservation.
+
+### Verification
+
+- `git diff --check` passed.
+- Static syntax parse passed voi Python fallback `C:\msys64\mingw64\bin\python.exe`.
+- Chua chay duoc pytest/graph import bang `.venv\Scripts\python.exe` do Windows Python launcher loi `specified logon session does not exist`.
+
+---
+
 ## [2026-05-08] - Chuẩn hóa Luồng mcp-gen & RAG Artifact Indexing (mcp-gen Flow Alignment)
 
 ### 🚀 Cải tiến Luồng Sinh MCP (MCP Generation Flow Improvements)

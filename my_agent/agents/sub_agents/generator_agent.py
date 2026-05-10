@@ -1,4 +1,4 @@
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
 from typing import Dict, Any, Optional, List, Tuple
 from my_agent.tools.generator_tools import create_MCPServer, test_mcp_server
@@ -23,13 +23,25 @@ custom_client = httpx.Client(
     limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
 )
 
+
+def parse_rag_context(enriched_context_json: str) -> List[Any]:
+    """Parse structured RAG context from state, falling back to an empty list."""
+    if not enriched_context_json:
+        return []
+    try:
+        parsed = json.loads(enriched_context_json)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
 async def generator_agent_node(state: AgentState) -> AgentState:
     """Generator agent that handles content generation tasks"""
     messages = state["messages"]
     
     # Initialize LLM for this agent
     config = AGENT_CONFIG["generator_agent"]
-    system_prompt = config["prompt_file"]
+    system_prompt = load_prompt(config["prompt_file"])
 
     # Initialize LLM via factory
     from my_agent.utils.llm_factory import get_llm
@@ -41,6 +53,7 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     # 1. State-backed Data Extraction (Primary Source)
     raw_api_doc = state.get("raw_api_doc", "")
     enriched_context_json = state.get("enriched_context", "[]")
+    rag_context_data = parse_rag_context(enriched_context_json)
     
     # 2. Find information from messages (Fallback/Source for user_id, email)
     task_content = ""
@@ -115,9 +128,9 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     - Email: {email}
 
     INSTRUCTIONS:
-    Call the create_MCPServer tool now with the query parameter.
-    The full API documentation has been prepared for you.
-    Just invoke: create_MCPServer(query=[api_doc, userId, email])"""
+    Call the create_MCPServer tool now with the query and rag_context parameters.
+    The full API documentation and structured RAG context have been prepared for you.
+    Just invoke: create_MCPServer(query=[api_doc, userId, email], rag_context=rag_context)"""
 
     combined_prompt = f"""[SYSTEM INSTRUCTION]
         {system_prompt}
@@ -151,7 +164,10 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                 print(f"[Generator] Creating MCP Server with FULL API documentation...")
                 
                 # Properly await the async tool
-                result = await create_MCPServer.ainvoke({"query": query})
+                result = await create_MCPServer.ainvoke({
+                    "query": query,
+                    "rag_context": rag_context_data,
+                })
                 result_str = str(result)
                 tool_results.append((tool_call_id, result_str))
 
@@ -242,29 +258,9 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                 "raw_api_doc": raw_api_doc,
                 "enriched_context": enriched_context_json
             }
-        
-        # Generate final response with tool results
-        final_prompt = """Based on the tool results above, create a final response for the user.
-        If the MCP Server was created successfully, you MUST include:
-        1. The exact phrase: "✅ MCP Server created successfully!"
-        2. The 'Server Details:' section including "Server ID: [id]".
-        3. The full JSON configuration object for the user to copy.
-        4. A short 'Post-creation status' section that clearly distinguishes server creation from artifact fetching and RAG indexing.
-           Include any warnings if artifact fetching or indexing failed.
-        
-        This will signal the supervisor that the task is complete while preserving indexing warnings.
-        """
-        
-        final_messages = generator_messages + [response] + [
-            ToolMessage(content=result, tool_call_id=tool_call_id)
-            for tool_call_id, result in tool_results
-        ] + [
-            HumanMessage(content=final_prompt)
-        ]
-        
-        final_response = await llm.ainvoke(final_messages)
-        content = str(final_response.content) if hasattr(final_response, 'content') else str(final_response)
-        
+
+        # Return exact tool output. Do not pass config/token JSON through a final LLM.
+        content = tool_results[-1][1] if tool_results else ""
         return {
             "messages": [AIMessage(content=content)],
             "next_agent": "supervisor_final",
@@ -277,7 +273,6 @@ async def generator_agent_node(state: AgentState) -> AgentState:
             "enriched_context": enriched_context_json
         }
 
-    
     return {
         "messages": [response],
         "next_agent": "supervisor_final",

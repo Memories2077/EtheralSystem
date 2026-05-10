@@ -4,8 +4,7 @@ Generate Tools - Tools for generating MCP Server
 
 import httpx
 import json
-import base64
-from typing import Literal, Dict, Any, List, Optional
+from typing import Any, List, Optional
 from langchain_core.tools import tool
 import asyncio
 import logging
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 def sanitize_api_documentation(doc: str) -> str:
     """
-    Sanitize API documentation to prevent YAML parsing errors
+    Sanitize API documentation without changing semantic formatting.
     
     Args:
         doc: Raw API documentation string
@@ -38,54 +37,20 @@ def sanitize_api_documentation(doc: str) -> str:
     if not doc:
         return ""
     
-    import re
-    
-    sanitized = doc
-    
-    # Remove control characters except newlines, tabs, and carriage returns
-    sanitized = ''.join(char for char in sanitized if ord(char) >= 32 or char in '\n\t\r')
-    
-    # Normalize whitespace but preserve structure
-    # Replace tabs with spaces
-    sanitized = sanitized.replace('\t', '    ')
-    
-    # Replace multiple spaces with single space (but preserve newlines)
-    lines = sanitized.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        # Trim each line and replace multiple spaces
-        cleaned_line = re.sub(r' {2,}', ' ', line.strip())
-        cleaned_lines.append(cleaned_line)
-    
-    sanitized = '\n'.join(cleaned_lines)
-    
-    # Remove empty lines (multiple consecutive newlines)
-    sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
-    
-    # Escape problematic YAML characters in text
-    # Don't escape the entire string, just problematic patterns
-    # YAML special chars at start of line: - : > | [ ] { }
-    # Fix lines starting with these by adding a space
-    fixed_lines = []
-    for line in sanitized.split('\n'):
-        if line and line[0] in '-:>|[]{}':
-            fixed_lines.append(' ' + line)
-        else:
-            fixed_lines.append(line)
-    
-    sanitized = '\n'.join(fixed_lines)
-    
-    # Log sanitization info
+    # Preserve indentation and spacing because OpenAPI/YAML is whitespace-sensitive.
+    sanitized = doc.replace("\r\n", "\n").replace("\r", "\n")
+    sanitized = "".join(char for char in sanitized if ord(char) >= 32 or char in "\n\t")
+
     original_len = len(doc)
     sanitized_len = len(sanitized)
     if original_len != sanitized_len:
         logger.info(f"Sanitized API doc: {original_len} -> {sanitized_len} characters")
     
-    return sanitized.strip()
+    return sanitized.strip("\n")
 
 
 @tool
-async def create_MCPServer(query: List[str]) -> str:
+async def create_MCPServer(query: List[str], rag_context: Optional[List[Any]] = None) -> str:
     """
         The tool for creating MCP server
         
@@ -119,6 +84,7 @@ async def create_MCPServer(query: List[str]) -> str:
             query[0] - request
             query[1] - userId
             query[2] - email
+            rag_context: Optional structured RAG context from the Examiner Agent.
     """
     if not query:
         logger.warning("Empty query provided to create_MCPServer")
@@ -148,35 +114,30 @@ async def create_MCPServer(query: List[str]) -> str:
         logger.error("API documentation became empty after sanitization")
         return "❌ Error: API documentation is invalid or empty after sanitization"
     
-    # Option 1: Send sanitized text (default)
-    # Option 2: If backend supports it, send as base64 to avoid all encoding issues
-    # Uncomment below to use base64 encoding:
-    # sanitized_request = base64.b64encode(request_data.encode('utf-8')).decode('ascii')
-    # logger.info(f"Encoded API doc to base64: {len(sanitized_request)} characters")
+    structured_rag_context = rag_context if isinstance(rag_context, list) else []
     
-    # RAG context is now handled by the Examiner Agent and passed to the Generator.
-    # If rag_context is provided in the query or extracted from the request, use it.
-    # Otherwise, it will be empty.
-    
-    rag_context = []
-    
-    # Try to extract rag_context from the request_data if it follows our ENRICHED_CONTEXT format
-    import re
-    rag_match = re.search(r"ENRICHED_CONTEXT \(RAG\):\n(.*?)(\n\nUSER_ID:|\Z)", request_data, re.DOTALL)
+    # Backward compatibility: older callers may embed RAG context in request_data.
+    if not structured_rag_context:
+        import re
+        rag_match = re.search(r"ENRICHED_CONTEXT \(RAG\):\n(.*?)(\n\nUSER_ID:|\Z)", request_data, re.DOTALL)
+    else:
+        rag_match = None
     if rag_match:
         try:
             rag_context_str = rag_match.group(1).strip()
-            rag_context = json.loads(rag_context_str)
-            logger.info(f"Successfully extracted {len(rag_context)} structured RAG items from request.")
+            parsed_rag_context = json.loads(rag_context_str)
+            if isinstance(parsed_rag_context, list):
+                structured_rag_context = parsed_rag_context
+                logger.info(f"Successfully extracted {len(structured_rag_context)} structured RAG items from request.")
         except Exception as e:
             logger.warning(f"Failed to parse RAG context from request: {e}")
-            rag_context = []
+            structured_rag_context = []
 
     create_request = MCPCreateRequest(
         request=sanitized_request,
         userId=user_id,
         email=email,
-        rag_context=rag_context,
+        rag_context=structured_rag_context,
     )
     mcp_urls = get_mcp_urls()
     
