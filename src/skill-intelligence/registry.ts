@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import yaml from 'js-yaml';
 import type { SkillMetadata, SkillCondition, SkillRegistryConfig } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -11,8 +12,11 @@ const DEFAULT_SKILLS_BASE_DIR = path.join(__dirname, '..', 'skills');
 interface RegistryErrors {
   missingId: string[];
   missingCategory: string[];
+  invalidCategory: string[];
   duplicateIds: string[];
   invalidPriority: string[];
+  invalidTokenCost: string[];
+  invalidConditions: string[];
 }
 
 export class SkillRegistry {
@@ -41,14 +45,25 @@ export class SkillRegistry {
 
   async initialize(): Promise<RegistryErrors> {
     if (this.initialized) {
-      return { missingId: [], missingCategory: [], duplicateIds: [], invalidPriority: [] };
+      return {
+        missingId: [],
+        missingCategory: [],
+        invalidCategory: [],
+        duplicateIds: [],
+        invalidPriority: [],
+        invalidTokenCost: [],
+        invalidConditions: [],
+      };
     }
 
     const errors: RegistryErrors = {
       missingId: [],
       missingCategory: [],
+      invalidCategory: [],
       duplicateIds: [],
       invalidPriority: [],
+      invalidTokenCost: [],
+      invalidConditions: [],
     };
 
     const files = await this.scanDirectory(this.baseDir);
@@ -68,8 +83,18 @@ export class SkillRegistry {
         errors.missingCategory.push(filePath);
         continue;
       }
+      if (!this.isValidCategory(metadata.category)) {
+        errors.invalidCategory.push(filePath);
+        continue;
+      }
       if (typeof metadata.priority !== 'number' || metadata.priority < 0) {
         errors.invalidPriority.push(filePath);
+      }
+      if (typeof metadata.tokenCost !== 'number' || metadata.tokenCost < 0) {
+        errors.invalidTokenCost.push(filePath);
+      }
+      if (!this.hasValidConditions(metadata.conditions)) {
+        errors.invalidConditions.push(filePath);
       }
 
       if (this.skills.has(metadata.id)) {
@@ -80,7 +105,7 @@ export class SkillRegistry {
       const skill: SkillMetadata = {
         ...metadata,
         id: metadata.id!,
-        category: metadata.category as SkillMetadata['category'],
+        category: metadata.category,
         tags: metadata.tags || [],
         priority: metadata.priority ?? 0,
         tokenCost: metadata.tokenCost ?? 0,
@@ -118,87 +143,65 @@ export class SkillRegistry {
     metadata: Partial<SkillMetadata>;
     contentWithoutFrontmatter: string;
   } {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!match) {
       return { metadata: {}, contentWithoutFrontmatter: content };
     }
 
     const frontmatterText = match[1];
     const contentWithoutFrontmatter = content.slice(match[0].length).trimStart();
-    const metadata: Partial<SkillMetadata> = {};
+    const parsed = yaml.load(frontmatterText);
 
-    for (const line of frontmatterText.split('\n')) {
-      const colonIdx = line.indexOf(':');
-      if (colonIdx === -1) continue;
-
-      const key = line.slice(0, colonIdx).trim();
-      let value: any = line.slice(colonIdx + 1).trim();
-
-      // Remove leading/trailing quotes
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-
-      // Parse arrays: [tag1, tag2]
-      if (value.startsWith('[') && value.endsWith(']')) {
-        const inner = value.slice(1, -1).trim();
-        value = inner ? inner.split(',').map((s: string) => s.trim().replace(/^["']|["']$/g, '')) : [];
-      }
-
-      // Parse numbers
-      if (/^\d+$/.test(value as string)) {
-        value = Number(value);
-      }
-
-      // Parse conditions array of objects
-      if (key === 'conditions' && typeof value === 'string') {
-        try {
-          value = JSON.parse(value);
-        } catch {
-          // leave as-is
-        }
-      }
-
-      (metadata as Record<string, unknown>)[key] = value;
+    if (!parsed || typeof parsed !== 'object') {
+      return { metadata: {}, contentWithoutFrontmatter };
     }
 
-    // Parse conditions from separate lines if in YAML-style
-    if (match[1].includes('conditions:') && !metadata.conditions) {
-      metadata.conditions = this.parseConditions(frontmatterText);
-    }
+    const raw = parsed as Record<string, unknown>;
+    const metadata: Partial<SkillMetadata> = {
+      id: typeof raw.id === 'string' ? raw.id : undefined,
+      category: this.isValidCategory(raw.category) ? raw.category : raw.category as any,
+      tags: Array.isArray(raw.tags) ? raw.tags.map(String) : [],
+      priority: typeof raw.priority === 'number' ? raw.priority : undefined,
+      tokenCost: typeof raw.tokenCost === 'number' ? raw.tokenCost : undefined,
+      description: typeof raw.description === 'string' ? raw.description : undefined,
+      conditions: this.normalizeConditions(raw.conditions),
+    };
 
     return { metadata, contentWithoutFrontmatter };
   }
 
-  private parseConditions(text: string): SkillCondition[] {
-    const conditions: SkillCondition[] = [];
-    const lines = text.split('\n');
-    let inConditions = false;
+  private isValidCategory(value: unknown): value is SkillMetadata['category'] {
+    return value === 'auth' || value === 'mcp' || value === 'openapi';
+  }
 
-    for (const line of lines) {
-      if (line.trim().startsWith('conditions:')) {
-        inConditions = true;
-        continue;
-      }
-      if (inConditions) {
-        const trimmed = line.trim();
-        if (!trimmed || (!trimmed.startsWith('-') && !trimmed.startsWith('  '))) break;
+  private normalizeConditions(value: unknown): SkillCondition[] | undefined {
+    if (!Array.isArray(value)) return undefined;
 
-        const condMatch = trimmed.match(/-\s*field:\s*(\S+)\s+operator:\s*(\S+)\s+value:\s*(.+)/);
-        if (condMatch) {
-          conditions.push({
-            field: condMatch[1],
-            operator: condMatch[2] as SkillCondition['operator'],
-            value: condMatch[3].replace(/^["']|["']$/g, ''),
-          });
-        }
-      }
-    }
+    return value
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+      .map((item) => ({
+        field: String(item.field ?? ''),
+        operator: item.operator as SkillCondition['operator'],
+        value: item.value,
+      }));
+  }
 
-    return conditions;
+  private hasValidConditions(conditions: SkillCondition[] | undefined): boolean {
+    if (!conditions) return true;
+    const operators = new Set<SkillCondition['operator']>([
+      'equals',
+      'notEquals',
+      'contains',
+      'gte',
+      'lte',
+      'gt',
+      'lt',
+      'regex',
+      'exists',
+    ]);
+    return conditions.every((condition) =>
+      Boolean(condition.field) && operators.has(condition.operator)
+    );
   }
 
   private indexByCategory(skill: SkillMetadata): void {

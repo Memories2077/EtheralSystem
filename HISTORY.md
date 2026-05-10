@@ -1,5 +1,33 @@
 # Project History Log
 
+## [2026-05-10] - Target-Scoped Dynamic Skill Selection Fixes
+
+- **Fix**: Tightened dynamic prompt assembly so MCP generation and OpenAPI generation select only target-appropriate skill fragments.
+- **Prompt Generation** (`src/generator/prompt.ts`):
+  - Passes explicit `mcp` / `openapi` targets into skill selection.
+  - Uses canonical skill IDs for system/user templates, Zod mapping, request patterns, auth requirements, and anti-contamination guidance.
+  - Analyzes free-form endpoint descriptions with text-aware heuristics before building OpenAPI prompts.
+- **Skill Analysis** (`src/skill-intelligence/analyzer.ts`, `src/skill-intelligence/types.ts`):
+  - Split OpenAPI spec analysis from endpoint-text analysis.
+  - Added source, confidence, and request-body feature metadata to `SpecProfile`.
+  - Detects auth, pagination, content types, request bodies, webhooks, streaming, filtering, sorting, and undeclared security requirements more robustly.
+- **Skill Composition** (`src/skill-intelligence/composer.ts`, `src/skill-intelligence/agent.ts`):
+  - Added target-aware composition options and target filtering for MCP/OpenAPI/auth skills.
+  - Treats priority as a tie-breaker instead of pulling unrelated prompt fragments into every generation.
+  - Applies skill conditions as gates and supports `notEquals` / `exists` operators.
+  - Gates feedback initialization behind `SKILL_FEEDBACK_ENABLED=true`.
+- **Skill Registry** (`src/skill-intelligence/registry.ts`):
+  - Parses skill frontmatter with `js-yaml`.
+  - Validates categories, token costs, and condition operators.
+  - Preserves YAML condition arrays for prompt-skill gating.
+- **Runtime Manager** (`src/mcp-server-manager.ts`):
+  - Avoids re-publishing status updates that were already consumed from RabbitMQ while preserving publication for internal status changes.
+- **Tests** (`src/skill-intelligence/__tests__/agent.test.ts`, `src/generator/prompt.dynamic.test.ts`):
+  - Added coverage for YAML frontmatter conditions, endpoint-text profile analysis, target-scoped MCP prompts, and endpoint-text OpenAPI prompts.
+- **Verification**:
+  - Ran `npm run typecheck`; passed.
+  - Ran `npx vitest run src/skill-intelligence/__tests__/agent.test.ts src/generator/prompt.dynamic.test.ts`; passed with 28 tests.
+
 ## [2026-05-09] - MCP Runtime Safety Fixes
 
 - **Fix**: Hardened generated server lifecycle and proxy routing.

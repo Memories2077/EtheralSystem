@@ -1,4 +1,5 @@
 export type SkillSelectionVariant = "control" | "dynamic" | "hybrid";
+export type SkillSelectionTarget = "mcp" | "openapi";
 
 export interface SkillSelectionMetrics {
   initializationDurationMs: number;
@@ -32,11 +33,21 @@ export interface SkillMetadata {
 
 export interface SkillCondition {
   field: string;
-  operator: "equals" | "contains" | "gte" | "lte" | "gt" | "lt" | "regex";
+  operator:
+    | "equals"
+    | "notEquals"
+    | "contains"
+    | "gte"
+    | "lte"
+    | "gt"
+    | "lt"
+    | "regex"
+    | "exists";
   value: unknown;
 }
 
 export interface SpecProfile {
+  source?: "openapi" | "endpoint_text" | "unknown";
   auth: {
     types: string[];
     hasAuth: boolean;
@@ -53,6 +64,11 @@ export interface SpecProfile {
     hasBinaryResponse: boolean;
     contentTypes: string[];
   };
+  features?: {
+    formUrlEncoded: boolean;
+    multipart: boolean;
+    requestBodies: boolean;
+  };
   patterns: {
     pagination: "offset" | "cursor" | "page" | "none";
     rateLimiting: boolean;
@@ -66,6 +82,11 @@ export interface SpecProfile {
   guidance: {
     complexityScore: number;
     recommendedSkills: string[];
+  };
+  confidence?: {
+    auth: number;
+    pagination: number;
+    overall: number;
   };
 }
 
@@ -90,6 +111,10 @@ export interface SkillComposition {
   explanations: Record<string, string>;
   averageConfidence?: number;
   fallbackReason?: string;
+}
+
+export interface SkillCompositionOptions {
+  target?: SkillSelectionTarget;
 }
 
 export interface NormalizedHumanFeedback {

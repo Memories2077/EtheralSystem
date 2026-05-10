@@ -117,6 +117,14 @@ describe('SkillRegistry', () => {
     const skill = registry.getSkill('nonexistent_skill');
     expect(skill).toBeUndefined();
   });
+
+  it('should parse YAML frontmatter conditions', async () => {
+    await registry.initialize();
+    const skill = registry.getSkill('mcp_requirements');
+    expect(skill?.conditions).toEqual([
+      { field: 'auth.hasAuth', operator: 'equals', value: true },
+    ]);
+  });
 });
 
 describe('SpecProfileAnalyzer', () => {
@@ -167,6 +175,18 @@ describe('SpecProfileAnalyzer', () => {
   it('should calculate complexity score', () => {
     const profile = analyzer.analyzeSpec(REDDIT_SPEC);
     expect(profile.guidance.complexityScore).toBeGreaterThan(0);
+  });
+
+  it('should analyze endpoint text with auth and pagination signals', () => {
+    const profile = analyzer.analyzeEndpointDescription(
+      'GET /v1/items supports bearer token auth, cursor pagination with after, and JSON responses.',
+    );
+
+    expect(profile.source).toBe('endpoint_text');
+    expect(profile.auth.hasAuth).toBe(true);
+    expect(profile.auth.types).toContain('http');
+    expect(profile.patterns.pagination).toBe('cursor');
+    expect(profile.confidence?.overall).toBeGreaterThan(0.5);
   });
 });
 
