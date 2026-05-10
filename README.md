@@ -2,39 +2,60 @@
 
 This project focuses on building an AI-driven system that automatically translates RESTful API definitions into a format compatible with MCP Servers. The generated MCP modules are designed for seamless integration with platforms like Claude and other LLM-based environments, enabling scalable deployment and enhanced interoperability for AI applications.
 
-## 🏗️ Architecture: Hybrid Agent Skill System
+## 🏗️ Architecture: Hybrid Prompt and Skill Intelligence System
 
-The platform utilizes a **Hybrid Agent Skill System** to achieve high-precision code generation. Instead of using a single monolithic prompt, the engine dynamically assembles specialized "skills" based on the input context.
+The platform uses a hybrid generation pipeline. The default/static path still uses `SkillRouter` for backward-compatible prompt assembly, while the dynamic path uses `SkillSelectionAgent` to analyze the input, select target-specific prompt skills, and assemble only the fragments needed for the current generation task.
 
 ### 🔄 System Flow
 
 ```mermaid
 graph TD
-    Input[API Documentation / Specification] --> Router{SkillRouter}
+    Input[API Documentation / OpenAPI Specification] --> Entry[src/generator/prompt.ts]
+    Entry --> Variant{Rollout Variant}
 
-    subgraph "Skill Discovery & Assembly"
-    Router -->|Mode: MCP| MCPSkill[MCP Generation Skill]
-    Router -->|Mode: OpenAPI| OpenAPISkill[OpenAPI Analysis Skill]
+    Variant -->|control or flag off| Static[SkillRouter static assembly]
+    Variant -->|dynamic or hybrid| Agent[SkillSelectionAgent]
 
-    MCPSkill --> Fragments[Fragment Discovery]
-    OpenAPISkill --> Fragments
-
-    Fragments --> System[System Logic]
-    Fragments --> Auth{Auth Guard}
-    Fragments --> Schema[Schema/Zod Mappings]
-
-    Auth -->|Auth Detected| Inject[Inject Requirements]
-    Auth -->|No Auth| Isolated[Anti-Contamination]
+    subgraph "Dynamic Skill Intelligence"
+    Agent --> Analyzer[SpecProfileAnalyzer]
+    Analyzer -->|OpenAPI spec| MCPProfile[MCP target profile]
+    Analyzer -->|Endpoint text| OpenAPIProfile[OpenAPI target profile]
+    MCPProfile --> Composer[SkillComposer]
+    OpenAPIProfile --> Composer
+    Registry[SkillRegistry from src/skills/*.md] --> Composer
+    Composer --> TargetFilter[Target-scoped skill filtering]
+    TargetFilter --> Conditions[Condition gates and scoring]
+    Conditions --> Safety[Token budget and confidence fallback]
     end
 
-    System & Inject & Isolated & Schema --> Prompt[Stitched AI Prompt]
-    Prompt --> LLM[GenAI Execution]
-    LLM --> Code[Production-Ready MCP Server]
+    Static --> Prompt[Prompt messages]
+    Safety --> Prompt
+    Prompt --> LLM[LLM generation]
+    LLM -->|Endpoint text input| Spec[OpenAPI YAML]
+    LLM -->|OpenAPI spec input| Code[Production-ready MCP server]
 ```
 
 ### 🧠 Core Components
 
-#### 🛠️ Modular Skill Pipeline (`src/skills/`)
+#### 🛠️ Prompt Entry Point (`src/generator/prompt.ts`)
+
+`prompt.ts` chooses the rollout variant, keeps the static `SkillRouter` path available, and routes dynamic prompt assembly through `SkillSelectionAgent`.
+
+- **MCP generation target**: OpenAPI input is profiled and composed with `target: "mcp"`, so only MCP skills and MCP auth fragments are eligible.
+- **OpenAPI generation target**: Free-form endpoint descriptions are analyzed as endpoint text and composed with `target: "openapi"`, so MCP-only fragments are excluded.
+- **Hybrid safety**: Hybrid mode falls back to the static prompt path when dynamic selection confidence is below the configured threshold.
+
+#### 🧠 Skill Intelligence Layer (`src/skill-intelligence/`)
+
+The dynamic path is implemented as a single in-process agent:
+
+- [`agent.ts`](src/skill-intelligence/agent.ts): coordinates initialization, profile caching, selection metrics, and optional feedback wiring.
+- [`analyzer.ts`](src/skill-intelligence/analyzer.ts): detects whether the input is an OpenAPI document or endpoint text, then extracts auth, pagination, content type, request body, streaming, webhook, filtering, sorting, error, confidence, and complexity signals.
+- [`registry.ts`](src/skill-intelligence/registry.ts): loads Markdown skills from `src/skills/`, parses YAML frontmatter with metadata, and validates categories, token costs, and condition operators.
+- [`composer.ts`](src/skill-intelligence/composer.ts): filters skills by target, applies condition gates, scores relevance, enforces the token budget, and emits confidence-based fallbacks.
+- [`feedback.ts`](src/skill-intelligence/feedback.ts): optionally tracks generation outcomes and human feedback when `SKILL_FEEDBACK_ENABLED=true`.
+
+#### 🧩 Modular Skill Library (`src/skills/`)
 
 All prompt logic is decomposed into reusable Markdown fragments. This allows for:
 
@@ -48,22 +69,31 @@ The system automatically scans input specifications for security schemes (OAuth2
 
 - If **Auth is detected**: The generator injects specialized handlers and parameter injection logic.
 - If **No Auth is found**: The system applies strict isolation prompts to ensure no security vulnerabilities are accidentally introduced.
+- Auth prompts are target-scoped: MCP generation uses `mcp_requirements` / `mcp_anti_contamination`, while OpenAPI generation uses `openapi_requirements` / `openapi_anti_contamination`.
 
 #### 🧩 Skill Directory Structure
 
 ```text
+src/skill-intelligence/
+├── agent.ts       # Dynamic skill selection coordinator
+├── analyzer.ts    # OpenAPI and endpoint-text profile analysis
+├── registry.ts    # Markdown skill registry and frontmatter validation
+├── composer.ts    # Target filtering, scoring, conditions, and token budget
+├── feedback.ts    # Optional learning loop and human-feedback bridge
+└── cache.ts       # Profile cache and hit-rate metrics
+
 src/skills/
-├── auth/           # Security & authentication logic fragments
-├── mcp/            # MCP server architecture & transport patterns
-├── openapi/        # OpenAPI spec analysis & YAML generation
-└── skill-router.ts # The brain that assembles context-aware prompts
+├── auth/           # Target-scoped security and anti-contamination fragments
+├── mcp/            # MCP server architecture, Zod, and request patterns
+├── openapi/        # OpenAPI spec generation prompts
+└── skill-router.ts # Static fallback assembler for control mode
 ```
 
 ---
 
 ## 🧠 Dynamic Skill Selection
 
-Phase 4 adds a production-ready dynamic skill selection layer in [`src/skill-intelligence/agent.ts`](src/skill-intelligence/agent.ts). When enabled, the generator profiles each API spec, scores the skill registry, assembles only relevant prompt fragments, and records lightweight metrics for rollout monitoring.
+The dynamic skill selection layer in [`src/skill-intelligence/agent.ts`](src/skill-intelligence/agent.ts) profiles each input, scores the skill registry, assembles target-specific prompt fragments, and records lightweight metrics for rollout monitoring.
 
 ### Configuration
 
@@ -84,17 +114,28 @@ SKILL_SELECTION_HYBRID_TRAFFIC=0.45
 
 # Hybrid mode falls back to the static prompt when confidence is below this value.
 SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD=0.7
+
+# Optional. Enable MongoDB-backed skill feedback and learning data.
+SKILL_FEEDBACK_ENABLED=true
 ```
 
 ### Rollout variants
 
 - **`control`**: uses the existing static prompt path.
-- **`dynamic`**: uses [`SkillSelectionAgent`](src/skill-intelligence/agent.ts) for spec profiling, skill scoring, and prompt assembly.
+- **`dynamic`**: uses [`SkillSelectionAgent`](src/skill-intelligence/agent.ts) for input profiling, target-scoped skill scoring, and prompt assembly.
 - **`hybrid`**: uses dynamic selection only when confidence is high enough; otherwise it falls back to the static prompt.
+
+### Target isolation
+
+Dynamic selection is explicitly scoped by generation target:
+
+- **`target: "mcp"`**: used when generating a TypeScript MCP server from an OpenAPI spec. The composer allows MCP skills and MCP-prefixed auth skills.
+- **`target: "openapi"`**: used when generating OpenAPI YAML from endpoint text. The composer allows OpenAPI skills and OpenAPI-prefixed auth skills.
+- This prevents OpenAPI prompt fragments from leaking into MCP generation and prevents MCP implementation instructions from leaking into OpenAPI spec generation.
 
 ### Monitoring and safety
 
-The dynamic layer emits [`console.log()`](src/skill-intelligence/agent.ts:121) and [`console.warn()`](src/skill-intelligence/composer.ts:111) events with operational signals such as initialization duration, spec analysis duration, cache hit rate, selected skill count, and selection confidence. The composer also enforces a hard token ceiling and uses safe fallback skills when average confidence is too low.
+The dynamic layer emits logs from [`agent.ts`](src/skill-intelligence/agent.ts) and [`composer.ts`](src/skill-intelligence/composer.ts) with operational signals such as initialization duration, spec analysis duration, cache hit rate, selected skill count, and selection confidence. The composer also enforces a hard token ceiling and uses safe fallback skills when average confidence is too low.
 
 A lightweight skill health dashboard is available through [`src/skill-intelligence/cli.ts`](src/skill-intelligence/cli.ts):
 
@@ -109,6 +150,7 @@ Run the Phase 4 checks with:
 ```bash
 npm run typecheck
 npm run test:phase4
+npx vitest run src/skill-intelligence/__tests__/agent.test.ts src/generator/prompt.dynamic.test.ts
 ```
 
 ---
