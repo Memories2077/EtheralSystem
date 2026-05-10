@@ -11,11 +11,34 @@ The core agentic engine powering the **Gemini InsightLink** ecosystem. This repo
 
 ## 🤖 Multi-Agent Orchestration
 
-Driven by **LangGraph**, the engine uses a specialized multi-agent architecture:
+The canonical LangGraph app is exported from `my_agent/agents/graph.py:app` and
+registered in `langgraph.json`.
 
-- **Supervisor Node**: Canonical orchestration entry point in `my_agent/agents/graph.py`. It routes work to sub-agents, tracks state, and detects completion.
-- **Examiner Agent**: Analyzes API documentation and enriches it with historical or related context from RAG.
-- **Generator Agent**: Sends validated MCP generation requests to mcp-gen, returns the generated configuration, and indexes generated artifacts when available.
+```text
+User request
+  -> supervisor
+  -> tools
+  -> examiner or generator
+  -> supervisor_final
+  -> tools, supervisor, or end
+```
+
+Core runtime nodes:
+
+- **Supervisor Node**: LLM-based router that preserves the original user request in `raw_api_doc`, chooses the next graph tool, tracks `history`, and enforces the `MAX_RETRIES` loop guard.
+- **Tools Node**: Executes the supervisor delegation tools and repairs incomplete tool arguments from explicit state (`raw_api_doc` and `enriched_context`) before routing.
+- **Examiner Agent**: Searches prior MCP artifacts through hierarchical RAG, extracts structured technical context, stores it in `enriched_context`, and emits a generator delegation payload.
+- **Generator Agent**: Builds a state-backed `create_MCPServer` request, calls mcp-gen, fetches generated artifacts, and indexes them back into the vector store when available.
+- **Supervisor Final Node**: Evaluates sub-agent output, fast-paths successful Examiner output directly to Generator, ends on successful Generator output, or loops back to Supervisor when retry is still allowed.
+
+Important state fields:
+
+- `messages`: accumulated LangChain messages.
+- `raw_api_doc`: original API documentation or user request, used as the canonical generation input.
+- `enriched_context`: structured RAG context produced by the Examiner.
+- `history`, `retry_count`, `current_plan`, `is_complete`: routing, retry, and completion controls.
+
+For the detailed edge-by-edge graph description, see `docs/GRAPH_ARCHITECTURE.md`.
 
 ---
 
@@ -48,10 +71,10 @@ Exposes granular internal state updates via the LangGraph SDK. This allows front
 ## 🛠️ Technical Stack
 
 - **Orchestration**: LangGraph, LangChain.
-- **Vector Database**: ChromaDB.
-- **Embeddings**: Ollama-backed embeddings.
-- **LLM Support**: Google Gemini, MetaClaw Proxy, Groq, OpenAI-compatible APIs.
-- **Persistence**: MongoDB-compatible checkpoint/state dependencies where configured.
+- **Vector Database**: ChromaDB with LlamaIndex `HierarchicalNodeParser` and `AutoMergingRetriever`.
+- **Embeddings**: Ollama-backed `qwen3-embedding:0.6b` embeddings.
+- **LLM Support**: MetaClaw proxy, direct Google Gemini, and direct Groq.
+- **Persistence**: MongoDB-backed LlamaIndex docstore for hierarchical RAG metadata where configured.
 - **MCP generation backend**: mcp-gen manager API.
 
 ---
