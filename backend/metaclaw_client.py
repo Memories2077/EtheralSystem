@@ -444,6 +444,7 @@ Requirements from MetaClaw's analysis:
             # Stream LangGraph build - yield chunks directly
             async for sse_chunk in stream_langgraph_build(build_requirements, langgraph_url):
                 yield sse_chunk
+            yield f"data: {json.dumps({'type': 'mcp_build_complete', 'status': 'running', 'message': 'MCP Server built successfully!'})}\n\n"
             yield sse_done()
 
         except Exception as e:

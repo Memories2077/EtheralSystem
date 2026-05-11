@@ -387,7 +387,19 @@ async def get_mcp_metadata(request: McpMetadataRequest):
             session = await exit_stack.enter_async_context(ClientSession(read, write))
             init_result = await asyncio.wait_for(session.initialize(), timeout=llm_config.mcp_initialization_timeout)
             server_name = init_result.serverInfo.name if hasattr(init_result, 'serverInfo') else "Unknown Server"
-            return {"name": server_name, "url": original_url, "status": "connected"}
+
+            # Fetch available tools from the MCP server
+            tools_list = []
+            try:
+                tools_result = await asyncio.wait_for(session.list_tools(), timeout=llm_config.mcp_initialization_timeout)
+                tools_list = [
+                    {"name": t.name, "description": t.description or ""}
+                    for t in tools_result.tools
+                ]
+            except Exception as tool_err:
+                logger.warning(f"Could not fetch tools from MCP server {url}: {tool_err}")
+
+            return {"name": server_name, "url": original_url, "status": "connected", "tools": tools_list}
     except asyncio.TimeoutError as e:
         logger.error(f"Timed out fetching metadata for {url}: {e}", exc_info=True)
         return {
@@ -505,6 +517,7 @@ DO NOT respond with text explanations — just trigger the tool and let the syst
 
         async for sse in stream_langgraph_build(build_requirements, llm_config.langgraph_api_url):
             yield sse
+        yield f"data: {json.dumps({'type': 'mcp_build_complete', 'status': 'running', 'message': 'MCP Server built successfully!'})}\n\n"
 
     except Exception as e:
         err_msg = f"\n\n> [ERROR]: Gemini executor failed: {str(e)}\n\n"
