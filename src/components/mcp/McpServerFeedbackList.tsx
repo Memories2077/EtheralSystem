@@ -3,9 +3,12 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { fetchMcpServers, submitMcpServerFeedback, type McpServerApi } from '@/lib/mcp-server-api';
-import { ThumbsUp, ThumbsDown, RefreshCw, AlertCircle } from 'lucide-react';
+import { fetchMcpServers, submitMcpServerFeedback, fetchMcpClaudeConfig, extractMcpRemoteUrl, type McpServerApi } from '@/lib/mcp-server-api';
+import { ThumbsUp, ThumbsDown, RefreshCw, AlertCircle, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useChatStore } from '@/lib/hooks/use-chat-store';
+import { BACKEND_API } from '@/lib/config';
+import { useToast } from '@/hooks/use-toast';
 
 interface McpServerFeedbackListProps {
   className?: string;
@@ -16,6 +19,9 @@ export function McpServerFeedbackList({ className }: McpServerFeedbackListProps)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = useState<Set<string>>(new Set());
+  const [activating, setActivating] = useState<Set<string>>(new Set());
+  const { settings, setSettings } = useChatStore();
+  const { toast } = useToast();
 
   const loadServers = async () => {
     setLoading(true);
@@ -87,6 +93,70 @@ export function McpServerFeedbackList({ className }: McpServerFeedbackListProps)
     }
   };
 
+  const handleActivate = async (server: McpServerApi) => {
+    if (server.status !== 'running') {
+      toast({
+        title: 'Server Not Ready',
+        description: 'Wait until the generated MCP server is running before activating it.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setActivating(prev => new Set(prev).add(server.serverId));
+    try {
+      const config = await fetchMcpClaudeConfig(server.serverId);
+      const url = extractMcpRemoteUrl(config);
+      if (!url) throw new Error('Generated server config did not include an MCP URL.');
+
+      if (settings.mcpServers.some(s => s.url === url)) {
+        toast({
+          title: 'Already Active',
+          description: 'This generated MCP server is already in your active list.',
+        });
+        return;
+      }
+
+      const metadataResponse = await fetch(BACKEND_API.mcpMetadata(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const metadata = await metadataResponse.json();
+      if (!metadataResponse.ok || metadata.status === 'error') {
+        throw new Error(metadata.detail || 'The generated MCP server could not be initialized.');
+      }
+
+      setSettings({
+        mcpServers: [
+          ...settings.mcpServers,
+          {
+            name: metadata.name || server.serverId,
+            url,
+            serverId: server.serverId,
+            tools: metadata.tools || [],
+          },
+        ],
+      });
+      toast({
+        title: 'MCP Server Activated',
+        description: `${metadata.name || server.serverId} is now available to chat.`,
+      });
+    } catch (err) {
+      toast({
+        title: 'Activation Failed',
+        description: err instanceof Error ? err.message : 'Unable to activate generated MCP server.',
+        variant: 'destructive',
+      });
+    } finally {
+      setActivating(prev => {
+        const next = new Set(prev);
+        next.delete(server.serverId);
+        return next;
+      });
+    }
+  };
+
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString(undefined, {
       month: 'short',
@@ -141,8 +211,8 @@ export function McpServerFeedbackList({ className }: McpServerFeedbackListProps)
   if (servers.length === 0) {
     return (
       <div className={cn("text-center py-8 text-on-surface-variant", className)}>
-        <p className="text-sm">No MCP servers generated yet.</p>
-        <p className="text-xs opacity-70 mt-1">Servers will appear here after creation.</p>
+        <p className="text-sm">No active generated MCP servers.</p>
+        <p className="text-xs opacity-70 mt-1">Running or in-progress servers will appear here.</p>
       </div>
     );
   }
@@ -194,6 +264,21 @@ export function McpServerFeedbackList({ className }: McpServerFeedbackListProps)
 
               {/* Feedback buttons - always visible but subtle */}
               <div className="flex items-center gap-1 flex-shrink-0">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => handleActivate(server)}
+                  disabled={activating.has(server.serverId) || server.status !== 'running'}
+                  className="h-8 px-2 text-xs gap-1.5 opacity-60 hover:opacity-100"
+                  title="Activate generated MCP server"
+                >
+                  {activating.has(server.serverId) ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Link2 className="w-3.5 h-3.5" />
+                  )}
+                </Button>
+
                 <Button
                   size="sm"
                   variant="ghost"

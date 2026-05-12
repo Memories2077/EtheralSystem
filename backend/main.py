@@ -33,8 +33,9 @@ load_dotenv()
 # Import centralized configuration
 from config import config as llm_config
 import database
-from shared import create_mcp_server_tool, stream_langgraph_build, extract_create_mcp_tool_call
+from shared import create_mcp_server_tool, stream_langgraph_build, extract_create_mcp_tool_call, normalize_request_context
 from metaclaw_client import MetaClawClient
+from mcp_server_filtering import ACTIVE_GENERATED_MCP_STATUSES, filter_active_mcp_server_payload
 
 StandardAgent = Runnable[Any, Any]
 AgentLike = Union[StandardAgent, MetaClawClient]
@@ -61,6 +62,12 @@ class ChatRequest(BaseModel):
     model: Optional[str] = "gemini-2.5-flash"
     temperature: Optional[float] = 0.0
     mcpServers: Optional[List[str]] = []
+    sessionId: Optional[str] = None
+    buildRequestId: Optional[str] = None
+    userId: Optional[str] = None
+    workspaceId: Optional[str] = None
+    email: Optional[str] = None
+    memoryScope: Optional[str] = None
 
 class McpMetadataRequest(BaseModel):
     url: str
@@ -363,6 +370,14 @@ async def chat_endpoint(request: ChatRequest):
     try:
         prov = "metaclaw" if llm_config.is_metaclaw_enabled() else (request.provider or "gemini")
         model = llm_config.metaclaw_model if prov == "metaclaw" else (request.model or "gemini-2.5-flash")
+        request_context = normalize_request_context({
+            "sessionId": request.sessionId,
+            "buildRequestId": request.buildRequestId,
+            "userId": request.userId,
+            "workspaceId": request.workspaceId,
+            "email": request.email,
+            "memoryScope": request.memoryScope,
+        })
         
         agent = await get_or_create_agent(prov, model, request.mcpServers, request.temperature or 0.0)
 
@@ -372,7 +387,8 @@ async def chat_endpoint(request: ChatRequest):
                     messages=[{"role": m.role, "content": m.content} for m in request.messages],
                     temperature=request.temperature or 0.0,
                     langgraph_url=llm_config.langgraph_api_url,
-                    mcp_urls=request.mcpServers
+                    mcp_urls=request.mcpServers,
+                    request_context=request_context,
                 ):
                     if "__use_standard_agent__" in sse:
                         # Handoff logic (simplified for brevity)
@@ -480,10 +496,11 @@ async def list_mcp_servers():
         response = await asyncio.to_thread(
             requests.get,
             f"{llm_config.mcp_gen_base_url}/api/mcp/servers",
+            params={"statuses": ",".join(ACTIVE_GENERATED_MCP_STATUSES)},
             timeout=llm_config.default_timeout_ms / 1000,
         )
         response.raise_for_status()
-        return response.json()
+        return filter_active_mcp_server_payload(response.json())
     except requests.RequestException as e:
         logger.error(f"Failed to proxy mcp-gen server list: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail=f"mcp-gen server list unavailable: {e}")
@@ -515,11 +532,31 @@ async def submit_mcp_feedback(server_id: str, request: McpFeedbackRequest):
         raise HTTPException(status_code=502, detail=f"mcp-gen feedback unavailable: {e}")
 
 
+@app.get("/mcp/{server_id}/claude-config")
+async def get_mcp_claude_config(server_id: str):
+    """Proxy mcp-gen's tokenized Claude config for generated-server activation."""
+    try:
+        response = await asyncio.to_thread(
+            requests.get,
+            f"{llm_config.mcp_gen_base_url}/api/mcp/{server_id}/claude-config",
+            timeout=llm_config.default_timeout_ms / 1000,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error(f"Failed to proxy mcp-gen Claude config for {server_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"mcp-gen Claude config unavailable: {e}")
+
+
 # ------------------------------------------------------------------ #
 # Gemini Executor for MCP Build                                        #
 # ------------------------------------------------------------------ #
 
-async def _execute_build_with_gemini(requirements: str, temperature: float) -> AsyncGenerator[str, None]:
+async def _execute_build_with_gemini(
+    requirements: str,
+    temperature: float,
+    request_context: Optional[Dict[str, Any]] = None,
+) -> AsyncGenerator[str, None]:
     """
     Gemini executor: receives requirements from MetaClaw proxy,
     calls create_mcp_server tool, then streams the LangGraph build.
@@ -555,9 +592,8 @@ DO NOT respond with text explanations — just trigger the tool and let the syst
         build_requirements = detected_requirements if detected_requirements is not None else requirements
         logger.info(f"[Gemini Executor] Triggering LangGraph build: {build_requirements[:100]}...")
 
-        async for sse in stream_langgraph_build(build_requirements, llm_config.langgraph_api_url):
+        async for sse in stream_langgraph_build(build_requirements, llm_config.langgraph_api_url, request_context):
             yield sse
-        yield f"data: {json.dumps({'type': 'mcp_build_complete', 'status': 'running', 'message': 'MCP Server built successfully!'})}\n\n"
     except Exception as e:
         err_msg = f"\n\n> [ERROR]: Gemini executor failed: {str(e)}\n\n"
         yield sse_content(err_msg)

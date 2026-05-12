@@ -1,3 +1,34 @@
+## [2026-05-12] MCP Build Context, Structured Completion, and Generated Server Activation
+
+### Overview
+
+Updated the chatbot client/backend handoff so MCP build requests carry stable identity across the full system, MetaClaw memory calls receive explicit session headers, and generated MCP server details are preserved through SSE for frontend activation.
+
+### Changes
+
+#### Backend
+
+- Added request context fields to `/chat`: `sessionId`, `buildRequestId`, `userId`, `workspaceId`, `email`, and `memoryScope`.
+- Added shared request-context helpers in `backend/shared.py` for normalizing context, building MetaClaw headers, parsing LangGraph JSON output, and constructing structured `mcp_build_complete` SSE payloads.
+- Updated MetaClaw routing calls to send `X-Session-Id`, `X-Turn-Type`, `X-Session-Done`, `X-Memory-Scope`, `X-User-Id`, and `X-Workspace-Id`.
+- Updated LangGraph build streaming to pass context into the graph input and emit final server details such as `serverId`, `publicUrl`, `claudeConfig`, and tokenized MCP URL.
+- Added `/mcp/{server_id}/claude-config` proxy endpoint so the UI can activate generated servers through FastAPI.
+
+#### Frontend
+
+- Added stable browser client identity and per-message `buildRequestId` to chat requests.
+- Updated SSE handling to use structured `mcp_build_complete` data instead of a generic success message.
+- Added automatic activation of running generated servers when the backend returns a tokenized MCP URL.
+- Added manual activation from the Generated MCP Servers panel by fetching tokenized Claude config and verifying metadata before adding the server to active MCP tools.
+
+### Verification
+
+- `uv run python -m py_compile backend/main.py backend/metaclaw_client.py backend/shared.py` passed.
+- `npm run typecheck` passed.
+- Attempted backend pytest through the local `venv`, but that interpreter could not start because the Windows Python launcher reported `specified logon session does not exist`.
+
+---
+
 ## [2026-05-08] Docker Runtime Configuration, MetaClaw Proxy, and MCP Feedback Integration
 
 ### Overview

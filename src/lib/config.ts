@@ -25,6 +25,8 @@ export const BACKEND_API = {
   mcpServers: () => `${getBackendUrl()}/mcp/servers`,
   mcpFeedback: (serverId: string) =>
     `${getBackendUrl()}/mcp/${encodeURIComponent(serverId)}/feedback`,
+  mcpClaudeConfig: (serverId: string) =>
+    `${getBackendUrl()}/mcp/${encodeURIComponent(serverId)}/claude-config`,
 };
 
 export interface BackendHealth {

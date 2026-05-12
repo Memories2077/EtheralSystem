@@ -21,6 +21,8 @@ from shared import (
     extract_use_mcp_tool_call,
     stream_langgraph_build,
     normalize_docker_urls_in_dict,
+    normalize_request_context,
+    build_metaclaw_headers,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,14 +205,23 @@ class MetaClawClient:
                 return extracted[:500] if extracted else text[:500]
         return text[:800]
 
-    async def _get_metaclaw_llm(self, temperature: float, session_done: bool = False) -> Any:
+    async def _get_metaclaw_llm(
+        self,
+        temperature: float,
+        session_done: bool = False,
+        request_context: Optional[Dict[str, Any]] = None,
+        turn_type: str = "main",
+    ) -> Any:
         """Initialize MetaClaw LLM with create_mcp_server tool bound"""
         base_url = self.base_url
         if "localhost" in base_url and os.path.exists("/.dockerenv"):
             base_url = base_url.replace("localhost", "host.docker.internal")
 
-        # Prepare custom headers for session_done (MetaClaw-specific, not standard OpenAI API)
-        headers = {"X-Session-Done": "true"} if session_done else None
+        headers = build_metaclaw_headers(
+            request_context,
+            turn_type=turn_type,
+            session_done=session_done,
+        )
 
         logger.info(f"Initializing MetaClaw LLM: model={self.model}, base_url={base_url}")
 
@@ -286,12 +297,14 @@ class MetaClawClient:
         messages: list,
         temperature: float,
         langgraph_url: str,
-        mcp_urls: Optional[List[str]] = None
+        mcp_urls: Optional[List[str]] = None,
+        request_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Process chat request through MetaClaw with two-stage handoff.
         MetaClaw acts as a pure Intent Router.
         """
+        request_context = normalize_request_context(request_context)
         # Prepare MetaClaw messages
         last_turn_index = len(messages) - 1
         
@@ -322,7 +335,12 @@ LANGUAGE: Always respond in the same language as the user.
 
         try:
             # Stage 1: Invoke MetaClaw with session_done=True to trigger memory ingestion
-            metaclaw_llm = await self._get_metaclaw_llm(temperature, session_done=True)
+            metaclaw_llm = await self._get_metaclaw_llm(
+                temperature,
+                session_done=True,
+                request_context=request_context,
+                turn_type="main",
+            )
             metaclaw_response = await metaclaw_llm.ainvoke(metaclaw_msgs)
 
             raw_content = getattr(cast(Any, metaclaw_response), "content", None)
@@ -340,7 +358,14 @@ LANGUAGE: Always respond in the same language as the user.
                 logger.info(f"[MetaClaw] Tool intent detected: {intent['type']}")
                 if intent["type"] == "create_mcp_server":
                     logger.info(f"[MetaClaw] Requirements: {intent.get('requirements', '')[:200]}...")
-                    async for sse in self._execute_with_gemini(intent, messages, content_text, temperature, langgraph_url):
+                    async for sse in self._execute_with_gemini(
+                        intent,
+                        messages,
+                        content_text,
+                        temperature,
+                        langgraph_url,
+                        request_context,
+                    ):
                         yield sse
                 elif intent["type"] == "use_mcp_tools":
                     logger.info("[MetaClaw] Signaling main to use standard agent with MCP tools.")
@@ -397,7 +422,8 @@ LANGUAGE: Always respond in the same language the user is using. If the user wri
         original_messages: list,
         metaclaw_context: str,
         temperature: float,
-        langgraph_url: str
+        langgraph_url: str,
+        request_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Hands off to Gemini for tool execution.
@@ -453,9 +479,8 @@ Requirements from MetaClaw's analysis:
                 build_requirements = requirements
 
             # Stream LangGraph build - yield chunks directly
-            async for sse_chunk in stream_langgraph_build(build_requirements, langgraph_url):
+            async for sse_chunk in stream_langgraph_build(build_requirements, langgraph_url, request_context):
                 yield sse_chunk
-            yield f"data: {json.dumps({'type': 'mcp_build_complete', 'status': 'running', 'message': 'MCP Server built successfully!'})}\n\n"
             yield sse_done()
 
         except Exception as e:
