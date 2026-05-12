@@ -1,5 +1,26 @@
 # Project History Log
 
+## [2026-05-12] - Idempotent MCP Create and MetaClaw Context Propagation
+
+- **Create Idempotency** (`src/mcp-server-manager.ts`):
+  - Added `buildRequestId` support and an in-memory/database lookup path so repeated create calls for the same build request return the existing pending/running server instead of allocating a new `serverId`.
+  - Added a sparse MongoDB index for `buildRequestId`.
+  - Cleans idempotency index entries when builds enter terminal `error` or `deleted` states.
+- **Safer Ready Timeout Handling** (`src/mcp-server-manager.ts`):
+  - Changed create wait timeout behavior from terminal `error`/504 to `202` with the current build status, so containers that later call `/ready` are not mislabeled as failed.
+  - Preserves tokenized `claudeConfig`, `publicUrl`, `serverId`, and `buildRequestId` in create responses.
+- **Port Allocation Guard** (`src/mcp-server-manager.ts`):
+  - Replaced unbounded port scanning with a configurable `MCP_PORT_SCAN_LIMIT` range and a clear failure when no port is available.
+- **MetaClaw Provider Path** (`src/utils/genai.ts`, `src/utils/config.ts`, `src/generator/index.ts`):
+  - Allows `METACLAW_ENABLED=true` to be the selected provider without requiring Gemini/Groq keys.
+  - Sends MetaClaw session, turn type, memory scope, user, and workspace headers when context is available.
+  - Passes stable request IDs into OpenAPI and MCP generation LLM calls.
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test -- --run src/skill-intelligence/__tests__/phase3.test.ts` passed with 16 tests.
+
 ## [2026-05-10] - Target-Scoped Dynamic Skill Selection Fixes
 
 - **Fix**: Tightened dynamic prompt assembly so MCP generation and OpenAPI generation select only target-appropriate skill fragments.

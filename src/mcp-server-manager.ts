@@ -8,9 +8,9 @@ import path from "path";
 import yaml from "js-yaml";
 import { randomBytes } from "crypto";
 import { createServer } from "net";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { EventEmitter } from "events";
-import { MongoClient, Db, Collection } from "mongodb";
+import { MongoClient, Db, Collection, type Filter } from "mongodb";
 import { writeFileSafe, remove, exists } from "./utils/fs.ts";
 import { confirm } from "./generator/validator.ts";
 import { generateOpenAPISpec } from "./generator/index.ts";
@@ -112,6 +112,10 @@ interface ServerLogEntry {
   inputContent: string;
   action: "created" | "error" | "deleted" | "started" | "stopped";
   ragContext?: string;
+  buildRequestId?: string;
+  sessionId?: string;
+  workspaceId?: string;
+  memoryScope?: string;
   // Feedback fields
   likeCount: number;
   dislikeCount: number;
@@ -126,6 +130,17 @@ interface FeedbackEntry {
   timestamp: Date;
 }
 
+const SERVER_STATUSES = [
+  "created",
+  "error",
+  "deleted",
+  "started",
+  "stopped",
+  "running",
+  "building",
+] as const;
+const VALID_SERVER_STATUSES = new Set<string>(SERVER_STATUSES);
+
 interface PersistedData {
   jwtSecret: string;
   status: boolean;
@@ -135,7 +150,7 @@ interface PersistedData {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-class MCPServerManager {
+export class MCPServerManager {
   private docker: Docker;
   private servers: Map<string, ServerLogEntry> = new Map();
   private app: express.Application;
@@ -143,6 +158,7 @@ class MCPServerManager {
   private basePort: number = 4000;
   private expressPort: number = 8080;
   private usedPorts: Set<number> = new Set();
+  private buildRequestIndex: Map<string, string> = new Map();
   private defaultDockerfilePath: string;
   private persistenceFilePath: string;
   private events: EventEmitter;
@@ -335,6 +351,11 @@ class MCPServerManager {
       // Update server status
       server.status = status;
       server.updatedAt = new Date();
+      if (status === "error" || status === "deleted") {
+        if (server.buildRequestId) {
+          this.buildRequestIndex.delete(server.buildRequestId);
+        }
+      }
 
       if (containerId) {
         server.containerId = containerId;
@@ -447,6 +468,10 @@ class MCPServerManager {
 
       // Create indexes for better query performance
       await this.logsCollection.createIndex({ serverId: 1 });
+      await this.logsCollection.createIndex(
+        { buildRequestId: 1 },
+        { sparse: true },
+      );
       await this.logsCollection.createIndex({ createdAt: -1 });
       await this.logsCollection.createIndex({ status: 1, updatedAt: -1 }); // Optimize stats queries
 
@@ -835,6 +860,114 @@ class MCPServerManager {
     return server;
   }
 
+  private isReusableCreateStatus(status?: string): boolean {
+    return Boolean(
+      status &&
+        !["error", "deleted"].includes(String(status).toLowerCase()),
+    );
+  }
+
+  private createResponsePayload(server: ServerLogEntry, message?: string) {
+    return {
+      serverId: server.serverId,
+      publicUrl: server.publicUrl,
+      claudeConfig: this.generateClaudeConfig(server.serverId, server),
+      status: server.status,
+      buildRequestId: server.buildRequestId,
+      message:
+        message ||
+        (server.status === "running"
+          ? "Server created and running successfully"
+          : "Server build is still in progress"),
+    };
+  }
+
+  private async findServerByBuildRequestId(
+    buildRequestId: string,
+  ): Promise<ServerLogEntry | null> {
+    if (!buildRequestId) return null;
+
+    const indexedServerId = this.buildRequestIndex.get(buildRequestId);
+    if (indexedServerId) {
+      const indexedServer = this.servers.get(indexedServerId);
+      if (indexedServer) {
+        return indexedServer;
+      }
+    }
+
+    for (const server of this.servers.values()) {
+      if (server.buildRequestId === buildRequestId) {
+        return server;
+      }
+    }
+
+    if (!this.logsCollection) return null;
+
+    const persisted = await this.logsCollection.findOne({ buildRequestId });
+    if (!persisted) return null;
+
+    const server = persisted as ServerLogEntry;
+    this.servers.set(server.serverId, server);
+    this.buildRequestIndex.set(buildRequestId, server.serverId);
+    if (server.hostPort) {
+      this.usedPorts.add(server.hostPort);
+    }
+    return server;
+  }
+
+  private async findServerByIdentifier(
+    identifier: string,
+  ): Promise<ServerLogEntry | null> {
+    const normalizedIdentifier = String(identifier || "").trim();
+    if (!normalizedIdentifier) return null;
+
+    const byServerId = await this.ensureServerLoaded(normalizedIdentifier);
+    if (byServerId) {
+      return byServerId;
+    }
+
+    return this.findServerByBuildRequestId(normalizedIdentifier);
+  }
+
+  private async findReusableBuild(
+    buildRequestId: string,
+  ): Promise<ServerLogEntry | null> {
+    if (!buildRequestId) return null;
+
+    const indexedServerId = this.buildRequestIndex.get(buildRequestId);
+    if (indexedServerId) {
+      const indexedServer = this.servers.get(indexedServerId);
+      if (indexedServer && this.isReusableCreateStatus(indexedServer.status)) {
+        return indexedServer;
+      }
+    }
+
+    for (const server of this.servers.values()) {
+      if (
+        server.buildRequestId === buildRequestId &&
+        this.isReusableCreateStatus(server.status)
+      ) {
+        return server;
+      }
+    }
+
+    if (!this.logsCollection) return null;
+
+    const persisted = await this.logsCollection.findOne({
+      buildRequestId,
+      status: { $nin: ["error", "deleted"] },
+    });
+    if (!persisted) return null;
+
+    const server = persisted as ServerLogEntry;
+    this.servers.set(server.serverId, server);
+    this.buildRequestIndex.set(buildRequestId, server.serverId);
+    if (server.hostPort) {
+      this.usedPorts.add(server.hostPort);
+    }
+    return server;
+  }
+
   private setupRoutes() {
     // Enable CORS for configured origins (Docker-friendly configuration).
     // Set CORS_ORIGINS as a comma-separated list, for example: "http://localhost:9002,http://frontend:3000".
@@ -872,8 +1005,21 @@ class MCPServerManager {
 
     // API to create a new MCP server.
     this.app.post("/api/mcp/create", async (req, res) => {
+      let idempotencyKey = "";
+      let allocatedServerId = "";
       try {
-        const { request, name, dockerImage, userId, email, rag_context } =
+        const {
+          request,
+          name,
+          dockerImage,
+          userId,
+          email,
+          rag_context,
+          buildRequestId,
+          sessionId,
+          workspaceId,
+          memoryScope,
+        } =
           req.body;
 
         // ✅ Validate required fields
@@ -885,7 +1031,61 @@ class MCPServerManager {
           );
         }
 
+        idempotencyKey =
+          String(
+            buildRequestId ||
+              req.header("Idempotency-Key") ||
+              req.header("X-Idempotency-Key") ||
+              "",
+          ).trim();
+
+        const existingBuild = await this.findReusableBuild(idempotencyKey);
+        if (existingBuild) {
+          const statusCode = existingBuild.status === "running" ? 200 : 202;
+          return res
+            .status(statusCode)
+            .json(
+              this.createResponsePayload(
+                existingBuild,
+                "Existing MCP server build returned for this idempotency key",
+              ),
+            );
+        }
+
+        const pendingServerId = idempotencyKey
+          ? this.buildRequestIndex.get(idempotencyKey)
+          : "";
+        if (pendingServerId) {
+          for (let attempt = 0; attempt < 50; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            const pendingBuild = await this.findReusableBuild(idempotencyKey);
+            if (pendingBuild) {
+              const statusCode = pendingBuild.status === "running" ? 200 : 202;
+              return res
+                .status(statusCode)
+                .json(
+                  this.createResponsePayload(
+                    pendingBuild,
+                    "Existing MCP server build returned for this idempotency key",
+                  ),
+                );
+            }
+          }
+
+          return res.status(202).json({
+            serverId: pendingServerId,
+            status: "building",
+            buildRequestId: idempotencyKey,
+            claudeConfig: {},
+            message: "Existing MCP server build is still allocating resources",
+          });
+        }
+
         const serverId = randomUUID();
+        allocatedServerId = serverId;
+        if (idempotencyKey) {
+          this.buildRequestIndex.set(idempotencyKey, serverId);
+        }
         const hostPort = await this.getAvailablePort();
 
         const now = Math.floor(Date.now() / 1000);
@@ -922,6 +1122,10 @@ class MCPServerManager {
           inputContent: request,
           action: "created",
           ragContext: rag_context,
+          buildRequestId: idempotencyKey || undefined,
+          sessionId: sessionId ? String(sessionId) : undefined,
+          workspaceId: workspaceId ? String(workspaceId) : undefined,
+          memoryScope: memoryScope ? String(memoryScope) : undefined,
           likeCount: 0,
           dislikeCount: 0,
           feedbacks: [],
@@ -1044,6 +1248,7 @@ class MCPServerManager {
                 retryCount,
                 lastError,
                 rag_context,
+                idempotencyKey || serverId,
               );
 
               // Validate the generated spec
@@ -1075,6 +1280,7 @@ class MCPServerManager {
             // Clean up allocated resources
             this.servers.delete(serverId);
             this.usedPorts.delete(hostPort);
+            if (idempotencyKey) this.buildRequestIndex.delete(idempotencyKey);
             await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
 
             return this.sendError(
@@ -1096,6 +1302,7 @@ class MCPServerManager {
             console.log("❌ Validation failed for direct input");
             this.servers.delete(serverId);
             this.usedPorts.delete(hostPort);
+            if (idempotencyKey) this.buildRequestIndex.delete(idempotencyKey);
             await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
 
             return this.sendError(
@@ -1141,14 +1348,14 @@ class MCPServerManager {
 
           if (finalStatus === "running") {
             const updatedServer = this.servers.get(serverId) || serverConfig;
-            res.json({
-              serverId: serverId,
-              publicUrl: updatedServer.publicUrl,
-              claudeConfig: this.generateClaudeConfig(serverId, updatedServer),
-              status: "running",
-              message: "Server created and running successfully",
-            });
+            res.json(
+              this.createResponsePayload(
+                updatedServer,
+                "Server created and running successfully",
+              ),
+            );
           } else {
+            if (idempotencyKey) this.buildRequestIndex.delete(idempotencyKey);
             res.status(500).json({
               error: "Server encountered an error during startup",
               serverId: serverId,
@@ -1157,22 +1364,28 @@ class MCPServerManager {
           }
         } catch (waitError: any) {
           console.error(`Error waiting for server ${serverId}:`, waitError);
-          serverConfig.status = "error";
           serverConfig.buildLogs = [
             ...(serverConfig.buildLogs || []),
-            `Error: ${waitError instanceof Error ? waitError.message : String(waitError)}`,
+            `Warning: ${waitError instanceof Error ? waitError.message : String(waitError)}`,
           ];
-          await this.SaveToDB(serverConfig, "error");
+          serverConfig.updatedAt = new Date();
+          await this.SaveToDB(serverConfig, "updated");
 
-          this.sendError(
-            res,
-            504,
-            "Timeout waiting for server to be ready",
-            waitError,
-          );
+          const updatedServer = this.servers.get(serverId) || serverConfig;
+          res
+            .status(202)
+            .json(
+              this.createResponsePayload(
+                updatedServer,
+                "Server build is still in progress; poll status or wait for ready notification",
+              ),
+            );
         }
       } catch (error) {
         console.error("Error creating MCP server:", error);
+        if (idempotencyKey && allocatedServerId) {
+          this.buildRequestIndex.delete(idempotencyKey);
+        }
         this.sendError(res, 500, "Failed to create MCP server", error);
       }
     });
@@ -1184,7 +1397,33 @@ class MCPServerManager {
           return this.sendError(res, 503, "Database not available");
         }
 
-        const serverList = await this.logsCollection.find({}).toArray();
+        const rawStatuses = String(req.query.statuses || "").trim();
+        const requestedStatuses = rawStatuses
+          ? rawStatuses
+              .split(",")
+              .map((status) => status.trim().toLowerCase())
+              .filter(Boolean)
+          : [];
+        const invalidStatuses = requestedStatuses.filter(
+          (status) => !VALID_SERVER_STATUSES.has(status),
+        );
+        if (invalidStatuses.length > 0) {
+          return this.sendError(
+            res,
+            400,
+            `Invalid server status filter: ${invalidStatuses.join(", ")}`,
+          );
+        }
+
+        const query: Filter<ServerLogEntry> =
+          requestedStatuses.length > 0
+            ? {
+                status: {
+                  $in: requestedStatuses as ServerLogEntry["status"][],
+                },
+              }
+            : {};
+        const serverList = await this.logsCollection.find(query).toArray();
 
         // Sanitize: remove sensitive fields and large/unnecessary data
         const sanitizedServers = serverList.map((server) => {
@@ -1221,6 +1460,42 @@ class MCPServerManager {
       } catch (error) {
         console.error("Error fetching server list:", error);
         this.sendError(res, 500, "Failed to fetch server list");
+      }
+    });
+
+    // API to get current server/build status by serverId or buildRequestId.
+    this.app.get("/api/mcp/:identifier/status", async (req, res) => {
+      try {
+        const { identifier } = req.params;
+        const server = await this.findServerByIdentifier(identifier);
+
+        if (!server) {
+          const pendingServerId = this.buildRequestIndex.get(
+            String(identifier || "").trim(),
+          );
+          if (pendingServerId) {
+            return res.status(202).json({
+              serverId: pendingServerId,
+              status: "building",
+              buildRequestId: identifier,
+              claudeConfig: {},
+              message: "Server build is still allocating resources",
+            });
+          }
+          return this.sendError(res, 404, "Server or build request not found");
+        }
+
+        res.json(
+          this.createResponsePayload(
+            server,
+            server.status === "running"
+              ? "Server is running"
+              : "Server build is still in progress",
+          ),
+        );
+      } catch (error) {
+        console.error("Error fetching server status:", error);
+        this.sendError(res, 500, "Failed to fetch server status");
       }
     });
 
@@ -1458,7 +1733,11 @@ class MCPServerManager {
           status: "running",
         };
 
-        await this.processStatusUpdate(message);
+        if (this.messageQueue.connected) {
+          await this.messageQueue.publishStatusUpdate(message);
+        } else {
+          await this.processStatusUpdate(message);
+        }
 
         res.json({ success: true, message: "Status updated to running" });
       } catch (error) {
@@ -1632,6 +1911,9 @@ class MCPServerManager {
           `JWT_TOKEN=${config.token}`,
           `MANAGER_URL=${process.env.MANAGER_URL || "http://docker-manager:8080"}`,
           `RAG_CONTEXT=${config.ragContext || ""}`,
+          `DYNAMIC_SKILL_SELECTION=${process.env.DYNAMIC_SKILL_SELECTION || ""}`,
+          `SKILL_SELECTION_VARIANT=${process.env.SKILL_SELECTION_VARIANT || ""}`,
+          `SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD=${process.env.SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD || ""}`,
         ],
         NetworkingConfig: {
           EndpointsConfig: {
@@ -1762,8 +2044,10 @@ class MCPServerManager {
 
   private async getAvailablePort(): Promise<number> {
     let port = this.basePort;
+    const scanLimit = Number(process.env.MCP_PORT_SCAN_LIMIT || 1000);
+    const maxPort = this.basePort + Math.max(1, scanLimit);
 
-    while (true) {
+    while (port < maxPort) {
       // Skip Express server port
       if (port === this.expressPort) {
         port++;
@@ -1784,6 +2068,10 @@ class MCPServerManager {
 
       port++;
     }
+
+    throw new Error(
+      `No available port found in range ${this.basePort}-${maxPort - 1}`,
+    );
   }
 
   private generateClaudeConfig(serverId: string, config: ServerLogEntry) {
@@ -1953,19 +2241,24 @@ class MCPServerManager {
   }
 }
 
-const manager = new MCPServerManager("./");
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  const manager = new MCPServerManager("./");
 
-// Handle process termination
-process.on("SIGINT", async () => {
-  console.log("Received SIGINT, shutting down gracefully...");
-  await manager.gracefulShutdown();
-  process.exit(0);
-});
+  // Handle process termination
+  process.on("SIGINT", async () => {
+    console.log("Received SIGINT, shutting down gracefully...");
+    await manager.gracefulShutdown();
+    process.exit(0);
+  });
 
-process.on("SIGTERM", async () => {
-  console.log("Received SIGTERM, shutting down gracefully...");
-  await manager.gracefulShutdown();
-  process.exit(0);
-});
+  process.on("SIGTERM", async () => {
+    console.log("Received SIGTERM, shutting down gracefully...");
+    await manager.gracefulShutdown();
+    process.exit(0);
+  });
 
-manager.start(8080);
+  manager.start(8080);
+}

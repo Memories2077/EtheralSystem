@@ -26,6 +26,25 @@ export interface ChatMessage {
  * preventing knowledge contamination for APIs without auth.
  */
 export function detectAuthInInput(input: string): boolean {
+  const text = input.toLowerCase();
+
+  // Check for negation context first — if auth is explicitly stated as NOT required, skip detection
+  const negationPatterns = [
+    // Auth section header stating it's public/none/not required (e.g., "Authentication: Public (No API Key)")
+    /authentication\s*[:：]\s*(none|public|not\s+required|no\s+auth|no\s+key|unauthenticated|không)/i,
+    // Explicit statements that the API is public or doesn't need auth
+    /\b(no\s+authentication|no\s+authorization|no\s+auth\s+needed|not\s+publicly\s+accessible)\b/i,
+    /is\s+(completely\s+)?public\s+(with\s+)?no\s+authentication/i,
+    /không\s+(yêu\s+cầu|cần)\s*(api\s*key|auth)/i,
+    /all\s+endpoints\s+are\s+public/i,
+    /no\s+(authentication|authorization|api\s*key|bearer|token)\s+(required|needed)/i,
+    /does\s+not\s+(require|need)\s+(any\s+)?(authentication|authorization|api\s*key)/i,
+    /do(es)?n'?t\s+(require|need)\s+(any\s+)?(authentication|authorization|api\s*key)/i,
+  ];
+  if (negationPatterns.some((pattern) => pattern.test(text))) {
+    return false;
+  }
+
   const authKeywords = [
     /\bapi[_-]?key\b/i,
     /\bbearer\b/i,

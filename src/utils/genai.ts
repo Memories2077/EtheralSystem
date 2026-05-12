@@ -38,6 +38,12 @@ export interface GenAICompletionParams {
   maxTokens?: number;
   temperature?: number;
   sessionDone?: boolean; // Add sessionDone flag for MetaClaw memory ingestion
+  sessionId?: string;
+  buildRequestId?: string;
+  userId?: string;
+  workspaceId?: string;
+  memoryScope?: string;
+  turnType?: "main" | "side";
 }
 
 // Convert GenAIChatMessage to LangChain message format
@@ -59,22 +65,35 @@ export async function genaiCompletion({
   temperature,
   maxTokens,
   sessionDone = true,
+  sessionId,
+  buildRequestId,
+  userId,
+  workspaceId,
+  memoryScope,
+  turnType = "side",
 }: GenAICompletionParams): Promise<string> {
   // 1. Auto-detect available provider to determine which model to use
-  let selectedProvider: "gemini" | "groq";
+  let selectedProvider: "gemini" | "groq" | "metaclaw";
 
-  if (geminiConfig.apiKey) {
+  if (metaclawConfig.enabled) {
+    selectedProvider = "metaclaw";
+  } else if (geminiConfig.apiKey) {
     selectedProvider = "gemini";
   } else if (groqConfig.apiKey) {
     selectedProvider = "groq";
   } else {
     throw new Error(
-      "No API keys found for Gemini or Groq. Please check your .env file.",
+      "No API keys found for Gemini or Groq, and MetaClaw is disabled. Please check your .env file.",
     );
   }
 
   const isGroq = selectedProvider === "groq";
-  const currentConfig = isGroq ? groqConfig : geminiConfig;
+  const currentConfig =
+    selectedProvider === "metaclaw"
+      ? metaclawConfig
+      : isGroq
+        ? groqConfig
+        : geminiConfig;
   const selectedModel = currentConfig.model;
 
   try {
@@ -82,13 +101,31 @@ export async function genaiCompletion({
     let llm;
     if (metaclawConfig.enabled) {
       console.log("[GenAI] 🧠 Routing through MetaClaw proxy");
+      const resolvedSessionId =
+        (sessionId || buildRequestId || process.env.METACLAW_SESSION_ID || "").trim();
+      const resolvedUserId = (userId || process.env.METACLAW_USER_ID || "").trim();
+      const resolvedWorkspaceId = (workspaceId || process.env.METACLAW_WORKSPACE_ID || "").trim();
+      const resolvedMemoryScope =
+        (memoryScope ||
+          process.env.METACLAW_MEMORY_SCOPE ||
+          (resolvedUserId && resolvedWorkspaceId
+            ? `user:${resolvedUserId}|workspace:${resolvedWorkspaceId}`
+            : "")
+        ).trim();
+      const defaultHeaders: Record<string, string> = {
+        "X-Turn-Type": turnType,
+        "X-Session-Done": sessionDone ? "true" : "false",
+      };
+      if (resolvedSessionId) defaultHeaders["X-Session-Id"] = resolvedSessionId;
+      if (resolvedMemoryScope) defaultHeaders["X-Memory-Scope"] = resolvedMemoryScope;
+      if (resolvedUserId) defaultHeaders["X-User-Id"] = resolvedUserId;
+      if (resolvedWorkspaceId) defaultHeaders["X-Workspace-Id"] = resolvedWorkspaceId;
+
       llm = new ChatOpenAI({
         configuration: {
           baseURL: metaclawConfig.baseUrl,
           // X-Session-Done must be an HTTP header, NOT in modelKwargs (request body)
-          defaultHeaders: {
-            "X-Session-Done": sessionDone ? "true" : "false",
-          },
+          defaultHeaders,
         },
         apiKey: metaclawConfig.apiKey,
         model: selectedModel,

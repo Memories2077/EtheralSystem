@@ -251,6 +251,10 @@ export async function generateOpenAPISpec(
     );
     const aiCode = await genaiCompletion({
       messages,
+      sessionId: finalRequestId,
+      buildRequestId: finalRequestId,
+      sessionDone: false,
+      turnType: "side",
     });
 
     // Estimate token count from response
@@ -552,6 +556,10 @@ export async function generateMCP(
     );
     const aiCode = await genaiCompletion({
       messages,
+      sessionId: finalRequestId,
+      buildRequestId: finalRequestId,
+      sessionDone: false,
+      turnType: "side",
     });
 
     console.log("🔧 Stitching code together...");
