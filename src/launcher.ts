@@ -46,6 +46,7 @@ async function notifyManagerReady(serverId: string) {
       Authorization: `Bearer ${jwtToken}`,
       "Content-Type": "application/json",
     },
+    body: JSON.stringify({ serverId, status: "running" }),
   });
 
   if (!response.ok) {

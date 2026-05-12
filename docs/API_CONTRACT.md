@@ -77,10 +77,20 @@ curl -X POST http://localhost:8080/api/mcp/create \
 
 Lists persisted server records for UI and administration use. Sensitive fields are sanitized before response.
 
+Optional query:
+
+| Query      | Type     | Notes                                                                                          |
+| ---------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `statuses` | `string` | Comma-separated lifecycle statuses to include, for example `running,building,created,started`. |
+
 ### Example
 
 ```bash
 curl http://localhost:8080/api/mcp/servers
+```
+
+```bash
+curl "http://localhost:8080/api/mcp/servers?statuses=running,building,created,started"
 ```
 
 ### Success response
@@ -106,6 +116,11 @@ curl http://localhost:8080/api/mcp/servers
 ### Sanitization guarantees
 
 The response removes token, container ID, host port, container port, Docker image, raw input content, build logs, RAG context, MongoDB `_id`, and feedback `userId` values.
+
+### Failure responses
+
+- `400`: one or more `statuses` values are not recognized lifecycle states.
+- `503`: database unavailable.
 
 ## `POST /api/mcp/{serverId}/feedback`
 
@@ -220,7 +235,9 @@ Generated containers call this endpoint after the generated MCP server is ready 
 
 ```bash
 curl -X POST http://localhost:8080/api/mcp/server-id/ready \
-  -H "Authorization: Bearer jwt-token"
+  -H "Authorization: Bearer jwt-token" \
+  -H "Content-Type: application/json" \
+  -d '{"serverId":"server-id","status":"running"}'
 ```
 
 ### Success response
