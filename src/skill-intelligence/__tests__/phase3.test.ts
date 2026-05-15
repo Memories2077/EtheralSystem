@@ -508,6 +508,30 @@ describe("Phase 3: FeedbackTracker - Learning Loop", () => {
       ).toBeCloseTo(0.03);
     });
 
+    it("should use buildRequestId fallback when feedback comes from chatbot server logs", async () => {
+      await tracker.recordOutcome(
+        createOutcome({
+          requestId: "build-request-1",
+          buildRequestId: "build-request-1",
+          serverId: undefined,
+        }),
+      );
+
+      const summary = await tracker.importHumanFeedbackFromLogs([
+        {
+          serverId: "generated-server-1",
+          buildRequestId: "build-request-1",
+          feedbacks: [{ feedbackId: "fb-build-id", type: "like" }],
+        } as any,
+      ]);
+
+      expect(summary.matchedOutcomes).toBe(1);
+      expect(summary.importedFeedbacks).toBe(1);
+      expect(
+        tracker.getEffectiveness("auth_requirements")?.humanFeedbackScore,
+      ).toBeCloseTo(0.03);
+    });
+
     it("should ignore logs that cannot be linked to a skill feedback outcome", async () => {
       const summary = await tracker.importHumanFeedbackFromLogs([
         {

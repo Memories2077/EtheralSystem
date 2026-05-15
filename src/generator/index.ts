@@ -117,6 +117,8 @@ function analyzeCodeQuality(code: string, specProfile?: SpecProfile, skillIds?: 
  */
 async function recordGenerationFeedback(
   requestId: string,
+  serverId: string | undefined,
+  buildRequestId: string | undefined,
   specProfile: SpecProfile,
   selectedSkillIds: string[],
   skillConfidences: Record<string, number>,
@@ -142,6 +144,8 @@ async function recordGenerationFeedback(
 
     const outcome: GenerationOutcome = {
       requestId,
+      buildRequestId,
+      serverId,
       timestamp: new Date(),
       specProfile,
       selectedSkillIds,
@@ -163,7 +167,7 @@ async function recordGenerationFeedback(
       manualFixesRequired: [],
     };
 
-    agent.recordFeedback(outcome);
+    await agent.recordFeedback(outcome);
     console.log(`📊 Recorded feedback for request ${requestId} (validation: ${validationPassed ? 'PASS' : 'FAIL'})`);
   } catch (error) {
     console.warn('⚠️ Failed to record feedback:', error);
@@ -427,6 +431,8 @@ export async function generateOpenAPISpec(
     try {
       await recordGenerationFeedback(
         finalRequestId,
+        name,
+        finalRequestId,
         specProfileInternal || createMinimalSpecProfile(),
         compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
         skillConfidencesInternal || {},
@@ -449,6 +455,8 @@ export async function generateOpenAPISpec(
     const endTime = Date.now();
     try {
       await recordGenerationFeedback(
+        finalRequestId,
+        name,
         finalRequestId,
         specProfileInternal || createMinimalSpecProfile(),
         compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
@@ -646,6 +654,8 @@ export async function generateMCP(
     try {
       await recordGenerationFeedback(
         finalRequestId,
+        name,
+        finalRequestId,
         specProfileInternal || createMinimalSpecProfile(),
         compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
         skillConfidencesInternal || {},
@@ -671,6 +681,8 @@ export async function generateMCP(
     const endTime = Date.now();
     try {
       await recordGenerationFeedback(
+        finalRequestId,
+        name,
         finalRequestId,
         specProfileInternal || createMinimalSpecProfile(),
         compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],

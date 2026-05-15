@@ -1,5 +1,25 @@
 # Project History Log
 
+## [2026-05-15] - Human Feedback Learning Bridge Completion
+
+- **Feedback Identity Linking** (`src/generator/index.ts`, `src/skill-intelligence/types.ts`):
+  - Persisted `serverId` and `buildRequestId` on generation outcomes so chatbot feedback can be linked back to the selected prompt skills.
+  - Awaited feedback recording to avoid losing async persistence before later imports.
+- **Human Feedback Import** (`src/skill-intelligence/feedback.ts`, `src/skill-intelligence/agent.ts`):
+  - Added `buildRequestId` lookup support alongside `requestId` and `serverId`.
+  - Added MongoDB indexes for `buildRequestId` on feedback and log collections.
+  - Exposed typed log import through `SkillSelectionAgent.importHumanFeedbackFromLogs()`.
+- **Runtime Integration** (`src/mcp-server-manager.ts`, `test/test-generation.ts`):
+  - Automatically imports human feedback into `skill_feedback` after `/api/mcp/:serverId/feedback` records a like/dislike.
+  - Propagates `BUILD_REQUEST_ID`, `MONGO_URI`, and `SKILL_FEEDBACK_ENABLED` into generated containers so MCP generation outcomes can persist learning data.
+- **Tests** (`src/skill-intelligence/__tests__/phase3.test.ts`):
+  - Added coverage for chatbot-style feedback logs that match outcomes by `buildRequestId`.
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test -- src/skill-intelligence/__tests__/agent.test.ts src/skill-intelligence/__tests__/phase2.test.ts src/skill-intelligence/__tests__/phase3.test.ts src/skill-intelligence/__tests__/phase4.test.ts src/generator/prompt.dynamic.test.ts` passed with 65 tests.
+
 ## [2026-05-12] - Idempotent MCP Create and MetaClaw Context Propagation
 
 - **Create Idempotency** (`src/mcp-server-manager.ts`):

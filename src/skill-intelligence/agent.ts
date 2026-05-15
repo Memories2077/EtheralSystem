@@ -3,6 +3,7 @@ import type {
   SkillComposition,
   GenerationOutcome,
   HumanFeedbackImportSummary,
+  ServerFeedbackLog,
   SkillSelectionInitializationResult,
   SkillSelectionMetrics,
   SkillCompositionOptions,
@@ -186,12 +187,14 @@ export class SkillSelectionAgent {
     return this.composer.assemblePrompt(basePrompt, composition);
   }
 
-  recordFeedback(outcome: GenerationOutcome): void {
-    this.feedback.recordOutcome(outcome);
+  recordFeedback(outcome: GenerationOutcome): Promise<void> {
+    return this.feedback.recordOutcome(outcome);
   }
 
-  importHumanFeedbackFromLogs(): Promise<HumanFeedbackImportSummary> {
-    return this.feedback.importHumanFeedbackFromLogs();
+  importHumanFeedbackFromLogs(
+    logs?: ServerFeedbackLog[],
+  ): Promise<HumanFeedbackImportSummary> {
+    return this.feedback.importHumanFeedbackFromLogs(logs);
   }
 
   getSkillEffectiveness(skillId: string) {

@@ -4,6 +4,8 @@ import type {
   SkillGap,
   NormalizedHumanFeedback,
   HumanFeedbackImportSummary,
+  FeedbackLogEntry,
+  ServerFeedbackLog,
 } from "./types.js";
 import { MongoClient, Db, Collection } from "mongodb";
 
@@ -39,22 +41,6 @@ const ISSUE_TAG_PATTERNS: Array<{ tag: string; regex: RegExp }> = [
   },
 ];
 
-interface FeedbackLogEntry {
-  feedbackId?: string;
-  type?: "like" | "dislike";
-  userId?: string;
-  comment?: string;
-  timestamp?: Date | string;
-}
-
-interface ServerFeedbackLog {
-  serverId?: string;
-  requestId?: string;
-  likeCount?: number;
-  dislikeCount?: number;
-  feedbacks?: FeedbackLogEntry[];
-}
-
 const EMPTY_IMPORT_SUMMARY: HumanFeedbackImportSummary = {
   scannedLogs: 0,
   matchedOutcomes: 0,
@@ -66,6 +52,7 @@ const EMPTY_IMPORT_SUMMARY: HumanFeedbackImportSummary = {
 export class FeedbackTracker {
   private effectiveness: Map<string, SkillEffectiveness> = new Map();
   private outcomesByRequestId: Map<string, GenerationOutcome> = new Map();
+  private outcomesByBuildRequestId: Map<string, GenerationOutcome> = new Map();
   private outcomesByServerId: Map<string, GenerationOutcome> = new Map();
   private gaps: SkillGap[] = [];
   private mongoClient: MongoClient | null = null;
@@ -96,9 +83,11 @@ export class FeedbackTracker {
       await this.feedbackCollection.createIndex({ timestamp: -1 });
       await this.feedbackCollection.createIndex({ selectedSkillIds: 1 });
       await this.feedbackCollection.createIndex({ serverId: 1 });
+      await this.feedbackCollection.createIndex({ buildRequestId: 1 });
       await this.feedbackCollection.createIndex({ importedFeedbackIds: 1 });
       await this.gapsCollection.createIndex({ status: 1, detectedAt: -1 });
       await this.logsCollection.createIndex({ serverId: 1 });
+      await this.logsCollection.createIndex({ buildRequestId: 1 });
       await this.logsCollection.createIndex({ "feedbacks.feedbackId": 1 });
 
       // Warm in-memory cache from DB
@@ -133,6 +122,8 @@ export class FeedbackTracker {
   private cacheOutcome(outcome: GenerationOutcome): void {
     if (outcome.requestId)
       this.outcomesByRequestId.set(outcome.requestId, outcome);
+    if (outcome.buildRequestId)
+      this.outcomesByBuildRequestId.set(outcome.buildRequestId, outcome);
     if (outcome.serverId)
       this.outcomesByServerId.set(outcome.serverId, outcome);
   }
@@ -397,10 +388,13 @@ export class FeedbackTracker {
       this.cacheOutcome(outcome);
 
       if (this.feedbackCollection) {
+        const outcomeKey = outcome.requestId
+          ? { requestId: outcome.requestId }
+          : outcome.buildRequestId
+            ? { buildRequestId: outcome.buildRequestId }
+            : { serverId: outcome.serverId };
         await this.feedbackCollection.updateOne(
-          outcome.requestId
-            ? { requestId: outcome.requestId }
-            : { serverId: outcome.serverId },
+          outcomeKey,
           {
             $set: {
               reviewerRating: outcome.reviewerRating,
@@ -431,6 +425,7 @@ export class FeedbackTracker {
       .project({
         serverId: 1,
         requestId: 1,
+        buildRequestId: 1,
         likeCount: 1,
         dislikeCount: 1,
         feedbacks: 1,
@@ -445,19 +440,32 @@ export class FeedbackTracker {
     if (log.requestId && this.outcomesByRequestId.has(log.requestId)) {
       return this.outcomesByRequestId.get(log.requestId);
     }
+    if (
+      log.buildRequestId &&
+      this.outcomesByBuildRequestId.has(log.buildRequestId)
+    ) {
+      return this.outcomesByBuildRequestId.get(log.buildRequestId);
+    }
+    if (log.buildRequestId && this.outcomesByRequestId.has(log.buildRequestId)) {
+      return this.outcomesByRequestId.get(log.buildRequestId);
+    }
     if (log.serverId && this.outcomesByServerId.has(log.serverId)) {
       return this.outcomesByServerId.get(log.serverId);
     }
     if (!this.feedbackCollection) return undefined;
 
-    const query = log.requestId
-      ? { requestId: log.requestId }
-      : log.serverId
-        ? { serverId: log.serverId }
-        : null;
-    if (!query) return undefined;
+    const candidates: Array<Record<string, string>> = [];
+    if (log.requestId) candidates.push({ requestId: log.requestId });
+    if (log.buildRequestId) {
+      candidates.push({ requestId: log.buildRequestId });
+      candidates.push({ buildRequestId: log.buildRequestId });
+    }
+    if (log.serverId) candidates.push({ serverId: log.serverId });
+    if (!candidates.length) return undefined;
 
-    const doc = await this.feedbackCollection.findOne(query);
+    const doc = await this.feedbackCollection.findOne(
+      candidates.length === 1 ? candidates[0] : { $or: candidates },
+    );
     if (!doc) return undefined;
     const outcome = doc as unknown as GenerationOutcome;
     this.cacheOutcome(outcome);
@@ -690,6 +698,7 @@ export class FeedbackTracker {
   reset(): void {
     this.effectiveness.clear();
     this.outcomesByRequestId.clear();
+    this.outcomesByBuildRequestId.clear();
     this.outcomesByServerId.clear();
     this.gaps = [];
   }
