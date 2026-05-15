@@ -147,6 +147,13 @@ async def generator_agent_node(state: AgentState) -> AgentState:
     
     response = await llm_with_tools.ainvoke(generator_messages)
     tool_calls = list(getattr(response, "tool_calls", None) or [])
+    if not tool_calls:
+        print("[Generator] ⚠️ LLM did not call create_MCPServer. Falling back to direct tool invocation.")
+        tool_calls = [{
+            "id": "fallback_create_mcp_server",
+            "name": "create_MCPServer",
+            "args": {},
+        }]
     
     # If tool calls exist, execute them
     if tool_calls:

@@ -119,6 +119,68 @@ PLACEHOLDER_TASK_PHRASES = (
 )
 
 
+def _looks_like_mcp_creation_request(task: str) -> bool:
+    normalized = " ".join(task.strip().lower().split())
+    if not normalized:
+        return False
+
+    has_creation_intent = (
+        "mcp" in normalized
+        and "server" in normalized
+        and any(kw in normalized for kw in ("create", "generate", "build", "make"))
+    )
+    if not has_creation_intent:
+        return False
+
+    api_doc_signals = (
+        "base url",
+        "endpoint",
+        "method:",
+        "get /",
+        "post /",
+        "put /",
+        "patch /",
+        "delete /",
+        "openapi:",
+        "authentication:",
+        "query parameter",
+        "response 200",
+    )
+    return any(signal in normalized for signal in api_doc_signals)
+
+
+def _looks_like_api_documentation_payload(task: str) -> bool:
+    normalized = " ".join(task.strip().lower().split())
+    if not normalized:
+        return False
+
+    signals = (
+        "base url",
+        "authentication:",
+        "endpoint",
+        "method:",
+        "get /",
+        "post /",
+        "put /",
+        "patch /",
+        "delete /",
+        "query parameter",
+        "request body",
+        "response 200",
+        "openapi:",
+        "paths:",
+    )
+    matched = sum(1 for signal in signals if signal in normalized)
+
+    has_http_shape = any(
+        signal in normalized
+        for signal in ("get /", "post /", "put /", "patch /", "delete /", "method:")
+    )
+    has_api_anchor = any(signal in normalized for signal in ("base url", "openapi:", "paths:"))
+
+    return matched >= 3 and has_http_shape and has_api_anchor
+
+
 def _has_structured_task_payload(task: str) -> bool:
     return any(marker in task for marker in STRUCTURED_TASK_MARKERS)
 
@@ -350,7 +412,17 @@ Most Recent Agent Output:
         task_already_done = any("TASK_SUCCESSFULLY_COMPLETED" in h for h in history)
 
         # ── Direct prefix match (LLM echoed delegation strings) ───────────
-        if "DELEGATE_TO_GENERATOR:" in raw_content:
+        if not task_already_done and retry_count == 0 and _looks_like_mcp_creation_request(user_task):
+            print("[Supervisor] Fallback → delegate_to_examiner_agent (detected MCP creation request)")
+            response.tool_calls = [{"name": "delegate_to_examiner_agent",
+                                    "args": {"task": user_task}, "id": "fallback_mcp_creation"}]
+            has_tool_calls = True
+        elif not task_already_done and retry_count == 0 and _looks_like_api_documentation_payload(user_task):
+            print("[Supervisor] Fallback → delegate_to_examiner_agent (detected API documentation payload)")
+            response.tool_calls = [{"name": "delegate_to_examiner_agent",
+                                    "args": {"task": user_task}, "id": "fallback_api_doc_payload"}]
+            has_tool_calls = True
+        elif "DELEGATE_TO_GENERATOR:" in raw_content:
             # Extract the task payload from the echoed string
             gen_task = raw_content[raw_content.index("DELEGATE_TO_GENERATOR:") + len("DELEGATE_TO_GENERATOR:"):].strip()
             if not gen_task:
