@@ -1,5 +1,31 @@
 # Nhật ký Thay đổi (Change Log)
 
+## [2026-05-15] - Ổn định Điều phối MCP, Marker Frontend & Fallback Tool Bắt buộc
+
+### Bug Fixes
+
+- **Frontend Success Marker Preservation**: Cập nhật `supervisor_final_node` để message stream gửi về FE có marker `✅ MCP Server created successfully!`, nhưng `final_response` nội bộ vẫn giữ nguyên JSON thô từ Generator. Điều này giữ UI nhận diện trạng thái thành công mà không phá contract giữa các node/test nội bộ.
+- **MetaClaw Payload Routing Fallback**: Bổ sung fallback hẹp trong `supervisor_node` khi LLM Supervisor không emit `tool_calls`. Hệ thống hiện nhận diện được cả:
+  - prompt trực tiếp có intent `create/generate/build/make MCP server`;
+  - payload API documentation đã được MetaClaw route vào LangChain nhưng bị strip mất câu lệnh tạo MCP server.
+- **API Documentation Detection**: Thêm `_looks_like_api_documentation_payload(...)` để phát hiện payload có tín hiệu kỹ thuật mạnh như `Base URL`, `Authentication`, `Method: GET /...`, `Query Parameters`, `Response 200`, `openapi:` hoặc `paths:`.
+- **Generator Tool-Call Fallback**: Cập nhật `generator_agent_node` để không còn tin vào text response của LLM khi LLM không gọi `create_MCPServer`. Nếu `tool_calls` rỗng, Generator tự fallback gọi trực tiếp `create_MCPServer` bằng `constructed_query` đã chuẩn bị từ `raw_api_doc`, `user_id`, `email`, và `rag_context`.
+- **Hallucinated Success Prevention**: Ngăn trường hợp Generator trả về text thành công giả như `Server MCP_Server_001 provisioned successfully` mà không hề gọi mcp-gen. Kết quả cuối giờ phải đến từ tool thật hoặc lỗi thật từ tool.
+
+### Regression Tests
+
+- Thêm test đảm bảo `supervisor_final_node` giữ `final_response` là JSON thô trong success path.
+- Thêm test cho fallback routing khi LLM Supervisor không gọi tool nhưng user prompt rõ ràng là tạo MCP server.
+- Thêm test cho MetaClaw flow khi LangChain chỉ nhận API documentation payload, không còn câu `Please create MCP Server`.
+- Thêm test cho Generator fallback: khi LLM trả hallucinated success nhưng không emit tool call, node vẫn gọi `create_MCPServer` thật và trả `serverId` thật từ tool.
+
+### Verification
+
+- `.venv/bin/pytest tests/test_logic_regressions.py -q` passed: `8 passed, 1 warning`.
+- Đã kiểm thử hệ thống thực tế tới bước Examiner fast-path → Generator; fallback routing qua MetaClaw payload hoạt động và Generator không còn được phép kết thúc bằng success text giả khi thiếu tool call.
+
+---
+
 ## [2026-05-09] - Fix Logic Luong MCP Generation & Bao Toan JSON Cuoi
 
 ### Bug Fixes
