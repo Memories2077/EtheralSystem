@@ -129,6 +129,23 @@ export interface NormalizedHumanFeedback {
   issueTags: string[];
 }
 
+export interface FeedbackLogEntry {
+  feedbackId?: string;
+  type?: "like" | "dislike";
+  userId?: string;
+  comment?: string;
+  timestamp?: Date | string;
+}
+
+export interface ServerFeedbackLog {
+  serverId?: string;
+  requestId?: string;
+  buildRequestId?: string;
+  likeCount?: number;
+  dislikeCount?: number;
+  feedbacks?: FeedbackLogEntry[];
+}
+
 export interface HumanFeedbackImportSummary {
   scannedLogs: number;
   matchedOutcomes: number;
@@ -139,6 +156,7 @@ export interface HumanFeedbackImportSummary {
 
 export interface GenerationOutcome {
   requestId?: string;
+  buildRequestId?: string;
   timestamp?: Date;
   specProfile: SpecProfile;
   selectedSkillIds?: string[];

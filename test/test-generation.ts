@@ -115,6 +115,7 @@ export async function main(options: Options = {}) {
           retryCount,
           lastError?.message,
           process.env.RAG_CONTEXT,
+          process.env.BUILD_REQUEST_ID || serverId,
         );
 
         // Test if generated server can run

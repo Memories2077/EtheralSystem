@@ -15,6 +15,7 @@ import { writeFileSafe, remove, exists } from "./utils/fs.ts";
 import { confirm } from "./generator/validator.ts";
 import { generateOpenAPISpec } from "./generator/index.ts";
 import { SkillSelectionAgent } from "./skill-intelligence/agent.js";
+import type { ServerFeedbackLog } from "./skill-intelligence/types.js";
 import { FEATURE_FLAGS } from "./utils/config.ts";
 
 // Simple in-memory rate limiter for feedback endpoint
@@ -113,6 +114,7 @@ interface ServerLogEntry {
   action: "created" | "error" | "deleted" | "started" | "stopped";
   ragContext?: string;
   buildRequestId?: string;
+  requestId?: string;
   sessionId?: string;
   workspaceId?: string;
   memoryScope?: string;
@@ -586,6 +588,24 @@ export class MCPServerManager {
       console.error("❌ Failed to save to MongoDB:", error);
       // Don't throw error to avoid breaking the main flow
     }
+  }
+
+  private triggerHumanFeedbackImport(log: ServerFeedbackLog): void {
+    void (async () => {
+      try {
+        const agent = SkillSelectionAgent.getInstance({ tokenBudget: 30_000 });
+        await agent.initialize();
+        const summary = await agent.importHumanFeedbackFromLogs([log]);
+        console.log(
+          `[SkillSelect] human_feedback_import scanned=${summary.scannedLogs} matched=${summary.matchedOutcomes} imported=${summary.importedFeedbacks} duplicates=${summary.skippedDuplicates}`,
+        );
+      } catch (error) {
+        console.warn(
+          "[SkillSelect] Failed to import human feedback signal:",
+          error,
+        );
+      }
+    })();
   }
 
   // Method to get server statistics from MongoDB
@@ -1572,8 +1592,32 @@ export class MCPServerManager {
         // Fetch updated document to return current counts
         const updatedDoc = await this.logsCollection.findOne(
           { serverId },
-          { projection: { likeCount: 1, dislikeCount: 1, feedbacks: 1 } },
+          {
+            projection: {
+              serverId: 1,
+              requestId: 1,
+              buildRequestId: 1,
+              likeCount: 1,
+              dislikeCount: 1,
+              feedbacks: 1,
+            },
+          },
         );
+
+        this.triggerHumanFeedbackImport({
+          serverId,
+          requestId:
+            typeof updatedDoc?.requestId === "string"
+              ? updatedDoc.requestId
+              : undefined,
+          buildRequestId:
+            typeof updatedDoc?.buildRequestId === "string"
+              ? updatedDoc.buildRequestId
+              : undefined,
+          likeCount: updatedDoc?.likeCount || 0,
+          dislikeCount: updatedDoc?.dislikeCount || 0,
+          feedbacks: updatedDoc?.feedbacks || [],
+        });
 
         res.json({
           success: true,
@@ -1911,6 +1955,9 @@ export class MCPServerManager {
           `JWT_TOKEN=${config.token}`,
           `MANAGER_URL=${process.env.MANAGER_URL || "http://docker-manager:8080"}`,
           `RAG_CONTEXT=${config.ragContext || ""}`,
+          `BUILD_REQUEST_ID=${config.buildRequestId || config.serverId}`,
+          `MONGO_URI=${process.env.MONGO_URI || ""}`,
+          `SKILL_FEEDBACK_ENABLED=${process.env.SKILL_FEEDBACK_ENABLED || ""}`,
           `DYNAMIC_SKILL_SELECTION=${process.env.DYNAMIC_SKILL_SELECTION || ""}`,
           `SKILL_SELECTION_VARIANT=${process.env.SKILL_SELECTION_VARIANT || ""}`,
           `SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD=${process.env.SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD || ""}`,
