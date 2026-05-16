@@ -8,12 +8,78 @@ import path from "path";
 import yaml from "js-yaml";
 import { randomBytes } from "crypto";
 import { createServer } from "net";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { EventEmitter } from "events";
-import { MongoClient, Db, Collection } from "mongodb";
+import { MongoClient, Db, Collection, type Filter } from "mongodb";
 import { writeFileSafe, remove, exists } from "./utils/fs.ts";
 import { confirm } from "./generator/validator.ts";
 import { generateOpenAPISpec } from "./generator/index.ts";
+import { SkillSelectionAgent } from "./skill-intelligence/agent.js";
+import type { ServerFeedbackLog } from "./skill-intelligence/types.js";
+import { FEATURE_FLAGS } from "./utils/config.ts";
+
+// Simple in-memory rate limiter for feedback endpoint
+interface RateLimitWindow {
+  timestamps: number[];
+  resetTime: number;
+}
+
+class SimpleRateLimiter {
+  private windows: Map<string, RateLimitWindow> = new Map();
+  private readonly windowMs: number;
+  private readonly maxRequests: number;
+
+  constructor(windowMs: number = 15 * 60 * 1000, maxRequests: number = 100) {
+    this.windowMs = windowMs;
+    this.maxRequests = maxRequests;
+  }
+
+  private cleanupOldWindows(): void {
+    const now = Date.now();
+    for (const [ip, window] of this.windows.entries()) {
+      if (now > window.resetTime) {
+        this.windows.delete(ip);
+      }
+    }
+  }
+
+  isLimited(ip: string): boolean {
+    this.cleanupOldWindows();
+    const now = Date.now();
+    let window = this.windows.get(ip);
+
+    if (!window || now > window.resetTime) {
+      window = {
+        timestamps: [],
+        resetTime: now + this.windowMs,
+      };
+      this.windows.set(ip, window);
+    }
+
+    // Remove timestamps outside the current window
+    window.timestamps = window.timestamps.filter(
+      (ts) => now - ts < this.windowMs,
+    );
+
+    if (window.timestamps.length >= this.maxRequests) {
+      return true;
+    }
+
+    window.timestamps.push(now);
+    return false;
+  }
+
+  getRemaining(ip: string): number {
+    const window = this.windows.get(ip);
+    if (!window) return this.maxRequests;
+    return Math.max(0, this.maxRequests - window.timestamps.length);
+  }
+}
+
+const feedbackRateLimiter = new SimpleRateLimiter(
+  Number(process.env.FEEDBACK_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  Number(process.env.FEEDBACK_RATE_LIMIT_MAX) || 100,
+);
 
 import {
   MessageQueueService,
@@ -47,18 +113,46 @@ interface ServerLogEntry {
   inputContent: string;
   action: "created" | "error" | "deleted" | "started" | "stopped";
   ragContext?: string;
+  buildRequestId?: string;
+  requestId?: string;
+  sessionId?: string;
+  workspaceId?: string;
+  memoryScope?: string;
+  // Feedback fields
+  likeCount: number;
+  dislikeCount: number;
+  feedbacks: FeedbackEntry[];
 }
+
+interface FeedbackEntry {
+  feedbackId: string;
+  type: "like" | "dislike";
+  userId?: string;
+  comment?: string;
+  timestamp: Date;
+}
+
+const SERVER_STATUSES = [
+  "created",
+  "error",
+  "deleted",
+  "started",
+  "stopped",
+  "running",
+  "building",
+] as const;
+const VALID_SERVER_STATUSES = new Set<string>(SERVER_STATUSES);
 
 interface PersistedData {
   jwtSecret: string;
   status: boolean;
 }
 
-// Lấy đường dẫn hiện tại
+// Resolve the current module directory for artifact and data paths.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-class MCPServerManager {
+export class MCPServerManager {
   private docker: Docker;
   private servers: Map<string, ServerLogEntry> = new Map();
   private app: express.Application;
@@ -66,9 +160,11 @@ class MCPServerManager {
   private basePort: number = 4000;
   private expressPort: number = 8080;
   private usedPorts: Set<number> = new Set();
+  private buildRequestIndex: Map<string, string> = new Map();
   private defaultDockerfilePath: string;
   private persistenceFilePath: string;
   private events: EventEmitter;
+  private mcpNetworkName: string = process.env.MCP_NETWORK || "mcp-network";
 
   // MongoDB properties
   private mongoClient: MongoClient;
@@ -110,7 +206,7 @@ class MCPServerManager {
   }
 
   private async checkDependencies(): Promise<void> {
-    const usePing = process.env.USE_DOCKER_PING !== "false"; // default true nếu ko set
+    const usePing = process.env.USE_DOCKER_PING !== "false"; // Defaults to true when not configured.
 
     if (usePing) {
       try {
@@ -155,7 +251,7 @@ class MCPServerManager {
       },
       // Status update handler
       async (message: StatusUpdateMessage) => {
-        await this.processStatusUpdate(message);
+        await this.processStatusUpdate(message, true);
       },
 
       // Get config Handler
@@ -192,7 +288,7 @@ class MCPServerManager {
       // Build and run container
       const containerId = await this.buildAndRunContainer(
         server,
-        dockerfilePath,
+        contextPath || dockerfilePath,
       );
 
       // Update status to created (instead of running, wait for "ready" signal)
@@ -243,6 +339,7 @@ class MCPServerManager {
 
   private async processStatusUpdate(
     message: StatusUpdateMessage,
+    skipPublish: boolean = false,
   ): Promise<void> {
     const { serverId, status, containerId, buildLogs, error } = message;
 
@@ -256,6 +353,11 @@ class MCPServerManager {
       // Update server status
       server.status = status;
       server.updatedAt = new Date();
+      if (status === "error" || status === "deleted") {
+        if (server.buildRequestId) {
+          this.buildRequestIndex.delete(server.buildRequestId);
+        }
+      }
 
       if (containerId) {
         server.containerId = containerId;
@@ -276,6 +378,17 @@ class MCPServerManager {
 
       // Emit status update event
       this.events.emit(`status:${serverId}`, status);
+
+      // Publish to RabbitMQ for external consumers
+      if (!skipPublish && this.messageQueue.connected) {
+        await this.messageQueue.publishStatusUpdate({
+          serverId,
+          status,
+          containerId,
+          buildLogs,
+          error,
+        });
+      }
     } catch (error) {
       console.error(`Failed to process status update for ${serverId}:`, error);
     }
@@ -355,9 +468,14 @@ class MCPServerManager {
       this.db = this.mongoClient.db(this.dbName);
       this.logsCollection = this.db.collection<ServerLogEntry>("logs");
 
-      // Create index for better query performance
+      // Create indexes for better query performance
       await this.logsCollection.createIndex({ serverId: 1 });
+      await this.logsCollection.createIndex(
+        { buildRequestId: 1 },
+        { sparse: true },
+      );
       await this.logsCollection.createIndex({ createdAt: -1 });
+      await this.logsCollection.createIndex({ status: 1, updatedAt: -1 }); // Optimize stats queries
 
       console.log("✅ Connected to MongoDB successfully");
     } catch (error) {
@@ -440,16 +558,20 @@ class MCPServerManager {
     }
   }
 
-  private async SaveToDB(server: ServerLogEntry, action: string) {
+  private async SaveToDB(
+    server: ServerLogEntry,
+    action: "created" | "error" | "deleted" | "updated",
+  ) {
     try {
       if (!this.logsCollection) {
         console.warn("MongoDB not initialized, skipping database save");
         return;
       }
 
-      // Create a copy to avoid mutating the original object's _id
+      // Create a copy to avoid mutating the original object
       const dataToSave = { ...server };
-      delete (dataToSave as any)._id; // Mongo doesn't like updating/upserting with _id in the body
+      // MongoDB _id cannot be in update/upsert bodies
+      delete (dataToSave as any)._id;
 
       dataToSave.updatedAt = new Date();
 
@@ -466,6 +588,24 @@ class MCPServerManager {
       console.error("❌ Failed to save to MongoDB:", error);
       // Don't throw error to avoid breaking the main flow
     }
+  }
+
+  private triggerHumanFeedbackImport(log: ServerFeedbackLog): void {
+    void (async () => {
+      try {
+        const agent = SkillSelectionAgent.getInstance({ tokenBudget: 30_000 });
+        await agent.initialize();
+        const summary = await agent.importHumanFeedbackFromLogs([log]);
+        console.log(
+          `[SkillSelect] human_feedback_import scanned=${summary.scannedLogs} matched=${summary.matchedOutcomes} imported=${summary.importedFeedbacks} duplicates=${summary.skippedDuplicates}`,
+        );
+      } catch (error) {
+        console.warn(
+          "[SkillSelect] Failed to import human feedback signal:",
+          error,
+        );
+      }
+    })();
   }
 
   // Method to get server statistics from MongoDB
@@ -652,6 +792,13 @@ class MCPServerManager {
               },
             );
 
+            // Update in-memory state to match database
+            const inMemoryServer = this.servers.get(serverId);
+            if (inMemoryServer) {
+              inMemoryServer.status = "error";
+              inMemoryServer.containerId = undefined;
+            }
+
             // Release the port since container is gone
             if (config.hostPort) {
               this.usedPorts.delete(config.hostPort);
@@ -680,32 +827,291 @@ class MCPServerManager {
     }
   }
 
+  private sendError(
+    res: express.Response,
+    status: number,
+    message: string,
+    error?: unknown,
+  ): void {
+    const response: { error: string; details?: unknown } = { error: message };
+
+    // Only include error details in development mode
+    if (process.env.NODE_ENV === "development" && error) {
+      response.details = error instanceof Error ? error.message : String(error);
+    }
+
+    res.status(status).json(response);
+  }
+
+  private extractRequestToken(req: express.Request): string | null {
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      return authHeader.slice("Bearer ".length).trim();
+    }
+
+    const queryToken = req.query.token;
+    return typeof queryToken === "string" && queryToken ? queryToken : null;
+  }
+
+  private validateServerToken(serverId: string, token: string): boolean {
+    const decoded = jwt.verify(token, this.jwtSecret) as jwt.JwtPayload;
+    return decoded.serverId === serverId;
+  }
+
+  private async ensureServerLoaded(
+    serverId: string,
+  ): Promise<ServerLogEntry | null> {
+    const inMemoryServer = this.servers.get(serverId);
+    if (inMemoryServer) {
+      return inMemoryServer;
+    }
+
+    if (!this.logsCollection) {
+      return null;
+    }
+
+    const persistedServer = await this.logsCollection.findOne({ serverId });
+    if (!persistedServer) {
+      return null;
+    }
+
+    const server = persistedServer as ServerLogEntry;
+    this.servers.set(serverId, server);
+    return server;
+  }
+
+  private isReusableCreateStatus(status?: string): boolean {
+    return Boolean(
+      status &&
+        !["error", "deleted"].includes(String(status).toLowerCase()),
+    );
+  }
+
+  private createResponsePayload(server: ServerLogEntry, message?: string) {
+    return {
+      serverId: server.serverId,
+      publicUrl: server.publicUrl,
+      claudeConfig: this.generateClaudeConfig(server.serverId, server),
+      status: server.status,
+      buildRequestId: server.buildRequestId,
+      message:
+        message ||
+        (server.status === "running"
+          ? "Server created and running successfully"
+          : "Server build is still in progress"),
+    };
+  }
+
+  private async findServerByBuildRequestId(
+    buildRequestId: string,
+  ): Promise<ServerLogEntry | null> {
+    if (!buildRequestId) return null;
+
+    const indexedServerId = this.buildRequestIndex.get(buildRequestId);
+    if (indexedServerId) {
+      const indexedServer = this.servers.get(indexedServerId);
+      if (indexedServer) {
+        return indexedServer;
+      }
+    }
+
+    for (const server of this.servers.values()) {
+      if (server.buildRequestId === buildRequestId) {
+        return server;
+      }
+    }
+
+    if (!this.logsCollection) return null;
+
+    const persisted = await this.logsCollection.findOne({ buildRequestId });
+    if (!persisted) return null;
+
+    const server = persisted as ServerLogEntry;
+    this.servers.set(server.serverId, server);
+    this.buildRequestIndex.set(buildRequestId, server.serverId);
+    if (server.hostPort) {
+      this.usedPorts.add(server.hostPort);
+    }
+    return server;
+  }
+
+  private async findServerByIdentifier(
+    identifier: string,
+  ): Promise<ServerLogEntry | null> {
+    const normalizedIdentifier = String(identifier || "").trim();
+    if (!normalizedIdentifier) return null;
+
+    const byServerId = await this.ensureServerLoaded(normalizedIdentifier);
+    if (byServerId) {
+      return byServerId;
+    }
+
+    return this.findServerByBuildRequestId(normalizedIdentifier);
+  }
+
+  private async findReusableBuild(
+    buildRequestId: string,
+  ): Promise<ServerLogEntry | null> {
+    if (!buildRequestId) return null;
+
+    const indexedServerId = this.buildRequestIndex.get(buildRequestId);
+    if (indexedServerId) {
+      const indexedServer = this.servers.get(indexedServerId);
+      if (indexedServer && this.isReusableCreateStatus(indexedServer.status)) {
+        return indexedServer;
+      }
+    }
+
+    for (const server of this.servers.values()) {
+      if (
+        server.buildRequestId === buildRequestId &&
+        this.isReusableCreateStatus(server.status)
+      ) {
+        return server;
+      }
+    }
+
+    if (!this.logsCollection) return null;
+
+    const persisted = await this.logsCollection.findOne({
+      buildRequestId,
+      status: { $nin: ["error", "deleted"] },
+    });
+    if (!persisted) return null;
+
+    const server = persisted as ServerLogEntry;
+    this.servers.set(server.serverId, server);
+    this.buildRequestIndex.set(buildRequestId, server.serverId);
+    if (server.hostPort) {
+      this.usedPorts.add(server.hostPort);
+    }
+    return server;
+  }
+
   private setupRoutes() {
+    // Enable CORS for configured origins (Docker-friendly configuration).
+    // Set CORS_ORIGINS as a comma-separated list, for example: "http://localhost:9002,http://frontend:3000".
+    const corsOrigins = process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+
+    if (corsOrigins.length === 0 && process.env.NODE_ENV !== "production") {
+      console.warn(
+        "⚠️ CORS_ORIGINS is empty. Browser clients such as http://localhost:9002 will not be able to call manager APIs.",
+      );
+    }
+
+    this.app.use((req, res, next) => {
+      const origin = req.headers.origin;
+      if (origin && corsOrigins.includes(origin)) {
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Access-Control-Allow-Credentials", "true");
+      }
+      res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      if (req.method === "OPTIONS") {
+        return res.sendStatus(200);
+      }
+      next();
+    });
+
     // Increase payload size limits so large API docs (e.g. ~100KB+) are accepted.
     // Also accept urlencoded and plain text bodies (for raw OpenAPI/YAML uploads).
     this.app.use(express.json({ limit: "5mb" }));
     this.app.use(express.urlencoded({ limit: "5mb", extended: true }));
     this.app.use(express.text({ limit: "5mb", type: "*/*" }));
 
-    // API tạo MCP server mới
+    // API to create a new MCP server.
     this.app.post("/api/mcp/create", async (req, res) => {
+      let idempotencyKey = "";
+      let allocatedServerId = "";
       try {
-        const { request, name, dockerImage, userId, email, rag_context } = req.body;
+        const {
+          request,
+          name,
+          dockerImage,
+          userId,
+          email,
+          rag_context,
+          buildRequestId,
+          sessionId,
+          workspaceId,
+          memoryScope,
+        } =
+          req.body;
 
         // ✅ Validate required fields
         if (!request || !userId || !email) {
-          return res.status(400).json({
-            error: "Missing required fields: request, userId, email",
+          return this.sendError(
+            res,
+            400,
+            "Missing required fields: request, userId, email",
+          );
+        }
+
+        idempotencyKey =
+          String(
+            buildRequestId ||
+              req.header("Idempotency-Key") ||
+              req.header("X-Idempotency-Key") ||
+              "",
+          ).trim();
+
+        const existingBuild = await this.findReusableBuild(idempotencyKey);
+        if (existingBuild) {
+          const statusCode = existingBuild.status === "running" ? 200 : 202;
+          return res
+            .status(statusCode)
+            .json(
+              this.createResponsePayload(
+                existingBuild,
+                "Existing MCP server build returned for this idempotency key",
+              ),
+            );
+        }
+
+        const pendingServerId = idempotencyKey
+          ? this.buildRequestIndex.get(idempotencyKey)
+          : "";
+        if (pendingServerId) {
+          for (let attempt = 0; attempt < 50; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            const pendingBuild = await this.findReusableBuild(idempotencyKey);
+            if (pendingBuild) {
+              const statusCode = pendingBuild.status === "running" ? 200 : 202;
+              return res
+                .status(statusCode)
+                .json(
+                  this.createResponsePayload(
+                    pendingBuild,
+                    "Existing MCP server build returned for this idempotency key",
+                  ),
+                );
+            }
+          }
+
+          return res.status(202).json({
+            serverId: pendingServerId,
+            status: "building",
+            buildRequestId: idempotencyKey,
+            claudeConfig: {},
+            message: "Existing MCP server build is still allocating resources",
           });
         }
 
         const serverId = randomUUID();
+        allocatedServerId = serverId;
+        if (idempotencyKey) {
+          this.buildRequestIndex.set(idempotencyKey, serverId);
+        }
         const hostPort = await this.getAvailablePort();
 
         const now = Math.floor(Date.now() / 1000);
         const expiration = now + 365 * 24 * 60 * 60; // 1 year
 
-        // Tạo JWT token
+        // Create JWT token.
         const token = jwt.sign(
           {
             sub: userId,
@@ -717,7 +1123,7 @@ class MCPServerManager {
           this.jwtSecret,
         );
 
-        // Lấy public url của server, nếu không có thì fallback localhost
+        // Resolve the public proxy URL for generated MCP clients.
         const baseUrl = process.env.PUBLIC_URL || "http://localhost:8081";
 
         const serverConfig: ServerLogEntry = {
@@ -725,7 +1131,7 @@ class MCPServerManager {
           //serverName: name,
           dockerImage:
             dockerImage || process.env.DEFAULT_MCP_IMAGE || "mcp-gen",
-          containerPort: 3000, // Port mặc định trong container
+          containerPort: 3000, // Default port inside the generated container.
           hostPort: hostPort,
           status: "created",
           publicUrl: `${baseUrl}/mcp/${serverId}`,
@@ -736,22 +1142,29 @@ class MCPServerManager {
           inputContent: request,
           action: "created",
           ragContext: rag_context,
+          buildRequestId: idempotencyKey || undefined,
+          sessionId: sessionId ? String(sessionId) : undefined,
+          workspaceId: workspaceId ? String(workspaceId) : undefined,
+          memoryScope: memoryScope ? String(memoryScope) : undefined,
+          likeCount: 0,
+          dislikeCount: 0,
+          feedbacks: [],
         };
 
         this.servers.set(serverId, serverConfig);
 
         await this.SaveToDB(serverConfig, "created");
 
-        // Kiểm tra loại input: JSON, YAML, hay plain text
+        // Detect input type: JSON, YAML, or plain text.
         let inputType: "json" | "yaml" | "text" = "text";
         try {
-          // Kiểm tra JSON
+          // Check JSON first.
           const jsonObj = JSON.parse(request);
           if (typeof jsonObj === "object" && jsonObj !== null) {
             inputType = "json";
           }
         } catch {
-          // Nếu không phải JSON, thử kiểm tra YAML
+          // If it is not JSON, try YAML.
           try {
             const yamlObj = yaml.load(request);
             if (typeof yamlObj === "object" && yamlObj !== null) {
@@ -766,11 +1179,11 @@ class MCPServerManager {
         }
         serverConfig.buildLogs?.push(`Input type detected: ${inputType}`);
 
-        // Lấy đường dẫn hiện tại
+        // Resolve the current module directory for artifact paths.
         const __filename = fileURLToPath(import.meta.url);
         const __dirname = path.dirname(__filename);
 
-        // Đặt tên file dựa vào inputType
+        // Name the input artifact based on detected input type.
         let fileName: string;
         switch (inputType) {
           case "json":
@@ -808,7 +1221,7 @@ class MCPServerManager {
           `${serverId}.yaml`,
         );
 
-        // Nếu inputType là yaml thì copy trực tiếp sang openapi_filepath
+        // YAML input can be copied directly to the OpenAPI artifact path.
         if (inputType === "yaml") {
           // Ensure output directory exists
           const openapi_dir = path.dirname(openapi_filepath);
@@ -834,29 +1247,47 @@ class MCPServerManager {
           );
         } else if (inputType === "text") {
           console.log("🤖 Calling Gemini to generate OpenAPI spec...");
-          await generateOpenAPISpec(outputPath, serverId, 0, undefined, rag_context);
-        }
 
-        console.log("📍 Using OpenAPI spec:", openapi_filepath);
-
-        let checking = await confirm(openapi_filepath);
-        if (inputType !== "json") {
+          // Unified retry loop for text generation: handles both generation errors
+          // (template syntax, API failures) and validation failures
+          let checking: { success: boolean; error?: string } = {
+            success: false,
+          };
+          let lastError: string | undefined;
           let retryCount = 0;
           const maxRetries = 5;
-          //let lastError = "";
 
           while (!checking.success && retryCount < maxRetries) {
-            console.log(
-              `🔄 Retry attempt ${retryCount + 1} of ${maxRetries} for OpenAPI spec generation`,
-            );
-            await generateOpenAPISpec(
-              outputPath,
-              serverId,
-              retryCount + 1,
-              checking.error,
-              rag_context,
-            );
-            checking = await confirm(openapi_filepath);
+            try {
+              console.log(
+                `🔄 Generation attempt ${retryCount + 1} of ${maxRetries}...`,
+              );
+              await generateOpenAPISpec(
+                outputPath,
+                serverId,
+                retryCount,
+                lastError,
+                rag_context,
+                idempotencyKey || serverId,
+              );
+
+              // Validate the generated spec
+              checking = await confirm(openapi_filepath);
+              if (!checking.success) {
+                lastError = checking.error || "Validation failed";
+                console.log(
+                  `⚠️ Validation failed: ${lastError}. Will retry...`,
+                );
+              }
+            } catch (error: any) {
+              // Generation failed (template syntax, API error, etc.)
+              lastError = error.message;
+              console.log(
+                `❌ Generation error: ${error.message}. Will retry...`,
+              );
+              checking = { success: false, error: error.message };
+            }
+
             retryCount++;
           }
 
@@ -864,20 +1295,44 @@ class MCPServerManager {
             console.log(
               `✅ OpenAPI spec validated successfully after ${retryCount} attempts (Total LLM calls: ${retryCount + 1})`,
             );
+          } else {
+            console.log("❌ Validation failed after maximum retries");
+            // Clean up allocated resources
+            this.servers.delete(serverId);
+            this.usedPorts.delete(hostPort);
+            if (idempotencyKey) this.buildRequestIndex.delete(idempotencyKey);
+            await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
+
+            return this.sendError(
+              res,
+              500,
+              "Failed to generate valid OpenAPI specification",
+              checking.error,
+            );
           }
         }
 
-        if (!checking.success) {
-          console.log("❌ Validation failed after maximum retries");
-          // Clean up allocated resources
-          this.servers.delete(serverId);
-          this.usedPorts.delete(hostPort);
-          await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
+        console.log("📍 Using OpenAPI spec:", openapi_filepath);
 
-          return res.status(500).json({
-            error: "Failed to generate valid OpenAPI specification",
-            serverId: serverId,
-          });
+        // For JSON/YAML inputs, already converted - just validate once
+        if (inputType !== "text") {
+          console.log("✅ Input already in OpenAPI format, validating...");
+          const checking = await confirm(openapi_filepath);
+          if (!checking.success) {
+            console.log("❌ Validation failed for direct input");
+            this.servers.delete(serverId);
+            this.usedPorts.delete(hostPort);
+            if (idempotencyKey) this.buildRequestIndex.delete(idempotencyKey);
+            await this.SaveToDB({ ...serverConfig, status: "error" }, "error");
+
+            return this.sendError(
+              res,
+              500,
+              "Failed to generate valid OpenAPI specification",
+              checking.error,
+            );
+          }
+          console.log("✅ OpenAPI spec validated successfully");
         }
 
         // Queue build message or process synchronously
@@ -885,7 +1340,8 @@ class MCPServerManager {
           await this.messageQueue.publishBuildMessage({
             serverId: serverConfig.serverId,
             dockerImage: serverConfig.dockerImage,
-            dockerfilePath: "../Dockerfile",
+            dockerfilePath: ".",
+            contextPath: ".",
             hostPort,
             containerPort: serverConfig.containerPort,
           });
@@ -893,7 +1349,7 @@ class MCPServerManager {
           // Fallback to synchronous processing
           const containerId = await this.buildAndRunContainer(
             serverConfig,
-            "../Dockerfile",
+            ".",
           );
 
           serverConfig.containerId = containerId;
@@ -912,14 +1368,14 @@ class MCPServerManager {
 
           if (finalStatus === "running") {
             const updatedServer = this.servers.get(serverId) || serverConfig;
-            res.json({
-              serverId: serverId,
-              publicUrl: updatedServer.publicUrl,
-              claudeConfig: this.generateClaudeConfig(serverId, updatedServer),
-              status: "running",
-              message: "Server created and running successfully",
-            });
+            res.json(
+              this.createResponsePayload(
+                updatedServer,
+                "Server created and running successfully",
+              ),
+            );
           } else {
+            if (idempotencyKey) this.buildRequestIndex.delete(idempotencyKey);
             res.status(500).json({
               error: "Server encountered an error during startup",
               serverId: serverId,
@@ -928,18 +1384,29 @@ class MCPServerManager {
           }
         } catch (waitError: any) {
           console.error(`Error waiting for server ${serverId}:`, waitError);
-          res.status(504).json({
-            error: "Timeout waiting for server to be ready",
-            serverId: serverId,
-            message: waitError.message,
-          });
+          serverConfig.buildLogs = [
+            ...(serverConfig.buildLogs || []),
+            `Warning: ${waitError instanceof Error ? waitError.message : String(waitError)}`,
+          ];
+          serverConfig.updatedAt = new Date();
+          await this.SaveToDB(serverConfig, "updated");
+
+          const updatedServer = this.servers.get(serverId) || serverConfig;
+          res
+            .status(202)
+            .json(
+              this.createResponsePayload(
+                updatedServer,
+                "Server build is still in progress; poll status or wait for ready notification",
+              ),
+            );
         }
       } catch (error) {
         console.error("Error creating MCP server:", error);
-        res.status(500).json({
-          error: "Failed to create MCP server",
-          details: error,
-        });
+        if (idempotencyKey && allocatedServerId) {
+          this.buildRequestIndex.delete(idempotencyKey);
+        }
+        this.sendError(res, 500, "Failed to create MCP server", error);
       }
     });
 
@@ -947,27 +1414,228 @@ class MCPServerManager {
     this.app.get("/api/mcp/servers", async (req, res) => {
       try {
         if (!this.logsCollection) {
-          return res.status(503).json({
-            error: "Database not available",
-            servers: [],
-          });
+          return this.sendError(res, 503, "Database not available");
         }
 
-        const serverList = await this.logsCollection.find({}).toArray();
+        const rawStatuses = String(req.query.statuses || "").trim();
+        const requestedStatuses = rawStatuses
+          ? rawStatuses
+              .split(",")
+              .map((status) => status.trim().toLowerCase())
+              .filter(Boolean)
+          : [];
+        const invalidStatuses = requestedStatuses.filter(
+          (status) => !VALID_SERVER_STATUSES.has(status),
+        );
+        if (invalidStatuses.length > 0) {
+          return this.sendError(
+            res,
+            400,
+            `Invalid server status filter: ${invalidStatuses.join(", ")}`,
+          );
+        }
+
+        const query: Filter<ServerLogEntry> =
+          requestedStatuses.length > 0
+            ? {
+                status: {
+                  $in: requestedStatuses as ServerLogEntry["status"][],
+                },
+              }
+            : {};
+        const serverList = await this.logsCollection.find(query).toArray();
+
+        // Sanitize: remove sensitive fields and large/unnecessary data
+        const sanitizedServers = serverList.map((server) => {
+          const {
+            token,
+            containerId,
+            hostPort,
+            containerPort,
+            dockerImage,
+            inputContent,
+            action,
+            buildLogs,
+            ragContext,
+            _id,
+            ...rest
+          } = server;
+          // Also sanitize feedbacks: remove userId for privacy
+          const sanitizedFeedbacks: FeedbackEntry[] = (
+            rest.feedbacks || []
+          ).map((fb: FeedbackEntry) => {
+            const { userId, ...fbRest } = fb;
+            return fbRest;
+          });
+          return {
+            ...rest,
+            feedbacks: sanitizedFeedbacks,
+          };
+        });
+
         res.json({
-          servers: serverList,
-          count: serverList.length,
+          servers: sanitizedServers,
+          count: sanitizedServers.length,
         });
       } catch (error) {
         console.error("Error fetching server list:", error);
+        this.sendError(res, 500, "Failed to fetch server list");
+      }
+    });
+
+    // API to get current server/build status by serverId or buildRequestId.
+    this.app.get("/api/mcp/:identifier/status", async (req, res) => {
+      try {
+        const { identifier } = req.params;
+        const server = await this.findServerByIdentifier(identifier);
+
+        if (!server) {
+          const pendingServerId = this.buildRequestIndex.get(
+            String(identifier || "").trim(),
+          );
+          if (pendingServerId) {
+            return res.status(202).json({
+              serverId: pendingServerId,
+              status: "building",
+              buildRequestId: identifier,
+              claudeConfig: {},
+              message: "Server build is still allocating resources",
+            });
+          }
+          return this.sendError(res, 404, "Server or build request not found");
+        }
+
+        res.json(
+          this.createResponsePayload(
+            server,
+            server.status === "running"
+              ? "Server is running"
+              : "Server build is still in progress",
+          ),
+        );
+      } catch (error) {
+        console.error("Error fetching server status:", error);
+        this.sendError(res, 500, "Failed to fetch server status");
+      }
+    });
+
+    // API submit feedback for MCP server
+    this.app.post("/api/mcp/:serverId/feedback", async (req, res) => {
+      try {
+        // Rate limiting check
+        const clientIp = req.ip || req.connection.remoteAddress || "unknown";
+        if (feedbackRateLimiter.isLimited(clientIp)) {
+          return this.sendError(
+            res,
+            429,
+            "Too many feedback requests, please try again later",
+          );
+        }
+
+        const { serverId } = req.params;
+        const { type, userId, comment } = req.body;
+
+        // Validate required fields
+        if (!type || !["like", "dislike"].includes(type)) {
+          return this.sendError(
+            res,
+            400,
+            "Invalid feedback type. Must be 'like' or 'dislike'",
+          );
+        }
+
+        // Validate comment length if provided (max 1000 chars)
+        const MAX_COMMENT_LENGTH = 1000;
+        if (comment && comment.length > MAX_COMMENT_LENGTH) {
+          return this.sendError(
+            res,
+            400,
+            `Comment too long (maximum ${MAX_COMMENT_LENGTH} characters)`,
+          );
+        }
+
+        if (!this.logsCollection) {
+          return this.sendError(res, 503, "Database not available");
+        }
+
+        // Create feedback entry (sanitize comment for potential HTML)
+        const sanitizedComment = comment
+          ? comment.replace(/<[^>]*>/g, "")
+          : undefined;
+        const feedbackEntry = {
+          feedbackId: randomUUID(),
+          type,
+          comment: sanitizedComment || undefined,
+          userId: userId || undefined,
+          timestamp: new Date(),
+        };
+
+        // Atomic update: increment counter and push feedback entry
+        const result = await this.logsCollection.updateOne(
+          { serverId },
+          {
+            $inc: {
+              likeCount: type === "like" ? 1 : 0,
+              dislikeCount: type === "dislike" ? 1 : 0,
+            },
+            $push: { feedbacks: feedbackEntry },
+          },
+          { upsert: false }, // Only update existing servers
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            error: "Server not found",
+          });
+        }
+
+        // Fetch updated document to return current counts
+        const updatedDoc = await this.logsCollection.findOne(
+          { serverId },
+          {
+            projection: {
+              serverId: 1,
+              requestId: 1,
+              buildRequestId: 1,
+              likeCount: 1,
+              dislikeCount: 1,
+              feedbacks: 1,
+            },
+          },
+        );
+
+        this.triggerHumanFeedbackImport({
+          serverId,
+          requestId:
+            typeof updatedDoc?.requestId === "string"
+              ? updatedDoc.requestId
+              : undefined,
+          buildRequestId:
+            typeof updatedDoc?.buildRequestId === "string"
+              ? updatedDoc.buildRequestId
+              : undefined,
+          likeCount: updatedDoc?.likeCount || 0,
+          dislikeCount: updatedDoc?.dislikeCount || 0,
+          feedbacks: updatedDoc?.feedbacks || [],
+        });
+
+        res.json({
+          success: true,
+          serverId,
+          likeCount: updatedDoc?.likeCount || 0,
+          dislikeCount: updatedDoc?.dislikeCount || 0,
+          totalFeedbacks: updatedDoc?.feedbacks?.length || 0,
+        });
+      } catch (error) {
+        console.error("Error submitting feedback:", error);
         res.status(500).json({
-          error: "Failed to fetch server list",
-          servers: [],
+          error: "Failed to submit feedback",
+          details: error instanceof Error ? error.message : String(error),
         });
       }
     });
 
-    // API lấy Claude config cho server cụ thể
+    // API to get Claude config for a specific server.
     this.app.get("/api/mcp/:serverId/claude-config", async (req, res) => {
       try {
         const { serverId } = req.params;
@@ -981,7 +1649,11 @@ class MCPServerManager {
           if (response.success) {
             res.json(response.config);
           } else {
-            res.status(404).json({ error: response.error });
+            return this.sendError(
+              res,
+              404,
+              response.error || "Failed to get Claude config",
+            );
           }
         } else {
           // Fallback to direct call when message queue is not available
@@ -990,11 +1662,11 @@ class MCPServerManager {
         }
       } catch (error) {
         console.error("Error getting Claude config:", error);
-        res.status(500).json({ error: "Failed to get Claude config" });
+        this.sendError(res, 500, "Failed to get Claude config");
       }
     });
 
-    // API xóa server
+    // API to delete a server.
     this.app.delete("/api/mcp/:serverId", async (req, res) => {
       try {
         const { serverId } = req.params;
@@ -1002,23 +1674,23 @@ class MCPServerManager {
 
         // Validate input
         if (!serverId) {
-          return res.status(400).json({ error: "Server ID is required" });
+          return this.sendError(res, 400, "Server ID is required");
         }
 
         if (!token) {
-          return res.status(401).json({ error: "Token required" });
+          return this.sendError(res, 401, "Token required");
         }
 
         // Check if server exists
         const existingServer = await this.logsCollection?.findOne({ serverId });
         if (!existingServer) {
-          return res.status(404).json({ error: "Server not found" });
+          return this.sendError(res, 404, "Server not found");
         }
 
         // Validate JWT token
         const jwtSecret = this.loadPersistedData();
         if (!jwtSecret) {
-          return res.status(500).json({ error: "Server configuration error" });
+          return this.sendError(res, 500, "Server configuration error");
         }
 
         try {
@@ -1026,9 +1698,7 @@ class MCPServerManager {
 
           if (decoded.serverId !== serverId) {
             console.log("Token serverId mismatch");
-            return res.status(403).json({
-              error: "Invalid token for this server",
-            });
+            return this.sendError(res, 403, "Invalid token for this server");
           }
 
           // Process deletion
@@ -1055,14 +1725,11 @@ class MCPServerManager {
           }
         } catch (jwtError) {
           console.error("Authentication error:", jwtError);
-          return res.status(401).json({ error: "Invalid token" });
+          return this.sendError(res, 401, "Invalid token");
         }
       } catch (error) {
         console.error("Error deleting server:", error);
-        res.status(500).json({
-          error: "Failed to delete server",
-          details: process.env.NODE_ENV === "development" ? error : undefined,
-        });
+        this.sendError(res, 500, "Failed to delete server");
       }
     });
 
@@ -1073,7 +1740,7 @@ class MCPServerManager {
         res.json(stats);
       } catch (error) {
         console.error("Error getting server stats:", error);
-        res.status(500).json({ error: "Failed to get server statistics" });
+        this.sendError(res, 500, "Failed to get server statistics");
       }
     });
 
@@ -1082,9 +1749,28 @@ class MCPServerManager {
       try {
         console.log(`📡 Received ready notification for server ${serverId}`);
 
-        // If not in memory but we have high confidence it exists (e.g. from DB)
-        // processStatusUpdate will handle the missing server case by logging a warning.
-        // However, we want to be more proactive here.
+        const token = this.extractRequestToken(req);
+        if (!token) {
+          return this.sendError(res, 401, "Token required");
+        }
+
+        try {
+          if (!this.validateServerToken(serverId, token)) {
+            return this.sendError(res, 403, "Invalid token for this server");
+          }
+        } catch (authError) {
+          console.error("Ready notification authentication error:", authError);
+          return this.sendError(res, 401, "Invalid token");
+        }
+
+        const server = await this.ensureServerLoaded(serverId);
+        if (!server) {
+          const status = this.logsCollection ? 404 : 503;
+          const message = this.logsCollection
+            ? "Server not found"
+            : "Database not available";
+          return this.sendError(res, status, message);
+        }
 
         const message: StatusUpdateMessage = {
           serverId,
@@ -1097,22 +1783,13 @@ class MCPServerManager {
           await this.processStatusUpdate(message);
         }
 
-        // Deep check if it survived processStatusUpdate
-        if (!this.servers.has(serverId)) {
-          console.warn(`⚠️ Server ${serverId} still not found in memory after update attempt.`);
-          // We still return true because it might be being processed via RabbitMQ
-        }
-
         res.json({ success: true, message: "Status updated to running" });
       } catch (error) {
         console.error(
           `❌ Error processing ready notification for ${serverId}:`,
           error,
         );
-        res.status(500).json({ 
-          error: "Failed to process ready notification",
-          details: error instanceof Error ? error.message : String(error)
-        });
+        this.sendError(res, 500, "Failed to process ready notification");
       }
     });
 
@@ -1148,46 +1825,52 @@ class MCPServerManager {
         const tsFileName = `${serverId}.ts`;
         const tsPath = path.join(tsDir, tsFileName);
 
-        // Check for existence
-        if (!inputPath || !fs.existsSync(yamlPath) || !fs.existsSync(tsPath)) {
-          return res.status(404).json({
-            error: "One or more artifacts not found",
-            exists: {
-              input: !!inputPath,
-              openapi: fs.existsSync(yamlPath),
-              typescript: fs.existsSync(tsPath),
-            },
-          });
-        }
+        const artifactExists = {
+          input: !!inputPath,
+          openapi: fs.existsSync(yamlPath),
+          typescript: fs.existsSync(tsPath),
+        };
+        const complete =
+          artifactExists.input &&
+          artifactExists.openapi &&
+          artifactExists.typescript;
 
-        // Read contents
-        const inputContent = fs.readFileSync(inputPath, "utf8");
-        const yamlContent = fs.readFileSync(yamlPath, "utf8");
-        const tsContent = fs.readFileSync(tsPath, "utf8");
-
-        res.json({
+        const response = {
           serverId,
+          complete,
+          ...(complete
+            ? {}
+            : { message: "One or more artifacts are not available yet" }),
+          exists: artifactExists,
           files: {
-            input: {
-              name: inputFileName,
-              content: inputContent,
-            },
-            openapi: {
-              name: yamlFileName,
-              content: yamlContent,
-            },
-            typescript: {
-              name: tsFileName,
-              content: tsContent,
-            },
+            input: artifactExists.input
+              ? {
+                  name: inputFileName,
+                  content: fs.readFileSync(inputPath, "utf8"),
+                }
+              : null,
+            openapi: artifactExists.openapi
+              ? {
+                  name: yamlFileName,
+                  content: fs.readFileSync(yamlPath, "utf8"),
+                }
+              : null,
+            typescript: artifactExists.typescript
+              ? {
+                  name: tsFileName,
+                  content: fs.readFileSync(tsPath, "utf8"),
+                }
+              : null,
           },
-        });
+        };
+
+        res.status(complete ? 200 : 206).json(response);
       } catch (error) {
         console.error(
           `Error retrieving files for ${req.params.serverId}:`,
           error,
         );
-        res.status(500).json({ error: "Failed to retrieve generated files" });
+        this.sendError(res, 500, "Failed to retrieve generated files");
       }
     });
   }
@@ -1209,10 +1892,10 @@ class MCPServerManager {
     dockerfilePath?: string,
   ): Promise<string> {
     try {
-      // Kiểm tra image có tồn tại không
+      // Check whether the configured image already exists.
       let imageExists = await this.checkImageExists(config.dockerImage);
 
-      // Nếu image không tồn tại, build từ Dockerfile
+      // If the image does not exist, build it from the Dockerfile.
       if (!imageExists) {
         const buildPath = dockerfilePath || this.defaultDockerfilePath;
         if (!buildPath) {
@@ -1270,9 +1953,20 @@ class MCPServerManager {
         Env: [
           `SERVER_ID=${config.serverId}`,
           `JWT_TOKEN=${config.token}`,
-          `MANAGER_URL=${process.env.MANAGER_URL || "http://host.docker.internal:8080"}`,
-          `RAG_CONTEXT=${(config as any).ragContext || ""}`,
+          `MANAGER_URL=${process.env.MANAGER_URL || "http://docker-manager:8080"}`,
+          `RAG_CONTEXT=${config.ragContext || ""}`,
+          `BUILD_REQUEST_ID=${config.buildRequestId || config.serverId}`,
+          `MONGO_URI=${process.env.MONGO_URI || ""}`,
+          `SKILL_FEEDBACK_ENABLED=${process.env.SKILL_FEEDBACK_ENABLED || ""}`,
+          `DYNAMIC_SKILL_SELECTION=${process.env.DYNAMIC_SKILL_SELECTION || ""}`,
+          `SKILL_SELECTION_VARIANT=${process.env.SKILL_SELECTION_VARIANT || ""}`,
+          `SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD=${process.env.SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD || ""}`,
         ],
+        NetworkingConfig: {
+          EndpointsConfig: {
+            [this.mcpNetworkName]: {},
+          },
+        },
       });
 
       config.buildLogs?.push("Starting container...");
@@ -1318,14 +2012,14 @@ class MCPServerManager {
       config.buildLogs?.push(`Build context: ${context}`);
       config.buildLogs?.push(`Dockerfile: ${dockerfileName}`);
 
-      // tạo tar stream của context directory
+      // Create a tar stream for the build context directory.
       const tarStream = tar.pack(context);
 
       await new Promise<void>((resolve, reject) => {
         this.docker.buildImage(
           tarStream,
           {
-            t: config.dockerImage, // tag cho image
+            t: config.dockerImage, // Image tag.
             dockerfile: "Dockerfile",
           },
           (err, output) => {
@@ -1334,10 +2028,10 @@ class MCPServerManager {
               return reject(err);
             }
 
-            // ép kiểu output sang NodeJS.ReadableStream
+            // Cast output to a Node.js readable stream.
             const stream = output as NodeJS.ReadableStream;
 
-            // đọc stream log từ docker
+            // Read Docker build progress from the stream.
             this.docker.modem.followProgress(
               stream,
               (doneErr, res) => {
@@ -1369,7 +2063,7 @@ class MCPServerManager {
     try {
       const container = this.docker.getContainer(containerId);
 
-      // Kiểm tra container có đang chạy không
+      // Check whether the container is currently running.
       const containerInfo = await container.inspect();
       if (containerInfo.State.Running) {
         await container.stop({ t: 10 }); // Graceful shutdown 10s
@@ -1378,7 +2072,7 @@ class MCPServerManager {
       await container.remove({ force: true });
     } catch (error) {
       console.error(`Error removing container ${containerId}:`, error);
-      // Không throw error để không block việc cleanup
+      // Do not throw here; cleanup should continue even if Docker removal fails.
     }
   }
 
@@ -1397,8 +2091,10 @@ class MCPServerManager {
 
   private async getAvailablePort(): Promise<number> {
     let port = this.basePort;
+    const scanLimit = Number(process.env.MCP_PORT_SCAN_LIMIT || 1000);
+    const maxPort = this.basePort + Math.max(1, scanLimit);
 
-    while (true) {
+    while (port < maxPort) {
       // Skip Express server port
       if (port === this.expressPort) {
         port++;
@@ -1419,6 +2115,10 @@ class MCPServerManager {
 
       port++;
     }
+
+    throw new Error(
+      `No available port found in range ${this.basePort}-${maxPort - 1}`,
+    );
   }
 
   private generateClaudeConfig(serverId: string, config: ServerLogEntry) {
@@ -1468,7 +2168,7 @@ class MCPServerManager {
         return;
       }
 
-      // Stop và remove container
+      // Stop and remove container.
       if (server.containerId) {
         await this.removeContainer(server.containerId);
       }
@@ -1488,6 +2188,20 @@ class MCPServerManager {
 
   public async start(port: number = 8080) {
     this.expressPort = port;
+
+    if (FEATURE_FLAGS.DYNAMIC_SKILL_SELECTION) {
+      try {
+        console.log(
+          "[SkillSelect] Pre-warming SkillSelectionAgent at startup...",
+        );
+        await SkillSelectionAgent.prewarm({ tokenBudget: 30_000 });
+      } catch (error) {
+        console.warn(
+          "[SkillSelect] Pre-warm failed; dynamic selection will fall back per request:",
+          error,
+        );
+      }
+    }
     this.usedPorts.add(port);
 
     // ✅ Ensure MongoDB is initialized before using it
@@ -1574,19 +2288,24 @@ class MCPServerManager {
   }
 }
 
-const manager = new MCPServerManager("./");
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  const manager = new MCPServerManager("./");
 
-// Handle process termination
-process.on("SIGINT", async () => {
-  console.log("Received SIGINT, shutting down gracefully...");
-  await manager.gracefulShutdown();
-  process.exit(0);
-});
+  // Handle process termination
+  process.on("SIGINT", async () => {
+    console.log("Received SIGINT, shutting down gracefully...");
+    await manager.gracefulShutdown();
+    process.exit(0);
+  });
 
-process.on("SIGTERM", async () => {
-  console.log("Received SIGTERM, shutting down gracefully...");
-  await manager.gracefulShutdown();
-  process.exit(0);
-});
+  process.on("SIGTERM", async () => {
+    console.log("Received SIGTERM, shutting down gracefully...");
+    await manager.gracefulShutdown();
+    process.exit(0);
+  });
 
-manager.start(8080);
+  manager.start(8080);
+}

@@ -1,3 +1,11 @@
+---
+id: mcp_zod_mapping
+category: mcp
+tags: [zod, schema, mapping]
+priority: 80
+tokenCost: 400
+---
+
 // OpenAPI Schema to Zod Schema Mapping (Latest MCP Server Syntax)
 CONVERSION RULES:
 

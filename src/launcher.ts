@@ -7,6 +7,56 @@ import { exec } from "child_process";
 const program = new Command();
 const serverId = process.env.SERVER_ID;
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForHealth(port: string, hasExited: () => boolean) {
+  const deadline = Date.now() + 30_000;
+  const healthUrl = `http://127.0.0.1:${port}/health`;
+
+  while (Date.now() < deadline) {
+    if (hasExited()) {
+      throw new Error("Server process exited before health check passed");
+    }
+
+    try {
+      const response = await fetch(healthUrl);
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Server may still be starting.
+    }
+
+    await sleep(1000);
+  }
+
+  throw new Error(`Timed out waiting for health check: ${healthUrl}`);
+}
+
+async function notifyManagerReady(serverId: string) {
+  const jwtToken = process.env.JWT_TOKEN;
+  if (!jwtToken) {
+    throw new Error("JWT_TOKEN environment variable is required");
+  }
+
+  const managerUrl = process.env.MANAGER_URL || "http://localhost:8080";
+  const response = await fetch(`${managerUrl}/api/mcp/${serverId}/ready`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${jwtToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ serverId, status: "running" }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `Failed to notify manager: ${response.status} ${response.statusText} ${body}`.trim(),
+    );
+  }
+}
+
 program.action(() => {
   // Validate SERVER_ID
   if (!serverId) {
@@ -51,6 +101,7 @@ program.action(() => {
     if (stdout) console.log(stdout);
     if (stderr) console.error(stderr);
   });
+  let exited = false;
 
   // Keep the process alive and handle signals
   child.stdout?.on("data", (data) => {
@@ -62,8 +113,20 @@ program.action(() => {
   });
 
   child.on("close", (code) => {
+    exited = true;
     console.log(`\n💀 Server process exited with code ${code}`);
     process.exit(code || 0);
+  });
+
+  void (async () => {
+    const port = process.env.PORT || "3000";
+    await waitForHealth(port, () => exited);
+    await notifyManagerReady(serverId);
+    console.log("✅ Manager notified that server is ready");
+  })().catch((error) => {
+    console.error("❌ Server readiness failed:", error);
+    child.kill("SIGTERM");
+    process.exit(1);
   });
 
   // Handle Ctrl+C gracefully

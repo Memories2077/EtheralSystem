@@ -1,3 +1,15 @@
+---
+id: auth_input_format
+category: auth
+tags: [input, format, mcp]
+priority: 90
+tokenCost: 200
+conditions:
+  - field: auth.hasAuth
+    operator: equals
+    value: true
+---
+
 Reddit API Usage Guide
 Step 1: Get Access Token
 curl -X POST \
