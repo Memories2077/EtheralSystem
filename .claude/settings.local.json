@@ -27,7 +27,19 @@
       "Bash(node *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(awk '{print NR\": \"$0}')"
+      "Bash(awk '{print NR\": \"$0}')",
+      "Bash(docker compose ps *)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -X POST http://localhost:8080/api/mcp/create -H 'Content-Type: application/json' -d @/tmp/mcp_request.json)",
+      "Bash(docker exec *)",
+      "Bash(curl -s http://localhost:8080/api/mcp/servers)",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Bash(curl -s http://localhost:8081/mcp/a7024662-36e6-4045-8da2-5d04423cd85e/health)",
+      "Bash(docker port mcp-server-a7024662-36e6-4045-8da2-5d04423cd85e *)",
+      "Bash(curl *)",
+      "Bash(docker cp *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(docker compose *)"
     ]
   }
 }

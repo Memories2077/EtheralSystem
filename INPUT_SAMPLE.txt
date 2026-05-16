@@ -1,0 +1,93 @@
+Create a MCP Server from this API doc:
+JSONPlaceholder API Usage Guide
+Base URL: https://jsonplaceholder.typicode.com
+Authentication: Tất cả các endpoint đều Public (Không yêu cầu API Key). Lưu ý: đây là fake REST API dùng cho testing — mọi thao tác POST/PUT/PATCH/DELETE đều trả về response giả lập và không thực sự thay đổi dữ liệu.
+
+1. Posts Endpoints
+Data Model: Post Schema
+{
+  "id": "integer",
+  "userId": "integer",
+  "title": "string",
+  "body": "string"
+}
+A. Get All Posts
+•        Method: GET /posts
+•        Query Params: 
+o        userId (integer, optional): lọc theo user ID
+•        Response 200 OK: Array of Post objects.
+json
+[
+  { "id": "integer", "userId": "integer", "title": "string", "body": "string" }
+]
+B. Get a Single Post
+•        Method: GET /posts/{id}
+•        Response 200 OK: Một Post object.
+C. Create a Post
+•        Method: POST /posts
+•        Request Body:
+{ "title": "string", "body": "string", "userId": "integer" }
+•        Response 201 Created: Post object với id: 101 (giả lập).
+D. Update a Post
+•        Method: PUT /posts/{id}
+•        Description: Thay thế toàn bộ object.
+•        Request Body:
+{ "id": "integer", "title": "string", "body": "string", "userId": "integer" }
+•        Response 200 OK: Post object đã được cập nhật.
+E. Patch a Post
+•        Method: PATCH /posts/{id}
+•        Description: Cập nhật một phần object, chỉ gửi các field cần thay đổi.
+•        Request Body:
+{ "title": "string" }
+•        Response 200 OK: Post object đã được cập nhật.
+F. Delete a Post
+•        Method: DELETE /posts/{id}
+•        Response 200 OK.
+G. Get Comments of a Post
+•        Method: GET /posts/{id}/comments
+•        Description: Tương đương với GET /comments?postId={id}.
+•        Response 200 OK: Array of Comment objects thuộc post đó.
+json
+[
+  { "id": "integer", "postId": "integer", "name": "string", "email": "string", "body": "string" }
+]
+
+2. Comments Endpoints
+Data Model: Comment Schema
+{
+  "id": "integer",
+  "postId": "integer",
+  "name": "string",
+  "email": "string",
+  "body": "string"
+}
+A. Get All Comments
+•        Method: GET /comments
+•        Query Params: 
+o        postId (integer, optional): lọc theo post ID
+•        Response 200 OK: Array of Comment objects.
+json
+[
+  { "id": "integer", "postId": "integer", "name": "string", "email": "string", "body": "string" }
+]
+B. Get a Single Comment
+•        Method: GET /comments/{id}
+•        Response 200 OK: Một Comment object.
+C. Create a Comment
+•        Method: POST /comments
+•        Request Body:
+{ "postId": "integer", "name": "string", "email": "string", "body": "string" }
+•        Response 201 Created: Comment object vừa tạo (giả lập).
+D. Update a Comment
+•        Method: PUT /comments/{id}
+•        Description: Thay thế toàn bộ object.
+•        Request Body:
+{ "id": "integer", "postId": "integer", "name": "string", "email": "string", "body": "string" }
+•        Response 200 OK: Comment object đã được cập nhật.
+E. Patch a Comment
+•        Method: PATCH /comments/{id}
+•        Description: Cập nhật một phần object, chỉ gửi các field cần thay đổi.
+•        Response 200 OK: Comment object đã được cập nhật.
+F. Delete a Comment
+•        Method: DELETE /comments/{id}
+•        Response 200 OK.
