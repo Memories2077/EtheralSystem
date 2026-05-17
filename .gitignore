@@ -27,6 +27,7 @@ __pycache__/
 
 # Claude / AI tools
 .claude
+.codex/
 .playwright-mcp/
 
 # Build artifacts
@@ -36,3 +37,6 @@ __pycache__/
 data/
 *.pid
 .gstack/
+
+# Local screenshots
+/*.png
