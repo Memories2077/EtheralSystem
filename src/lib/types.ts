@@ -17,6 +17,7 @@ export interface ChatMessage {
 export interface ActiveMcpServer {
   url: string;
   name?: string;
+  serverId?: string;
   tools?: { name: string; description: string }[];
 }
 

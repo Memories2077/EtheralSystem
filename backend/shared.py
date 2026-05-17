@@ -25,6 +25,8 @@ DOCKER_HOST_REPLACEMENTS = {
     "172.17.0.1": "localhost",
 }
 DEFAULT_MCP_TIMEOUT = 10.0
+DEFAULT_USER_ID = "browser_user"
+DEFAULT_WORKSPACE_ID = "default_workspace"
 
 # Tool singleton cache
 _create_mcp_server_tool_instance = None
@@ -151,15 +153,167 @@ def normalize_docker_urls_in_dict(data: Dict[str, Any]) -> Dict[str, Any]:
             result[key] = new_value
         elif isinstance(value, dict):
             result[key] = normalize_docker_urls_in_dict(value)
+        elif isinstance(value, list):
+            normalized_list = []
+            for item in value:
+                if isinstance(item, str):
+                    new_item = item
+                    for docker_host, local_host in DOCKER_HOST_REPLACEMENTS.items():
+                        if docker_host in new_item:
+                            new_item = new_item.replace(docker_host, local_host)
+                    normalized_list.append(new_item)
+                elif isinstance(item, dict):
+                    normalized_list.append(normalize_docker_urls_in_dict(item))
+                else:
+                    normalized_list.append(item)
+            result[key] = normalized_list
         else:
             result[key] = value
     return result
 
 
+# ==================== Request Context ====================
+
+def normalize_request_context(context: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """Return a stable cross-service context for MetaClaw/LangGraph/mcp-gen."""
+    raw = context or {}
+
+    def clean(key: str, default: str = "") -> str:
+        value = raw.get(key, default)
+        return str(value or default).strip()
+
+    session_id = clean("sessionId") or clean("session_id") or "chat-session"
+    build_request_id = clean("buildRequestId") or clean("build_request_id")
+    user_id = clean("userId") or clean("user_id") or DEFAULT_USER_ID
+    workspace_id = clean("workspaceId") or clean("workspace_id") or DEFAULT_WORKSPACE_ID
+    email = clean("email") or f"{user_id}@local"
+    memory_scope = clean("memoryScope") or clean("memory_scope") or f"user:{user_id}|workspace:{workspace_id}"
+
+    return {
+        "sessionId": session_id,
+        "buildRequestId": build_request_id,
+        "userId": user_id,
+        "workspaceId": workspace_id,
+        "email": email,
+        "memoryScope": memory_scope,
+    }
+
+
+def build_metaclaw_headers(
+    context: Optional[Dict[str, Any]] = None,
+    *,
+    turn_type: str,
+    session_done: bool = False,
+) -> Dict[str, str]:
+    """Build MetaClaw memory/session headers from normalized request context."""
+    normalized = normalize_request_context(context)
+    headers = {
+        "X-Session-Id": normalized["sessionId"],
+        "X-Turn-Type": turn_type,
+        "X-Session-Done": "true" if session_done else "false",
+        "X-Memory-Scope": normalized["memoryScope"],
+        "X-User-Id": normalized["userId"],
+        "X-Workspace-Id": normalized["workspaceId"],
+    }
+    return {key: value for key, value in headers.items() if value}
+
+
+def _extract_json_payload(text: str) -> Optional[Dict[str, Any]]:
+    """Extract a JSON object from a streamed LangGraph message."""
+    if not text:
+        return None
+
+    stripped = text.strip()
+    candidates = []
+
+    if "```json" in stripped:
+        try:
+            candidates.append(stripped.split("```json", 1)[1].split("```", 1)[0].strip())
+        except Exception:
+            pass
+
+    if "```" in stripped:
+        try:
+            candidates.append(stripped.split("```", 1)[1].split("```", 1)[0].strip())
+        except Exception:
+            pass
+
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(stripped[start : end + 1])
+
+    candidates.append(stripped)
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            continue
+    return None
+
+
+def _extract_mcp_server_url(payload: Dict[str, Any]) -> str:
+    """Pull the tokenized streamable MCP URL from a Claude/mcp-remote config."""
+    config = payload.get("config") or payload.get("claudeConfig") or {}
+    if not isinstance(config, dict):
+        return ""
+
+    servers = config.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        return ""
+
+    for server_config in servers.values():
+        if not isinstance(server_config, dict):
+            continue
+        args = server_config.get("args", [])
+        if not isinstance(args, list):
+            continue
+        for arg in args:
+            if isinstance(arg, str) and (arg.startswith("http://") or arg.startswith("https://")):
+                return arg
+    return ""
+
+
+def build_mcp_complete_payload(result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Create the structured SSE completion event expected by the frontend."""
+    normalized_result = normalize_docker_urls_in_dict(result or {})
+    server_id = str(normalized_result.get("serverId") or "").strip()
+    status = str(normalized_result.get("status") or "unknown").strip()
+    mcp_server_url = _extract_mcp_server_url(normalized_result)
+    payload: Dict[str, Any] = {
+        "type": "mcp_build_complete",
+        "status": status,
+        "message": (
+            f"MCP Server {server_id} is {status}."
+            if server_id
+            else "MCP server build stream completed."
+        ),
+    }
+    if server_id:
+        payload["serverId"] = server_id
+    if normalized_result.get("publicUrl"):
+        payload["publicUrl"] = normalized_result["publicUrl"]
+    if mcp_server_url:
+        payload["mcpServerUrl"] = mcp_server_url
+    if normalized_result.get("config"):
+        payload["config"] = normalized_result["config"]
+    if normalized_result.get("claudeConfig"):
+        payload["claudeConfig"] = normalized_result["claudeConfig"]
+    if normalized_result.get("buildRequestId"):
+        payload["buildRequestId"] = normalized_result["buildRequestId"]
+    if normalized_result.get("postCreation"):
+        payload["postCreation"] = normalized_result["postCreation"]
+    return payload
+
+
 # ==================== LangGraph Streaming ====================
 
 async def stream_langgraph_build(
-    requirements: str, langgraph_url: str
+    requirements: str,
+    langgraph_url: str,
+    request_context: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream build progress from LangGraph service using the LangGraph SDK.
@@ -180,14 +334,25 @@ async def stream_langgraph_build(
         logger.info(f"Connected to LangGraph service at {normalized_url}")
         thread = await lg_client.threads.create()
 
+        request_context = normalize_request_context(request_context)
         partial_content_lengths = {}
         streamed_ids = set()
         last_msg_id = ""
+        latest_build_result: Optional[Dict[str, Any]] = None
 
         async for lg_chunk in lg_client.runs.stream(
             thread["thread_id"],
             "agent",
-            input={"messages": [{"role": "user", "content": requirements}]},
+            input={
+                "messages": [{"role": "user", "content": requirements}],
+                "raw_api_doc": requirements,
+                "session_id": request_context["sessionId"],
+                "build_request_id": request_context["buildRequestId"],
+                "user_id": request_context["userId"],
+                "workspace_id": request_context["workspaceId"],
+                "email": request_context["email"],
+                "memory_scope": request_context["memoryScope"],
+            },
             stream_mode="messages"
         ):
             event_type = lg_chunk.event
@@ -224,6 +389,9 @@ async def stream_langgraph_build(
                     msg_id = msg_chunk.get("id")
                     content = msg_chunk.get("content", "")
                     if msg_id and isinstance(content, str):
+                        parsed_result = _extract_json_payload(content)
+                        if parsed_result and parsed_result.get("serverId"):
+                            latest_build_result = parsed_result
                         if msg_id in streamed_ids:
                             yield f"data: {json.dumps({'content': chr(10)})}\n\n"
                         else:
@@ -234,7 +402,7 @@ async def stream_langgraph_build(
                         last_msg_id = ""
 
         logger.info("--- LangGraph build completed ---")
-        yield f"data: {json.dumps({'type': 'mcp_build_complete', 'status': 'running', 'message': 'MCP Server built successfully!'})}\n\n"
+        yield f"data: {json.dumps(build_mcp_complete_payload(latest_build_result))}\n\n"
 
     except Exception as lg_err:
         logger.exception("LangGraph build error")

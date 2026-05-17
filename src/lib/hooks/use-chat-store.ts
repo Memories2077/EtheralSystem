@@ -34,6 +34,7 @@ interface ChatState {
 }
 
 const SESSION_TIMEOUT = 1000 * 60 * 60; // 1 hour
+const CLIENT_ID_STORAGE_KEY = "ethereal-client-id";
 
 const defaultSettings: ChatSettings = {
   provider: "gemini",
@@ -41,6 +42,29 @@ const defaultSettings: ChatSettings = {
   temperature: 0.7,
   maxTokens: 2048,
   mcpServers: [],
+};
+
+const getStableClientId = () => {
+  if (typeof window === "undefined") return "browser_user";
+  const existing = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+  if (existing) return existing;
+  const next = `browser_${uuidv4()}`;
+  window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, next);
+  return next;
+};
+
+const extractMcpRemoteUrl = (payload: any): string => {
+  if (typeof payload?.mcpServerUrl === "string") return payload.mcpServerUrl;
+  const config = payload?.config || payload?.claudeConfig;
+  const servers = config?.mcpServers || {};
+  for (const server of Object.values(servers) as any[]) {
+    const args = Array.isArray(server?.args) ? server.args : [];
+    const url = args.find(
+      (arg: unknown) => typeof arg === "string" && /^https?:\/\//.test(arg),
+    );
+    if (url) return url;
+  }
+  return "";
 };
 
 const MCP_BUILD_TRANSCRIPT_PATTERNS = [
@@ -207,6 +231,9 @@ export const useChatStore = create<ChatState>()(
         set({ messages: updatedMessages });
 
         const aiMessageId = uuidv4();
+        const buildRequestId = userMessage.id;
+        const clientId = getStableClientId();
+        const workspaceId = "default_workspace";
 
         try {
           const historyForBackend = updatedMessages
@@ -225,6 +252,12 @@ export const useChatStore = create<ChatState>()(
               model: settings?.model,
               temperature: settings?.temperature,
               mcpServers: settings?.mcpServers?.map((s) => s.url) || [],
+              sessionId: chatId,
+              buildRequestId,
+              userId: clientId,
+              workspaceId,
+              email: `${clientId}@local`,
+              memoryScope: `user:${clientId}|workspace:${workspaceId}`,
             }),
           });
 
@@ -266,7 +299,41 @@ export const useChatStore = create<ChatState>()(
             }
           };
 
-          const handleSsePayload = (dataStr: string) => {
+          const addGeneratedMcpServer = async (data: any) => {
+            const mcpUrl = extractMcpRemoteUrl(data);
+            const serverId = typeof data?.serverId === "string" ? data.serverId : "";
+            if (!mcpUrl || data?.status !== "running") return;
+            if (get().settings.mcpServers.some((server) => server.url === mcpUrl)) return;
+
+            try {
+              const metadataResponse = await fetch(BACKEND_API.mcpMetadata(), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url: mcpUrl }),
+              });
+              const metadata = await metadataResponse.json();
+              if (!metadataResponse.ok || metadata.status === "error") return;
+
+              set((state) => ({
+                settings: {
+                  ...state.settings,
+                  mcpServers: [
+                    ...state.settings.mcpServers,
+                    {
+                      name: metadata.name || serverId || "Generated MCP Server",
+                      url: mcpUrl,
+                      serverId: serverId || undefined,
+                      tools: metadata.tools || [],
+                    },
+                  ],
+                },
+              }));
+            } catch (error) {
+              logError("Generated MCP activation failed:", error);
+            }
+          };
+
+          const handleSsePayload = async (dataStr: string) => {
             if (dataStr === "[DONE]") {
               streamComplete = true;
               return;
@@ -285,8 +352,13 @@ export const useChatStore = create<ChatState>()(
             }
 
             if (eventType === "mcp_build_complete") {
-              fullContent += "\n\n✅ MCP Server built successfully!\n\n";
+              const serverLine = data.serverId ? `\nServer ID: ${data.serverId}` : "";
+              const url = extractMcpRemoteUrl(data);
+              const urlLine = url ? `\nMCP URL: ${url}` : "";
+              const status = data.status || "unknown";
+              fullContent += `\n\nMCP server build ${status}.${serverLine}${urlLine}\n\n`;
               upsertAiMessage(fullContent);
+              await addGeneratedMcpServer(data);
               return;
             }
 
@@ -318,7 +390,7 @@ export const useChatStore = create<ChatState>()(
                 .map((entry) => entry.replace(/^data:\s?/, ""));
 
               for (const dataStr of dataLines) {
-                handleSsePayload(dataStr.trim());
+                await handleSsePayload(dataStr.trim());
                 if (streamComplete) break;
               }
 
@@ -336,7 +408,7 @@ export const useChatStore = create<ChatState>()(
               .map((entry) => entry.replace(/^data:\s?/, ""));
 
             for (const dataStr of dataLines) {
-              handleSsePayload(dataStr.trim());
+              await handleSsePayload(dataStr.trim());
               if (streamComplete) break;
             }
           }
