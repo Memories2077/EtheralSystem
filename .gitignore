@@ -27,6 +27,7 @@ __pycache__/
 
 # Claude / AI tools
 .claude
+.playwright-mcp/
 
 # Build artifacts
 *.tsbuildinfo
@@ -34,3 +35,4 @@ __pycache__/
 # Runtime data
 data/
 *.pid
+.gstack/
