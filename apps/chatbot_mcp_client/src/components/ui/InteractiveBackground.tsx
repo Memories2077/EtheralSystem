@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useEffect, useCallback } from "react";
 import { motion, useSpring, useMotionValue } from "framer-motion";
 
 export const InteractiveBackground = () => {
@@ -46,7 +46,15 @@ export const InteractiveBackground = () => {
       />
       
       {/* Lớp nền vân (Grainy Texture) để tạo cảm giác cao cấp */}
-      <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-overlay bg-[url('https://grainy-gradients.vercel.app/noise.svg')]" />
+      <div
+        className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-overlay"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 25% 25%, currentColor 1px, transparent 1px), radial-gradient(circle at 75% 75%, currentColor 1px, transparent 1px)",
+          backgroundSize: "4px 4px",
+          color: "#ffffff",
+        }}
+      />
       
       {/* Các đốm màu cố định để tạo chiều sâu */}
       <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-primary/10 blur-[150px] rounded-full animate-pulse" />

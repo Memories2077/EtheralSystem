@@ -19,33 +19,12 @@ COPY apps/langChain-application/package.json apps/langChain-application/package.
 RUN bun install --frozen-lockfile
 
 # ---------------------------------------------------------------------------
-# Stage: builder (build Next.js frontend)
+# Stage: bun-prod-deps (production-only dependency layer for Bun/Node services)
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14-alpine AS builder
-
-ARG NEXT_PUBLIC_BACKEND_URL
-ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
+FROM oven/bun:1.3.14-alpine AS bun-prod-deps
 
 WORKDIR /repo
 
-COPY --from=bun-deps /repo/node_modules node_modules
-COPY package.json bun.lock turbo.json ./
-COPY apps/chatbot_mcp_client/package.json apps/chatbot_mcp_client/package.json
-COPY apps/mcp-gen/package.json apps/mcp-gen/package.json
-COPY apps/langChain-application/package.json apps/langChain-application/package.json
-COPY apps/chatbot_mcp_client apps/chatbot_mcp_client
-
-WORKDIR /repo/apps/chatbot_mcp_client
-RUN bun run build
-
-# ---------------------------------------------------------------------------
-# Stage: chatbot-frontend (Next.js production runtime)
-# ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14-alpine AS chatbot-frontend
-
-WORKDIR /repo
-
-COPY --from=bun-deps /repo/node_modules node_modules
 COPY package.json bun.lock turbo.json ./
 COPY apps/chatbot_mcp_client/package.json apps/chatbot_mcp_client/package.json
 COPY apps/mcp-gen/package.json apps/mcp-gen/package.json
@@ -53,9 +32,46 @@ COPY apps/langChain-application/package.json apps/langChain-application/package.
 
 RUN bun install --frozen-lockfile --production
 
-COPY --from=builder /repo/apps/chatbot_mcp_client/.next apps/chatbot_mcp_client/.next
-COPY --from=builder /repo/apps/chatbot_mcp_client/public apps/chatbot_mcp_client/public
-COPY --from=builder /repo/apps/chatbot_mcp_client/next.config.ts apps/chatbot_mcp_client/next.config.ts
+# ---------------------------------------------------------------------------
+# Stage: bun-builder-base (shared build environment for Bun/TypeScript apps)
+# ---------------------------------------------------------------------------
+FROM bun-deps AS bun-builder-base
+
+WORKDIR /repo
+
+# ---------------------------------------------------------------------------
+# Stage: chatbot-builder (build Next.js frontend)
+# ---------------------------------------------------------------------------
+FROM bun-builder-base AS chatbot-builder
+
+ARG NEXT_PUBLIC_BACKEND_URL
+ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
+
+WORKDIR /repo
+
+COPY apps/chatbot_mcp_client apps/chatbot_mcp_client
+
+WORKDIR /repo/apps/chatbot_mcp_client
+RUN mkdir -p public
+RUN bun run build
+
+# ---------------------------------------------------------------------------
+# Stage: bun-runtime-base (shared production runtime for Bun/Node services)
+# ---------------------------------------------------------------------------
+FROM bun-prod-deps AS bun-runtime-base
+
+WORKDIR /repo
+
+ENV NODE_ENV=production
+
+# ---------------------------------------------------------------------------
+# Stage: chatbot-frontend (Next.js production runtime)
+# ---------------------------------------------------------------------------
+FROM bun-runtime-base AS chatbot-frontend
+
+COPY --from=chatbot-builder /repo/apps/chatbot_mcp_client/.next apps/chatbot_mcp_client/.next
+COPY --from=chatbot-builder /repo/apps/chatbot_mcp_client/public apps/chatbot_mcp_client/public
+COPY --from=chatbot-builder /repo/apps/chatbot_mcp_client/next.config.ts apps/chatbot_mcp_client/next.config.ts
 
 WORKDIR /repo/apps/chatbot_mcp_client
 
@@ -64,30 +80,30 @@ EXPOSE 9002
 CMD ["bun", "run", "start"]
 
 # ---------------------------------------------------------------------------
-# Stage: mcp-build (install deps + copy source for TypeScript compile)
+# Stage: mcp-build (typecheck MCP Gen with shared TypeScript build deps)
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14-alpine AS mcp-build
+FROM bun-builder-base AS mcp-build
 
-WORKDIR /repo
-
-COPY --from=bun-deps /repo/node_modules node_modules
-COPY package.json bun.lock turbo.json ./
-COPY apps/chatbot_mcp_client/package.json apps/chatbot_mcp_client/package.json
-COPY apps/mcp-gen/package.json apps/mcp-gen/package.json
-COPY apps/langChain-application/package.json apps/langChain-application/package.json
 COPY apps/mcp-gen apps/mcp-gen
 
 WORKDIR /repo/apps/mcp-gen
-RUN bun install --frozen-lockfile
+RUN bun run build
+RUN touch /tmp/mcp-build-ok
+
+# ---------------------------------------------------------------------------
+# Stage: mcp-runtime-base (shared MCP Gen production runtime)
+# ---------------------------------------------------------------------------
+FROM bun-runtime-base AS mcp-runtime-base
+
+WORKDIR /repo/apps/mcp-gen
+
+COPY --from=mcp-build /tmp/mcp-build-ok /tmp/mcp-build-ok
+COPY apps/mcp-gen .
 
 # ---------------------------------------------------------------------------
 # Stage: mcp-gen-manager (MCP server manager runtime)
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14-alpine AS mcp-gen-manager
-
-WORKDIR /repo/apps/mcp-gen
-
-COPY --from=mcp-build /repo/apps/mcp-gen .
+FROM mcp-runtime-base AS mcp-gen-manager
 
 EXPOSE 8080
 
@@ -96,11 +112,7 @@ CMD ["bun", "./src/mcp-server-manager.ts"]
 # ---------------------------------------------------------------------------
 # Stage: mcp-gen-proxy (Dynamic proxy runtime)
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14-alpine AS mcp-gen-proxy
-
-WORKDIR /repo/apps/mcp-gen
-
-COPY --from=mcp-build /repo/apps/mcp-gen .
+FROM mcp-runtime-base AS mcp-gen-proxy
 
 EXPOSE 8081
 
