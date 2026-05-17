@@ -1,0 +1,110 @@
+"""
+MongoDB Connection Management
+
+Provides async MongoDB client using motor.
+"""
+import asyncio
+from typing import Optional
+from motor.motor_asyncio import AsyncIOMotorClient
+from config import config
+from loguru import logger
+
+
+class MongoDB:
+    """Singleton MongoDB connection manager."""
+    client: Optional[AsyncIOMotorClient] = None
+    db = None
+    _connect_lock = asyncio.Lock()  # Class-level lock to prevent concurrent initialization
+
+    @classmethod
+    async def connect(cls) -> None:
+        """Initialize MongoDB connection and create indexes."""
+        async with cls._connect_lock:
+            if cls.client is not None:
+                return
+
+        try:
+            cls.client = AsyncIOMotorClient(
+                config.mongodb_url,
+                serverSelectionTimeoutMS=5000,
+                maxPoolSize=10,
+                minPoolSize=1,
+            )
+            cls.db = cls.client[config.mongodb_db]
+
+            # Verify connection
+            await cls.client.admin.command('ping')
+            # Log only database name, not full connection string which may contain credentials
+            logger.info(f"Connected to MongoDB database: {config.mongodb_db}")
+
+            # Create indexes for feedback queries
+            await cls._create_indexes()
+        except Exception as e:
+            logger.error(f"Failed to connect to MongoDB: {e}")
+            raise
+
+    @classmethod
+    async def _create_indexes(cls) -> None:
+        """Create indexes for optimal query performance."""
+        logs_collection = cls.db.logs if cls.db is not None else None
+        if logs_collection is not None:
+            try:
+                # First, check for and handle documents with null/missing messageId
+                # These would violate the unique index constraint
+                duplicate_check = await logs_collection.count_documents({
+                    "$or": [
+                        {"messageId": None},
+                        {"messageId": {"$exists": False}}
+                    ]
+                })
+
+                if duplicate_check > 0:
+                    logger.warning(f"Found {duplicate_check} documents with null/missing messageId in logs collection")
+                    logger.warning("These documents will be excluded from the unique index (sparse index)")
+
+                # Index on messageId for fast feedback lookups (unique for upsert)
+                # Use sparse index to only include documents where messageId exists and is not null.
+                # Sparse indexes automatically exclude documents with missing or null field values.
+                await logs_collection.create_index(
+                    "messageId",
+                    unique=True,
+                    sparse=True
+                )
+
+                # Index on serverId for filtering feedback by MCP server
+                await logs_collection.create_index("serverId")
+                # Index on timestamp for potential sorting/analytics
+                await logs_collection.create_index("timestamp")
+                logger.info("Created MongoDB indexes for logs collection")
+            except Exception as e:
+                logger.error(f"Index creation failed: {e}")
+                raise
+
+    @classmethod
+    async def disconnect(cls) -> None:
+        """Close MongoDB connection."""
+        if cls.client:
+            cls.client.close()
+            cls.client = None
+            cls.db = None
+            logger.info("MongoDB connection closed")
+
+    @classmethod
+    def get_database(cls):
+        """Get database instance."""
+        if cls.db is None:
+            raise RuntimeError("MongoDB not initialized. Call connect() first.")
+        return cls.db
+
+    @classmethod
+    def get_collection(cls, collection_name: str):
+        """Get a collection by name."""
+        db = cls.get_database()
+        return db[collection_name]
+
+
+# Convenience function to get logs collection
+async def get_logs_collection():
+    """Get the logs collection with proper initialization."""
+    await MongoDB.connect()
+    return MongoDB.get_collection("logs")

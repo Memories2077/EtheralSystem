@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+pydantic
+mcp
+langchain
+langchain-mcp-adapters
+langchain-google-genai
+langchain-groq
+langgraph
+python-dotenv
+requests
+flask
+langchain-openai
+motor
+python-multipart
+loguru
