@@ -6,7 +6,7 @@ services:
     image: mongo:7
     container_name: mongodb
     ports:
-      - "27017:27017"
+      - "${MONGO_HOST_PORT:-27017}:27017"
     volumes:
       - mongodb_data:/data/db
     restart: unless-stopped
@@ -77,6 +77,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - jwt_data:/repo/apps/mcp-gen/data
+      - shared_input:/repo/apps/mcp-gen/input
+      - shared_openapi_spec:/repo/apps/mcp-gen/src-generated-yaml
+      - shared_mcpserver_ts:/repo/apps/mcp-gen/src-generated-ts
     environment:
       - USE_DOCKER_PING=false
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8081}
@@ -87,10 +90,24 @@ services:
       - MANAGER_URL=${MANAGER_URL:-http://docker-manager:8080}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:9002}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - METACLAW_API_KEY=${METACLAW_API_KEY:-}
+      - METACLAW_ENABLED=${METACLAW_ENABLED:-false}
+      - METACLAW_BASE_URL=${METACLAW_BASE_URL:-http://host.docker.internal:30000/v1}
+      - METACLAW_MODEL=${METACLAW_MODEL:-qwen/qwen3-next-80b-a3b-instruct}
+      - MCP_NETWORK=${MCP_NETWORK:-etheralsystem_etheral-network}
+      - MCP_SHARED_INPUT_VOLUME=${MCP_SHARED_INPUT_VOLUME:-etheralsystem_shared_input}
+      - MCP_SHARED_OPENAPI_SPEC_VOLUME=${MCP_SHARED_OPENAPI_SPEC_VOLUME:-etheralsystem_shared_openapi_spec}
+      - MCP_SHARED_MCPSERVER_TS_VOLUME=${MCP_SHARED_MCPSERVER_TS_VOLUME:-etheralsystem_shared_mcpserver_ts}
+      - DEFAULT_MCP_IMAGE=${DEFAULT_MCP_IMAGE:-etheralsystem-docker-manager}
+      - SKILL_FEEDBACK_ENABLED=${SKILL_FEEDBACK_ENABLED:-true}
+      - DYNAMIC_SKILL_SELECTION=${DYNAMIC_SKILL_SELECTION:-false}
+      - SKILL_SELECTION_VARIANT=${SKILL_SELECTION_VARIANT:-dynamic}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -151,10 +168,20 @@ services:
       - MCP_BASE_URL=${MCP_BASE_URL:-http://docker-manager:8080/api}
       - MCP_MANAGER_URL=${MCP_MANAGER_URL:-http://docker-manager:8080}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - METACLAW_API_KEY=${METACLAW_API_KEY:-}
+      - METACLAW_ENABLED=${METACLAW_ENABLED:-false}
+      - METACLAW_BASE_URL=${METACLAW_BASE_URL:-http://host.docker.internal:30000/v1}
+      - METACLAW_MODEL=${METACLAW_MODEL:-qwen/qwen3-next-80b-a3b-instruct}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-default}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -176,17 +203,23 @@ services:
     container_name: chatbot-backend
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - METACLAW_API_KEY=${METACLAW_API_KEY:-}
+      - METACLAW_ENABLED=${METACLAW_ENABLED:-false}
+      - METACLAW_BASE_URL=${METACLAW_BASE_URL:-http://host.docker.internal:30000/v1}
+      - METACLAW_MODEL=${METACLAW_MODEL:-qwen/qwen3-next-80b-a3b-instruct}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - PYTHONUNBUFFERED=1
       - BACKEND_PORT=${BACKEND_PORT:-8000}
       - NEXT_PUBLIC_BACKEND_PORT=${BACKEND_PORT:-8000}
       - LANGGRAPH_API_URL=${LANGGRAPH_API_URL:-http://agent-service:2024}
       - MCP_GEN_URL=${MCP_GEN_URL:-http://docker-manager:8080}
       - MONGODB_URL=${MONGODB_URL:-mongodb://mongodb:27017}
-      - METACLAW_BASE_URL=${METACLAW_BASE_URL:-}
     ports:
       - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
     healthcheck:
@@ -249,6 +282,9 @@ volumes:
   chromadb_data:
   ollama_data:
   jwt_data:
+  shared_input:
+  shared_openapi_spec:
+  shared_mcpserver_ts:
 
 networks:
   etheral-network:

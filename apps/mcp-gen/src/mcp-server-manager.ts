@@ -165,6 +165,14 @@ export class MCPServerManager {
   private persistenceFilePath: string;
   private events: EventEmitter;
   private mcpNetworkName: string = process.env.MCP_NETWORK || "mcp-network";
+  private sharedInputVolume: string =
+    process.env.MCP_SHARED_INPUT_VOLUME || "etheralsystem_shared_input";
+  private sharedOpenApiSpecVolume: string =
+    process.env.MCP_SHARED_OPENAPI_SPEC_VOLUME ||
+    "etheralsystem_shared_openapi_spec";
+  private sharedMcpServerTsVolume: string =
+    process.env.MCP_SHARED_MCPSERVER_TS_VOLUME ||
+    "etheralsystem_shared_mcpserver_ts";
 
   // MongoDB properties
   private mongoClient: MongoClient;
@@ -1914,6 +1922,8 @@ export class MCPServerManager {
       const container = await this.docker.createContainer({
         Image: config.dockerImage,
         name: `mcp-server-${config.serverId}`,
+        WorkingDir: "/repo/apps/mcp-gen",
+        Cmd: ["sh", "-c", "bun test/test-generation.ts && bun src/launcher.ts"],
         ExposedPorts: {
           [`${config.containerPort}/tcp`]: {},
         },
@@ -1930,20 +1940,20 @@ export class MCPServerManager {
           },
           Mounts: [
             {
-              Target: "/app/input",
-              Source: "shared_input",
+              Target: "/repo/apps/mcp-gen/input",
+              Source: this.sharedInputVolume,
               Type: "volume",
               ReadOnly: true,
             },
             {
-              Target: "/app/src-generated-yaml",
-              Source: "shared_openapi_spec",
+              Target: "/repo/apps/mcp-gen/src-generated-yaml",
+              Source: this.sharedOpenApiSpecVolume,
               Type: "volume",
               ReadOnly: true,
             },
             {
-              Target: "/app/src-generated-ts",
-              Source: "shared_mcpserver_ts",
+              Target: "/repo/apps/mcp-gen/src-generated-ts",
+              Source: this.sharedMcpServerTsVolume,
               Type: "volume",
               ReadOnly: false,
             },
@@ -1951,11 +1961,32 @@ export class MCPServerManager {
           ExtraHosts: ["host.docker.internal:host-gateway"],
         },
         Env: [
+          `PORT=${config.containerPort}`,
           `SERVER_ID=${config.serverId}`,
           `JWT_TOKEN=${config.token}`,
           `MANAGER_URL=${process.env.MANAGER_URL || "http://docker-manager:8080"}`,
           `RAG_CONTEXT=${config.ragContext || ""}`,
           `BUILD_REQUEST_ID=${config.buildRequestId || config.serverId}`,
+          `GEMINI_API_KEY=${process.env.GEMINI_API_KEY || ""}`,
+          `GEMINI_MODEL=${process.env.GEMINI_MODEL || ""}`,
+          `GROQ_API_KEY=${process.env.GROQ_API_KEY || ""}`,
+          `GROQ_MODEL=${process.env.GROQ_MODEL || ""}`,
+          `OPENAI_API_KEY=${process.env.OPENAI_API_KEY || ""}`,
+          `OPENAI_BASE_URL=${process.env.OPENAI_BASE_URL || ""}`,
+          `OPENAI_MODEL=${process.env.OPENAI_MODEL || ""}`,
+          `OPENAI_TEMPERATURE=${process.env.OPENAI_TEMPERATURE || ""}`,
+          `OPENAI_TIMEOUT_MS=${process.env.OPENAI_TIMEOUT_MS || ""}`,
+          `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ""}`,
+          `METACLAW_ENABLED=${process.env.METACLAW_ENABLED || ""}`,
+          `METACLAW_BASE_URL=${process.env.METACLAW_BASE_URL || ""}`,
+          `METACLAW_API_KEY=${process.env.METACLAW_API_KEY || ""}`,
+          `METACLAW_MODEL=${process.env.METACLAW_MODEL || ""}`,
+          `METACLAW_SESSION_ID=${config.buildRequestId || config.serverId}`,
+          `METACLAW_USER_ID=${process.env.METACLAW_USER_ID || ""}`,
+          `METACLAW_WORKSPACE_ID=${process.env.METACLAW_WORKSPACE_ID || ""}`,
+          `METACLAW_MEMORY_SCOPE=${config.memoryScope || process.env.METACLAW_MEMORY_SCOPE || ""}`,
+          `LLM_TEMPERATURE=${process.env.LLM_TEMPERATURE || ""}`,
+          `LLM_TIMEOUT_MS=${process.env.LLM_TIMEOUT_MS || ""}`,
           `MONGO_URI=${process.env.MONGO_URI || ""}`,
           `SKILL_FEEDBACK_ENABLED=${process.env.SKILL_FEEDBACK_ENABLED || ""}`,
           `DYNAMIC_SKILL_SELECTION=${process.env.DYNAMIC_SKILL_SELECTION || ""}`,
