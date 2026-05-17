@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langchain-application"
+version = "0.1.0"
+description = "LangGraph application"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "tung" }]
+dependencies = [
+    "langgraph",
+    "langgraph-cli",
+    "langchain",
+    "langchain-openai",
+    "langchain-core",
+    "ipython",
+    "langchain-google-genai",
+    "langchain-groq",
+    "langchain-ollama",
+    "deepagents",
+    "python-dotenv",
+    "requests",
+    "httpx",
+    "tavily-python",
+    "mcp",
+    "mcp-use",
+    "llama-index",
+    "llama-index-vector-stores-chroma",
+    "llama-index-llms-langchain",
+    "llama-index-embeddings-ollama",
+    "llama-index-storage-docstore-mongodb",
+    "pymongo",
+    "langgraph-api>=0.8.0",
+    "langgraph-runtime-inmem>=0.27.0",
+    "protobuf>=5.26.1,<7.0.0",
+    "langgraph-checkpoint-sqlite",
+    "chromadb"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["my_agent*"]

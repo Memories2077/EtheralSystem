@@ -1,0 +1,54 @@
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb-server
+    ports:
+      - "8025:8000"
+    volumes:
+      - ./chroma_data:/data
+    restart: always
+    networks:
+      - mcp-network
+
+  ollama:
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama
+    container_name: ollama-server
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    restart: always
+    networks:
+      - mcp-network
+
+  agent:
+    build: .
+    container_name: agent-service
+    ports:
+      - "2024:2024"
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb-server
+      - CHROMA_PORT=8000
+      - OLLAMA_BASE_URL=http://ollama-server:11434
+      # MCP_BASE_URL is the mcp-gen API base URL and must include /api.
+      - MCP_BASE_URL=http://docker-manager:8080/api
+      - MCP_MANAGER_URL=http://docker-manager:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - chromadb
+      - ollama
+    restart: always
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    # External shared network used by langChain-application, mcp-gen, and chatbot services.
+    # Create it before running docker compose directly:
+    #   docker network create mcp-network
+    external: true

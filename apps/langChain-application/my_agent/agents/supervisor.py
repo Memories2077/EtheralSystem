@@ -1,0 +1,55 @@
+"""
+Supervisor Agent - Coordinates and delegates tasks to sub-agents
+"""
+from langchain_core.messages import HumanMessage, BaseMessage, SystemMessage, AIMessage
+
+from typing import Dict, Any, Optional
+from pydantic import SecretStr
+
+from my_agent.config import load_prompt, AGENT_CONFIG, API_CONFIG
+from my_agent.tools.supervisor_tools import SUPERVISOR_TOOLS
+from my_agent.utils.llm_factory import get_llm
+
+
+class SupervisorAgent:
+    """Supervisor Agent for task coordination"""
+    
+    def __init__(self):
+        config = AGENT_CONFIG["supervisor"]
+        self.name = config["name"]
+        self.prompt = load_prompt(config["prompt_file"])
+        
+        # Initialize model via factory (MetaClaw or direct)
+        self.model = get_llm(temperature=config["temperature"])
+        
+        # Bind tools to the model
+        self.model_with_tools = self.model.bind_tools(SUPERVISOR_TOOLS)
+
+    
+    async def invoke(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Invoke the supervisor agent
+        
+        Args:
+            query: User query
+            context: Additional context
+            
+        Returns:
+            Agent response
+        """
+        messages = [SystemMessage(content=self.prompt)]
+        
+        # Combine query with context into HumanMessage
+        human_content = f"[Context: {context}]\n\n{query}" if context else query
+        messages.append(HumanMessage(content=human_content))
+        
+        # Invoke model with tools
+        response = await self.model_with_tools.ainvoke(messages)
+        
+        return {
+            "messages": messages + [response],
+            "final_response": str(response.content) if hasattr(response, 'content') else str(response)
+        }
+    
+    def __repr__(self):
+        return f"<{self.name}>"

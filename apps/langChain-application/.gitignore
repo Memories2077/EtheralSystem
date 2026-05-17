@@ -1,0 +1,104 @@
+.langgraph_api
+.agents/
+.qwen/
+conductor/
+.chroma_data/
+
+CLAUDE.md
+
+ollama_data/
+chroma_data/
+tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+wheels/
+pip-wheel-metadata/
+*.egg-info/
+.installed.cfg
+*.egg
+*.whl
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# VS Code
+.vscode/
+
+# JetBrains IDEs
+.idea/
+
+# Pytest / coverage / test output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+test-results/
+
+# Type checkers / caches
+.mypy_cache/
+.pytype/
+.pyre/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+.ipynb
+
+# Environment files and secrets
+.env
+env.local
+secrets.json
+*.key
+*.pem
+*.crt
+
+# Databases
+*.sqlite3
+*.db
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node / frontend (if present)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Misc
+*.bak
+*.swp
+*~ 
+coverage/
+dist/
+build/
