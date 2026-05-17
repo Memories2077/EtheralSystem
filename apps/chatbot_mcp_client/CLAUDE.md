@@ -16,22 +16,22 @@ The frontend is a Next.js 15 app with a glassmorphism-inspired UI, supporting re
 ### Frontend (Next.js + TypeScript)
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Start development server (port 9002)
-npm run dev
+bun run dev
 
 # Build for production
-npm run build
+bun run build
 
 # Start production server
-npm start
+bun run start
 
 # Lint code
-npm run lint
+bun run lint
 
 # Type checking
-npm run typecheck
+bun run typecheck
 ```
 
 ### Backend (FastAPI + Python)
@@ -215,7 +215,7 @@ The test suite covers:
 
 ### Manual Testing Workflow
 1. Start backend: `python backend/main.py` or `docker-compose up backend`
-2. Start frontend: `npm run dev`
+2. Start frontend: `bun run dev`
 3. Open `http://localhost:9002`
 4. Verify health: `curl http://localhost:8000/health`
 5. Test chat flow with and without MCP servers

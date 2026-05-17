@@ -5,4 +5,4 @@
 # This script simply starts Next.js
 
 echo "Starting Gemini InsightLink Frontend..."
-exec node_modules/.bin/next start --port 9002
+exec bun run start

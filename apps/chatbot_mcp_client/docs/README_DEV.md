@@ -69,4 +69,4 @@ Một quy trình gửi tin nhắn diễn ra như sau:
 - **Tập trung vào Docker**: Toàn bộ luồng build production đều chịu cấu hình từ `Dockerfile.backend` & `Dockerfile.frontend` cũng như là `docker-compose.yml`. Nếu bạn thêm Library / Thư mục file mới, phải đảm bảo Dockerfile được cấp quyền thao tác hay copy vào image.
 
 ---
-Vui lòng tham khảo file `README.md` chính để xem các bước thiết lập môi trường (pip, npm) và chạy project cơ bản!
+Vui lòng tham khảo file `README.md` chính để xem các bước thiết lập môi trường (pip, bun) và chạy project cơ bản!

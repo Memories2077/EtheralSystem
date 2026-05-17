@@ -1,9 +1,18 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Thư mục các project
-LANGCHAIN_DIR="."
-MCP_GEN_DIR="../mcp-gen"
-CHATBOT_DIR="../chatbot_mcp_client"
+LANGCHAIN_DIR="$SCRIPT_DIR"
+MCP_GEN_DIR="$(cd "$SCRIPT_DIR/../mcp-gen" && pwd)"
+CHATBOT_DIR="$(cd "$SCRIPT_DIR/../chatbot_mcp_client" && pwd)"
+
+# WSL installs can have Docker Compose without the buildx CLI plugin. In that
+# case, force Compose onto the classic builder instead of failing immediately.
+if ! docker buildx version >/dev/null 2>&1; then
+    export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-0}"
+    export COMPOSE_DOCKER_CLI_BUILD="${COMPOSE_DOCKER_CLI_BUILD:-0}"
+fi
 
 # Hàm hiển thị hướng dẫn
 usage() {

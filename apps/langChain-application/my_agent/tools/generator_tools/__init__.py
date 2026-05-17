@@ -68,7 +68,7 @@ async def create_MCPServer(query: List[str], rag_context: Optional[List[dict]] =
                 "config": {
                     "mcpServers": {
                         "my-api-mcp": {
-                            "command": "npx",
+                            "command": "bunx",
                             "args": [
                             "mcp-remote",
                             "http://your-domain.com:8080/mcp/mcp-server-abc123?token=jwt_token_here",

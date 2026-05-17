@@ -104,8 +104,8 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 Frontend:
 
 ```powershell
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 The frontend dev server runs on `http://localhost:9002`.

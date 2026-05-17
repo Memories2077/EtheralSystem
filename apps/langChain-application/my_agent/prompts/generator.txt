@@ -42,7 +42,7 @@ REQUIRED JSON FORMAT:
   "config": {{
     "mcpServers": {{
       "<SERVER_NAME>": {{
-        "command": "npx",
+        "command": "bunx",
         "args": [
           "mcp-remote",
           "http://<DOMAIN>:<PORT>/mcp/<SERVER_ID>?token=<JWT_TOKEN>",

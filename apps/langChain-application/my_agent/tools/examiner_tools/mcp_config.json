@@ -1,7 +1,7 @@
 {
     "mcpServers": {
         "mcp_executor": {
-        "command": "npx",
+        "command": "bunx",
         "args": [
             "mcp-remote",
             "http://localhost:3000/mcp",
@@ -9,7 +9,7 @@
         ]
         },
         "mcp_memory": {
-        "command": "npx",
+        "command": "bunx",
         "args": [
             "mcp-remote",
             "http://localhost:3001/mcp",
@@ -17,7 +17,7 @@
         ]
         },
         "mcp_web_search": {
-        "command": "npx",
+        "command": "bunx",
         "args": [
             "mcp-remote",
             "http://localhost:3002/mcp",
