@@ -1,9 +1,0 @@
-FROM ollama/ollama:latest
-
-# Copy script khởi động vào container
-COPY entrypoint.sh /entrypoint.sh
-# Fix Windows line endings and make executable
-RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
-
-# Chạy script khi container bắt đầu
-ENTRYPOINT ["/entrypoint.sh"]

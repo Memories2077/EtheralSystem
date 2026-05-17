@@ -1,4 +1,7 @@
 services:
+  # =========================================================================
+  # Infrastructure
+  # =========================================================================
   mongodb:
     image: mongo:7
     container_name: mongodb
@@ -13,24 +16,7 @@ services:
       timeout: 10s
       retries: 5
     networks:
-      - mcp-network
-
-  mongo-express:
-    image: mongo-express
-    container_name: mongo-express
-    ports:
-      - "8082:8081"
-    environment:
-      - ME_CONFIG_MONGODB_SERVER=mongodb
-      - ME_CONFIG_MONGODB_PORT=27017
-      - ME_CONFIG_BASICAUTH_USERNAME=${ME_CONFIG_BASICAUTH_USERNAME:-admin}
-      - ME_CONFIG_BASICAUTH_PASSWORD=${ME_CONFIG_BASICAUTH_PASSWORD:-admin123}
-    depends_on:
-      mongodb:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - mcp-network
+      - etheral-network
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -50,12 +36,38 @@ services:
       timeout: 10s
       retries: 5
     networks:
-      - mcp-network
+      - etheral-network
 
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb-server
+    ports:
+      - "8025:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    restart: unless-stopped
+    networks:
+      - etheral-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-server
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - etheral-network
+
+  # =========================================================================
+  # MCP Gen
+  # =========================================================================
   docker-manager:
     build:
       context: .
-      dockerfile: docker/mcp-gen.Dockerfile
+      dockerfile: Dockerfile
+      target: mcp-gen-manager
     container_name: docker-manager
     user: "0:0"
     ports:
@@ -64,9 +76,6 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - shared_input:/repo/apps/mcp-gen/input
-      - shared_openapi_spec:/repo/apps/mcp-gen/src-generated-yaml
-      - shared_mcpserver_ts:/repo/apps/mcp-gen/src-generated-ts
       - jwt_data:/repo/apps/mcp-gen/data
     environment:
       - USE_DOCKER_PING=false
@@ -98,16 +107,14 @@ services:
     cap_drop:
       - ALL
     networks:
-      mcp-network:
-        aliases:
-          - mcp-gen-manager
+      - etheral-network
 
   proxy:
     build:
       context: .
-      dockerfile: docker/mcp-gen.Dockerfile
+      dockerfile: Dockerfile
+      target: mcp-gen-proxy
     container_name: my-proxy
-    command: bun ./src/dynamic-proxy.ts
     ports:
       - "8081:8081"
     environment:
@@ -122,46 +129,18 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     restart: unless-stopped
     networks:
-      mcp-network:
-        aliases:
-          - mcp-gen-proxy
+      - etheral-network
 
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: chromadb-server
-    ports:
-      - "8025:8000"
-    volumes:
-      - ./apps/langChain-application/chroma_data:/data
-    restart: always
-    networks:
-      mcp-network:
-        aliases:
-          - chromadb-server
-
-  ollama:
-    build:
-      context: ./apps/langChain-application
-      dockerfile: Dockerfile.ollama
-    container_name: ollama-server
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./apps/langChain-application/ollama_data:/root/.ollama
-    restart: always
-    networks:
-      mcp-network:
-        aliases:
-          - ollama-server
-
+  # =========================================================================
+  # LangGraph Agent
+  # =========================================================================
   agent:
     build:
-      context: ./apps/langChain-application
+      context: .
       dockerfile: Dockerfile
+      target: agent
     container_name: agent-service
     ports:
       - "2024:2024"
@@ -182,18 +161,18 @@ services:
       - chromadb
       - ollama
       - docker-manager
-    restart: always
+    restart: unless-stopped
     networks:
-      mcp-network:
-        aliases:
-          - agent-service
+      - etheral-network
 
+  # =========================================================================
+  # Chatbot
+  # =========================================================================
   chatbot-backend:
     build:
-      context: ./apps/chatbot_mcp_client
-      dockerfile: Dockerfile.backend
-      args:
-        - BACKEND_PORT=${BACKEND_PORT:-8000}
+      context: .
+      dockerfile: Dockerfile
+      target: chatbot-backend
     container_name: chatbot-backend
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
@@ -222,11 +201,6 @@ services:
       start_period: 5s
     command: uvicorn main:app --host 0.0.0.0 --port ${BACKEND_PORT:-8000}
     restart: unless-stopped
-    networks:
-      - chatbot-network
-      - mcp-network
-    volumes:
-      - ./apps/chatbot_mcp_client/backend:/app/backend
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -236,11 +210,14 @@ services:
         condition: service_healthy
       agent:
         condition: service_started
+    networks:
+      - etheral-network
 
   chatbot-frontend:
     build:
       context: .
-      dockerfile: docker/chatbot-frontend.Dockerfile
+      dockerfile: Dockerfile
+      target: chatbot-frontend
       args:
         - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
     container_name: chatbot-frontend
@@ -264,19 +241,15 @@ services:
       start_period: 15s
     restart: unless-stopped
     networks:
-      - chatbot-network
-      - mcp-network
-
-networks:
-  chatbot-network:
-    driver: bridge
-  mcp-network:
-    driver: bridge
+      - etheral-network
 
 volumes:
   mongodb_data:
   rabbitmq_data:
-  shared_input:
-  shared_openapi_spec:
-  shared_mcpserver_ts:
+  chromadb_data:
+  ollama_data:
   jwt_data:
+
+networks:
+  etheral-network:
+    driver: bridge

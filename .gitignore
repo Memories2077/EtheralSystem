@@ -17,3 +17,20 @@ __pycache__/
 .langgraph_api/
 
 *.log
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+.idx
+
+# Claude / AI tools
+.claude
+
+# Build artifacts
+*.tsbuildinfo
+
+# Runtime data
+data/
+*.pid
