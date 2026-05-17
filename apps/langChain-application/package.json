@@ -1,0 +1,11 @@
+{
+  "name": "@etheral-system/langchain-application",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "langgraph dev --host 0.0.0.0 --port 2024",
+    "start": "langgraph dev --host 0.0.0.0 --port 2024",
+    "typecheck": "python -m compileall my_agent",
+    "test": "python -m pytest"
+  }
+}

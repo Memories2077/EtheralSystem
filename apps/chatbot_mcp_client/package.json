@@ -1,14 +1,15 @@
 {
-  "name": "nextn",
+  "name": "@etheral-system/chatbot-mcp-client",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "bun@1.3.14",
   "scripts": {
     "dev": "next dev --turbopack -p 9002",
+    "dev:backend": "cd backend && uvicorn main:app --reload --port ${BACKEND_PORT:-8000}",
     "build": "next build",
     "start": "next start -p 9002",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "cd backend && python -m pytest"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.3",

@@ -1,0 +1,282 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - mcp-network
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    ports:
+      - "8082:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_BASICAUTH_USERNAME=${ME_CONFIG_BASICAUTH_USERNAME:-admin}
+      - ME_CONFIG_BASICAUTH_PASSWORD=${ME_CONFIG_BASICAUTH_PASSWORD:-admin123}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mcp-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-guest}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - mcp-network
+
+  docker-manager:
+    build:
+      context: .
+      dockerfile: docker/mcp-gen.Dockerfile
+    container_name: docker-manager
+    user: "0:0"
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - shared_input:/repo/apps/mcp-gen/input
+      - shared_openapi_spec:/repo/apps/mcp-gen/src-generated-yaml
+      - shared_mcpserver_ts:/repo/apps/mcp-gen/src-generated-ts
+      - jwt_data:/repo/apps/mcp-gen/data
+    environment:
+      - USE_DOCKER_PING=false
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8081}
+      - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
+      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      - NODE_ENV=production
+      - PORT=8080
+      - MANAGER_URL=${MANAGER_URL:-http://docker-manager:8080}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:9002}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - METACLAW_API_KEY=${METACLAW_API_KEY:-}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-f", "/repo/apps/mcp-gen/data/persistence.json"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      mcp-network:
+        aliases:
+          - mcp-gen-manager
+
+  proxy:
+    build:
+      context: .
+      dockerfile: docker/mcp-gen.Dockerfile
+    container_name: my-proxy
+    command: bun ./src/dynamic-proxy.ts
+    ports:
+      - "8081:8081"
+    environment:
+      - BACKEND_HOST=${BACKEND_HOST:-host.docker.internal}
+      - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - jwt_data:/repo/apps/mcp-gen/data
+    depends_on:
+      docker-manager:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      mcp-network:
+        aliases:
+          - mcp-gen-proxy
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb-server
+    ports:
+      - "8025:8000"
+    volumes:
+      - ./apps/langChain-application/chroma_data:/data
+    restart: always
+    networks:
+      mcp-network:
+        aliases:
+          - chromadb-server
+
+  ollama:
+    build:
+      context: ./apps/langChain-application
+      dockerfile: Dockerfile.ollama
+    container_name: ollama-server
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./apps/langChain-application/ollama_data:/root/.ollama
+    restart: always
+    networks:
+      mcp-network:
+        aliases:
+          - ollama-server
+
+  agent:
+    build:
+      context: ./apps/langChain-application
+      dockerfile: Dockerfile
+    container_name: agent-service
+    ports:
+      - "2024:2024"
+    environment:
+      - CHROMA_HOST=chromadb-server
+      - CHROMA_PORT=8000
+      - OLLAMA_BASE_URL=http://ollama-server:11434
+      - MCP_BASE_URL=${MCP_BASE_URL:-http://docker-manager:8080/api}
+      - MCP_MANAGER_URL=${MCP_MANAGER_URL:-http://docker-manager:8080}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - METACLAW_API_KEY=${METACLAW_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - chromadb
+      - ollama
+      - docker-manager
+    restart: always
+    networks:
+      mcp-network:
+        aliases:
+          - agent-service
+
+  chatbot-backend:
+    build:
+      context: ./apps/chatbot_mcp_client
+      dockerfile: Dockerfile.backend
+      args:
+        - BACKEND_PORT=${BACKEND_PORT:-8000}
+    container_name: chatbot-backend
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - METACLAW_API_KEY=${METACLAW_API_KEY:-}
+      - PYTHONUNBUFFERED=1
+      - BACKEND_PORT=${BACKEND_PORT:-8000}
+      - NEXT_PUBLIC_BACKEND_PORT=${BACKEND_PORT:-8000}
+      - LANGGRAPH_API_URL=${LANGGRAPH_API_URL:-http://agent-service:2024}
+      - MCP_GEN_URL=${MCP_GEN_URL:-http://docker-manager:8080}
+      - MONGODB_URL=${MONGODB_URL:-mongodb://mongodb:27017}
+      - METACLAW_BASE_URL=${METACLAW_BASE_URL:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import requests,sys; r=requests.get(''http://localhost:${BACKEND_PORT:-8000}/health''); sys.exit(0 if 200 <= r.status_code < 400 else 1)"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    command: uvicorn main:app --host 0.0.0.0 --port ${BACKEND_PORT:-8000}
+    restart: unless-stopped
+    networks:
+      - chatbot-network
+      - mcp-network
+    volumes:
+      - ./apps/chatbot_mcp_client/backend:/app/backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      docker-manager:
+        condition: service_healthy
+      agent:
+        condition: service_started
+
+  chatbot-frontend:
+    build:
+      context: .
+      dockerfile: docker/chatbot-frontend.Dockerfile
+      args:
+        - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+    container_name: chatbot-frontend
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+      - NODE_ENV=production
+    ports:
+      - "9002:9002"
+    depends_on:
+      chatbot-backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'bun -e "const r=await fetch(''http://localhost:9002''); process.exit(r.ok?0:1)"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - chatbot-network
+      - mcp-network
+
+networks:
+  chatbot-network:
+    driver: bridge
+  mcp-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  rabbitmq_data:
+  shared_input:
+  shared_openapi_spec:
+  shared_mcpserver_ts:
+  jwt_data:

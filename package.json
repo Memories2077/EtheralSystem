@@ -1,0 +1,25 @@
+{
+  "name": "etheral-system",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev --parallel",
+    "build": "turbo build",
+    "start": "turbo start --parallel",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "manager": "turbo manager --filter=@etheral-system/mcp-gen",
+    "proxy": "turbo proxy --filter=@etheral-system/mcp-gen",
+    "dev:backend": "turbo dev:backend --filter=@etheral-system/chatbot-mcp-client",
+    "docker:config": "docker compose config",
+    "docker:up": "docker compose up --build"
+  },
+  "devDependencies": {
+    "turbo": "^2.9.14"
+  }
+}
