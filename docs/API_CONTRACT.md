@@ -293,7 +293,7 @@ curl http://localhost:8080/api/mcp/server-id/claude-config
 {
   "mcpServers": {
     "server-id": {
-      "command": "npx",
+      "command": "bunx",
       "args": [
         "mcp-remote",
         "http://localhost:8081/mcp/server-id?token=jwt-token",

@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "type": "module",
+  "packageManager": "bun@1.3.14",
   "directories": {
     "doc": "docs"
   },
@@ -11,10 +12,10 @@
     "test": "vitest run",
     "test:phase4": "vitest run src/skill-intelligence/__tests__/phase4.test.ts",
     "typecheck": "tsc --noEmit",
-    "start": "npx tsx src/launcher.ts",
-    "manager": "npx tsx src/mcp-server-manager.ts",
-    "proxy": "npx tsx src/dynamic-proxy.ts",
-    "build": "npx tsx test/test-generation.ts"
+    "start": "bun src/launcher.ts",
+    "manager": "bun src/mcp-server-manager.ts",
+    "proxy": "bun src/dynamic-proxy.ts",
+    "build": "bun test/test-generation.ts"
   },
   "keywords": [],
   "author": "",
@@ -29,7 +30,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.0.8",
     "@types/tar-fs": "^2.0.4",
-    "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vite": "^6.3.7",
     "vitest": "^3.2.4"

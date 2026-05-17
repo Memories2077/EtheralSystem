@@ -32,7 +32,7 @@ while (!checking && retryCount < maxRetries) {
 - **Số lần retry tối đa**: 3
 - **Điều kiện retry**:
   1. Khi generation bị lỗi
-  2. Khi file TypeScript được tạo ra không thể chạy (test với `tsx --help`)
+  2. Khi file TypeScript được tạo ra không thể chạy (test với `bun`)
 
 ```typescript
 const MAX_RETRIES = 3;
@@ -43,7 +43,7 @@ while (retryCount < MAX_RETRIES) {
     result = await generateMCP(..., retryCount);
 
     // Test if generated server can run
-    await execAsync(`npx tsx ${tsFilePath} --help`, { timeout: 10000 });
+    await execAsync(`bun ${tsFilePath} --help`, { timeout: 10000 });
 
     console.log(`✅ MCP server test passed!`);
     console.log(`📊 Total LLM calls: ${result.llmCallCount}`);

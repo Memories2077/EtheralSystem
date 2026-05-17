@@ -128,8 +128,8 @@ export async function main(options: Options = {}) {
         type ExecError = ExecException & { stdout: string; stderr: string };
 
         try {
-          // Try to run the generated TypeScript file with tsx
-          const testResult = await execAsync(`npx tsx ${tsFilePath}`, {
+          // Try to run the generated TypeScript file with Bun
+          const testResult = await execAsync(`bun ${tsFilePath}`, {
             timeout: 10000, // 10 seconds timeout
           });
 

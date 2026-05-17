@@ -21,7 +21,7 @@ export function validateYAML(specPath: string): Promise<string> {
     console.log(`📊 File size: ${stats.size} bytes`);
 
     exec(
-      `npx swagger-cli validate "${specPath}"`,
+      `bunx swagger-cli validate "${specPath}"`,
       { timeout: 30000 },
       (error, stdout, stderr) => {
         if (error) {

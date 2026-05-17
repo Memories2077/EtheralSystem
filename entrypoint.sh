@@ -6,7 +6,7 @@ echo "🚀 Starting MCP server generation..."
 cd /app
 
 echo "🔧 Step 1: Generating MCP server..."
-npm run build
+bun run build
 
 # Kiểm tra xem có file được tạo ra không
 if [ ! -d "/app/src-generated-ts" ]; then
@@ -24,6 +24,5 @@ fi
 echo "✅ MCP server generated successfully!"
 echo "🚀 Step 2: Starting MCP server..."
 
-# Chạy launcher để start MCP server với tsx
-npm start
-
+# Chạy launcher để start MCP server với Bun
+bun run start

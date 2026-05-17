@@ -380,7 +380,7 @@ Phase 4 is complete for the scoped deliverables that were actually promoted from
 
 ### Validation
 
-- Focused Phase 4 validation passed via [`npm run test:phase4`](package.json:12): 5 tests passed.
+- Focused Phase 4 validation passed via [`bun run test:phase4`](../package.json): 5 tests passed.
 - Coverage includes initialization guard behavior, cache-hit metrics, timing metrics, selection metrics, and low-confidence safe fallback behavior in [`src/skill-intelligence/__tests__/phase4.test.ts`](src/skill-intelligence/__tests__/phase4.test.ts).
 
 ---

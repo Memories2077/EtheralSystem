@@ -140,7 +140,7 @@ The dynamic layer emits logs from [`agent.ts`](src/skill-intelligence/agent.ts) 
 A lightweight skill health dashboard is available through [`src/skill-intelligence/cli.ts`](src/skill-intelligence/cli.ts):
 
 ```bash
-npx tsx src/skill-intelligence/cli.ts dashboard
+bun src/skill-intelligence/cli.ts dashboard
 ```
 
 ### Validation
@@ -148,9 +148,9 @@ npx tsx src/skill-intelligence/cli.ts dashboard
 Run the Phase 4 checks with:
 
 ```bash
-npm run typecheck
-npm run test:phase4
-npx vitest run src/skill-intelligence/__tests__/agent.test.ts src/generator/prompt.dynamic.test.ts
+bun run typecheck
+bun run test:phase4
+bunx vitest run src/skill-intelligence/__tests__/agent.test.ts src/generator/prompt.dynamic.test.ts
 ```
 
 ---
@@ -292,7 +292,7 @@ MetaClaw acts as an intelligent proxy that injects relevant skills and accumulat
      "config": {
        "mcpServers": {
          "my-api-mcp": {
-           "command": "npx",
+           "command": "bunx",
            "args": [
              "mcp-remote",
              "http://your-domain.com:8080/mcp/mcp-server-abc123?token=jwt_token_here",

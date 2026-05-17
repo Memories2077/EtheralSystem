@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import path from "path";
 import fs from "fs";
-import { exec } from "child_process";
+import { spawn } from "child_process";
 
 const program = new Command();
 const serverId = process.env.SERVER_ID;
@@ -93,13 +93,8 @@ program.action(() => {
 
   console.log(`🚀 Starting ${serverName} MCP server...`);
 
-  const child = exec(`npx tsx ${serverPath}`, (error, stdout, stderr) => {
-    if (error) {
-      console.error(`❌ Error: ${error.message}`);
-      return;
-    }
-    if (stdout) console.log(stdout);
-    if (stderr) console.error(stderr);
+  const child = spawn("bun", [serverPath], {
+    stdio: ["ignore", "pipe", "pipe"],
   });
   let exited = false;
 

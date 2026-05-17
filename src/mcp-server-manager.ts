@@ -2129,7 +2129,7 @@ export class MCPServerManager {
     return {
       mcpServers: {
         [serverId]: {
-          command: "npx",
+          command: "bunx",
           args,
         },
       },

@@ -179,7 +179,7 @@ if [ $? -eq 0 ]; then
     echo -e "\n\033[1;33m[READY]\033[0m 🌐 MCP server is available at:"
     echo -e "   \033[1;32mhttps://${APPNAME}.${DOMAIN}\033[0m"
     echo -e "\n\033[1;33m[TEST]\033[0m Run the following to test the connection:"
-    echo -e "   npx mcp-remote \"https://${APPNAME}.${DOMAIN}/mcp\"\n"
+    echo -e "   bunx mcp-remote \"https://${APPNAME}.${DOMAIN}/mcp\"\n"
 else
     echo -e "\033[1;31m[ERROR]\033[0m ❌ Deployment or tunnel setup failed!"
     exit 1

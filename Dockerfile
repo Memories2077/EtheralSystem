@@ -1,18 +1,14 @@
 # Sử dụng base image nhẹ
-FROM node:20-alpine
+FROM oven/bun:1.3.14-alpine
 
 # Thiết lập thư mục làm việc
 WORKDIR /app
 
-# Copy package.json và package-lock.json trước (để tối ưu Docker cache)
-COPY package*.json ./
+# Copy package.json và bun.lock trước (để tối ưu Docker cache)
+COPY package.json bun.lock ./
 
-# Cập nhật npm và cài đặt dependencies
-RUN npm install -g npm@latest
-RUN npm install
-
-# Vá lại các lỗi/lỗ hổng package nếu có (bỏ qua nếu có breaking changes)
-RUN npm audit fix || true
+# Cài đặt dependencies bằng Bun
+RUN bun install --frozen-lockfile
 
 # Copy source code sau khi cài đặt dependencies
 COPY . .

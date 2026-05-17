@@ -77,8 +77,8 @@ if (process.argv[1]?.endsWith('cli.ts') || process.argv[1]?.endsWith('cli.js')) 
       await generateSkillGapsDoc(tracker);
     } else {
       console.log('Usage:');
-      console.log('  npx tsx src/skill-intelligence/cli.ts dashboard  # Show effectiveness dashboard');
-      console.log('  npx tsx src/skill-intelligence/cli.ts gaps      # Generate SKILL_GAPS.md');
+      console.log('  bun src/skill-intelligence/cli.ts dashboard  # Show effectiveness dashboard');
+      console.log('  bun src/skill-intelligence/cli.ts gaps      # Generate SKILL_GAPS.md');
     }
   }).catch(err => {
     console.error('Error:', err);
