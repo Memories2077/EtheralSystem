@@ -71,7 +71,7 @@ FROM bun-runtime-base AS chatbot-frontend
 
 COPY --from=chatbot-builder /repo/apps/chatbot_mcp_client/.next apps/chatbot_mcp_client/.next
 COPY --from=chatbot-builder /repo/apps/chatbot_mcp_client/public apps/chatbot_mcp_client/public
-COPY --from=chatbot-builder /repo/apps/chatbot_mcp_client/next.config.ts apps/chatbot_mcp_client/next.config.ts
+COPY --from=chatbot-builder /repo/apps/chatbot_mcp_client/next.config.js apps/chatbot_mcp_client/next.config.js
 
 WORKDIR /repo/apps/chatbot_mcp_client
 

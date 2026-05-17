@@ -87,7 +87,10 @@ export class FeedbackTracker {
       await this.feedbackCollection.createIndex({ importedFeedbackIds: 1 });
       await this.gapsCollection.createIndex({ status: 1, detectedAt: -1 });
       await this.logsCollection.createIndex({ serverId: 1 });
-      await this.logsCollection.createIndex({ buildRequestId: 1 });
+      await this.logsCollection.createIndex(
+        { buildRequestId: 1 },
+        { sparse: true },
+      );
       await this.logsCollection.createIndex({ "feedbacks.feedbackId": 1 });
 
       // Warm in-memory cache from DB
