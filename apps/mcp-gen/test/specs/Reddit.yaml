@@ -1,0 +1,386 @@
+openapi: 3.0.3
+info:
+  title: Reddit API
+  description: Reddit OAuth2 API with Bearer token authentication
+  version: 1.0.0
+  contact:
+    name: Reddit
+    url: https://www.reddit.com
+servers:
+  - url: https://www.reddit.com
+    description: Reddit authentication server
+  - url: https://oauth.reddit.com
+    description: Reddit OAuth API server
+
+paths:
+  /api/v1/access_token:
+    post:
+      summary: Get Access Token
+      description: |
+        Obtain an OAuth2 access token using the password grant flow.
+
+        The required parameters are (MUST HAVE AND WILL BE PROVIDED MANUALLY BY THE USER):
+        - grant_type: Always "password" for this flow
+        - username: Your Reddit username
+        - password: Your Reddit password
+        - client_id: Your Reddit app's client ID (in Authorization header)
+        - client_secret: Your Reddit app's client secret (in Authorization header)
+      operationId: getAccessToken
+      servers:
+        - url: https://www.reddit.com
+      security:
+        - basicAuth: []
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          description: A unique identifier for your application (e.g., "script:your_app_name:v1.0 (by /u/your_username)")
+          schema:
+            type: string
+            example: "script:your_app_name:v1.0 (by /u/your_username)"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - grant_type
+                - username
+                - password
+              properties:
+                grant_type:
+                  type: string
+                  enum: [password]
+                  description: Always "password" for this flow
+                username:
+                  type: string
+                  description: Your Reddit username
+                password:
+                  type: string
+                  format: password
+                  description: Your Reddit password
+      responses:
+        "200":
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+              example:
+                access_token: "your_access_token_here"
+                token_type: "bearer"
+                expires_in: 3600
+                scope: "*"
+        "401":
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/me:
+    get:
+      summary: Get current user info
+      description: |
+        Returns information about the currently authenticated user.
+
+        Required parameters:
+        - Authorization: Bearer token obtained from step 1
+        - User-Agent: A unique identifier for your application (e.g., "your_app_name/1.0 by your_username")
+      operationId: getCurrentUser
+      servers:
+        - url: https://oauth.reddit.com
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          description: A unique identifier for your application
+          schema:
+            type: string
+            example: "your_app_name/1.0 by your_username"
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserInfo"
+              example:
+                comment_karma: 0
+                created: 1389649907.0
+                created_utc: 1389649907.0
+                has_mail: false
+                has_mod_mail: false
+                has_verified_email: null
+                id: "1"
+                is_gold: false
+                is_mod: true
+                link_karma: 1
+                name: "reddit_bot"
+                over_18: true
+
+  /api/v1/me/karma:
+    get:
+      summary: Get user karma
+      description: |
+        Returns the karma breakdown by subreddit for the authenticated user.
+
+        Required parameters:
+        - Authorization: Bearer token obtained from authentication
+        - User-Agent: A unique identifier for your application
+      operationId: getUserKarma
+      servers:
+        - url: https://oauth.reddit.com
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KarmaResponse"
+
+  /api/v1/me/prefs:
+    get:
+      summary: Get user preferences
+      description: |
+        Returns the preferences for the authenticated user.
+
+        Required parameters:
+        - Authorization: Bearer token
+        - User-Agent: Application identifier
+      operationId: getUserPrefs
+      servers:
+        - url: https://oauth.reddit.com
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrefsResponse"
+
+  /api/v1/me/trophies:
+    get:
+      summary: Get user trophies
+      description: |
+        Returns the trophies for the authenticated user.
+
+        Required parameters:
+        - Authorization: Bearer token
+        - User-Agent: Application identifier
+      operationId: getUserTrophies
+      servers:
+        - url: https://oauth.reddit.com
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrophiesResponse"
+
+  /api/announcements/v1:
+    get:
+      summary: Get announcements
+      description: |
+        Returns announcements for the authenticated user.
+
+        Required parameters:
+        - Authorization: Bearer token
+        - User-Agent: Application identifier
+      operationId: getAnnouncements
+      servers:
+        - url: https://oauth.reddit.com
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnnouncementsResponse"
+
+  /api/announcements/v1/read_all:
+    post:
+      summary: Mark all announcements as read
+      description: |
+        Marks all announcements as read for the authenticated user.
+
+        Required parameters:
+        - Authorization: Bearer token
+        - User-Agent: Application identifier
+      operationId: readAllAnnouncements
+      servers:
+        - url: https://oauth.reddit.com
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: |
+        Basic authentication using client_id as username and client_secret as password.
+        Format: Authorization: Basic base64(client_id:client_secret)
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Bearer token authentication using the access token obtained from /api/v1/access_token.
+        Format: Authorization: Bearer {access_token}
+
+  schemas:
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: The OAuth2 access token
+        token_type:
+          type: string
+          description: Token type (always "bearer")
+        expires_in:
+          type: integer
+          description: Token expiration time in seconds
+        scope:
+          type: string
+          description: Token scope
+
+    UserInfo:
+      type: object
+      properties:
+        comment_karma:
+          type: integer
+          description: User's comment karma
+        created:
+          type: number
+          description: Account creation timestamp
+        created_utc:
+          type: number
+          description: Account creation timestamp (UTC)
+        has_mail:
+          type: boolean
+          description: Whether user has unread mail
+        has_mod_mail:
+          type: boolean
+          description: Whether user has unread mod mail
+        has_verified_email:
+          type: boolean
+          nullable: true
+          description: Whether user has verified their email
+        id:
+          type: string
+          description: User ID
+        is_gold:
+          type: boolean
+          description: Whether user has Reddit Gold
+        is_mod:
+          type: boolean
+          description: Whether user is a moderator
+        link_karma:
+          type: integer
+          description: User's link karma
+        name:
+          type: string
+          description: Username
+        over_18:
+          type: boolean
+          description: Whether user is over 18
+
+    KarmaResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              sr:
+                type: string
+                description: Subreddit name
+              link_karma:
+                type: integer
+              comment_karma:
+                type: integer
+
+    PrefsResponse:
+      type: object
+      additionalProperties: true
+
+    TrophiesResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            trophies:
+              type: array
+              items:
+                type: object
+
+    AnnouncementsResponse:
+      type: object
+      additionalProperties: true
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string

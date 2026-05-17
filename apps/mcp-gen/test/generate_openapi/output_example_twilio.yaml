@@ -1,0 +1,301 @@
+openapi: 3.0.3
+info:
+  title: Twilio WhatsApp API
+  description: |
+    Twilio WhatsApp API with Basic Authentication.
+
+    FINAL NOTE: Make sure to include all of the parameters specified in the description, if not, the API won't work properly.
+    Furthermore, ALL PARAMETERS will be manually provided by the user, so you DON'T HAVE TO LOAD IT from a environment file.
+
+    Authentication uses Basic Auth with Account_SID and Auth_Token.
+    Format: Authorization: Basic base64(Account_SID:Auth_Token)
+  version: 1.0.0
+  contact:
+    name: Twilio
+    url: https://www.twilio.com
+
+servers:
+  - url: https://api.twilio.com/2010-04-01
+    description: Twilio API server
+
+paths:
+  /Accounts/{AccountSid}/Messages.json:
+    post:
+      summary: Send WhatsApp Message
+      description: |
+        Send a WhatsApp message using either a template or plain text.
+
+        For authentication, make sure to include both the Account_SID and Auth_Token 
+        (PROVIDED BY THE USER, PLEASE DO NOT LOAD IT FROM .env) in the request header as basic authentication.
+
+        Required parameters:
+        - Account_SID: Your Twilio account SID (in path and auth)
+        - Auth_Token: Your Twilio account authentication token (in auth)
+        - To: The recipient's WhatsApp number in the format 'whatsapp:+[number]'
+        - From: Your Twilio WhatsApp number in the format 'whatsapp:+[number]'
+
+        Optional parameters (choose one method):
+        Method 1 - Template Message:
+        - ContentSid: The ID of the template you want to use
+        - ContentVariables: A JSON string containing the variables for the template
+
+        Method 2 - Plain Text Message:
+        - Body: The message you want to send
+      operationId: sendWhatsAppMessage
+      security:
+        - basicAuth: []
+      parameters:
+        - name: AccountSid
+          in: path
+          required: true
+          description: Your Twilio account SID
+          schema:
+            type: string
+            example: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - To
+                - From
+              properties:
+                To:
+                  type: string
+                  description: The recipient's WhatsApp number in the format 'whatsapp:+[number]'
+                  example: "whatsapp:+1234567890"
+                From:
+                  type: string
+                  description: Your Twilio WhatsApp number in the format 'whatsapp:+[number]'
+                  example: "whatsapp:+0987654321"
+                ContentSid:
+                  type: string
+                  description: |
+                    The ID of the template you want to use (optional, for template messages).
+
+                    Available templates:
+                    - message_opt_in: HX048d466c235e75fe38439e6b54b171b2 (no parameters required)
+                    - notifications_appointment_reminder_template: HXb5b62575e6e4ff6129ad7c8efe1f983e (requires 2 params: appointment date, appointment time)
+                    - notifications_order_update_template: HX350d429d32e64a552466cafecbe95f3c (requires 2 params: order date, order time)
+                    - notification_order_tracking: HX1642ffbf48c51971b45513ad401e1717 (requires 2 params: order number, estimated arrival date)
+                    - verifications_2fa_template: HX43cb1add60e91787940415fe9ddfcadd (requires 1 param: verification code)
+                  example: "HXb5b62575e6e4ff6129ad7c8efe1f983e"
+                ContentVariables:
+                  type: string
+                  description: |
+                    A JSON string containing the variables for the template.
+                    Format: '{"1":"value1","2":"value2"}' where "1", "2", etc. are the parameter keys.
+
+                    Template parameters:
+                    - message_opt_in: No parameters
+                    - notifications_appointment_reminder_template: {"1":"12/1","2":"3pm"} (1: Appointment date, 2: Appointment time)
+                    - notifications_order_update_template: {"1":"12th January 2025","2":"3pm"} (1: Order date, 2: Order time)
+                    - notification_order_tracking: {"1":"#79326","2":"June 28th, 2025"} (1: Order number, 2: Estimated arrival date)
+                    - verifications_2fa_template: {"1":"409173"} (1: Verification code)
+                  example: '{"1":"12/1","2":"3pm"}'
+                Body:
+                  type: string
+                  description: The plain text message you want to send (optional, only used if ContentSid is not provided)
+                  example: "Hello from Twilio!"
+            examples:
+              templateMessage:
+                summary: Send template message (appointment reminder)
+                value:
+                  To: "whatsapp:+1234567890"
+                  From: "whatsapp:+0987654321"
+                  ContentSid: "HXb5b62575e6e4ff6129ad7c8efe1f983e"
+                  ContentVariables: '{"1":"12/1","2":"3pm"}'
+              plainTextMessage:
+                summary: Send plain text message
+                value:
+                  To: "whatsapp:+1234567890"
+                  From: "whatsapp:+0987654321"
+                  Body: "Hello from Twilio!"
+              optInMessage:
+                summary: Send opt-in message (no variables needed)
+                value:
+                  To: "whatsapp:+1234567890"
+                  From: "whatsapp:+0987654321"
+                  ContentSid: "HX048d466c235e75fe38439e6b54b171b2"
+              orderTrackingMessage:
+                summary: Send order tracking message
+                value:
+                  To: "whatsapp:+1234567890"
+                  From: "whatsapp:+0987654321"
+                  ContentSid: "HX1642ffbf48c51971b45513ad401e1717"
+                  ContentVariables: '{"1":"#79326","2":"June 28th, 2025"}'
+              twoFactorMessage:
+                summary: Send 2FA verification code
+                value:
+                  To: "whatsapp:+1234567890"
+                  From: "whatsapp:+0987654321"
+                  ContentSid: "HX43cb1add60e91787940415fe9ddfcadd"
+                  ContentVariables: '{"1":"409173"}'
+      responses:
+        "201":
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+              example:
+                sid: "SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                date_created: "Mon, 27 Jan 2026 12:00:00 +0000"
+                date_updated: "Mon, 27 Jan 2026 12:00:00 +0000"
+                date_sent: null
+                account_sid: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                to: "whatsapp:+1234567890"
+                from: "whatsapp:+0987654321"
+                messaging_service_sid: null
+                body: "Your appointment is coming up on 12/1 at 3pm"
+                status: "queued"
+                num_segments: "1"
+                num_media: "0"
+                direction: "outbound-api"
+                api_version: "2010-04-01"
+                price: null
+                price_unit: "USD"
+                error_code: null
+                error_message: null
+                uri: "/2010-04-01/Accounts/ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/Messages/SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.json"
+        "400":
+          description: Bad request - Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized - Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: |
+        Basic authentication using Account_SID as username and Auth_Token as password.
+        These credentials are PROVIDED BY THE USER and should NOT be loaded from environment files.
+        Format: Authorization: Basic base64(Account_SID:Auth_Token)
+
+  schemas:
+    MessageResponse:
+      type: object
+      properties:
+        sid:
+          type: string
+          description: The unique identifier for the message
+        date_created:
+          type: string
+          description: The date the message was created
+        date_updated:
+          type: string
+          description: The date the message was last updated
+        date_sent:
+          type: string
+          nullable: true
+          description: The date the message was sent
+        account_sid:
+          type: string
+          description: The Account SID
+        to:
+          type: string
+          description: The recipient's WhatsApp number
+        from:
+          type: string
+          description: Your Twilio WhatsApp number
+        messaging_service_sid:
+          type: string
+          nullable: true
+          description: The messaging service SID (if used)
+        body:
+          type: string
+          description: The message body
+        status:
+          type: string
+          enum: [queued, sending, sent, delivered, undelivered, failed]
+          description: The status of the message
+        num_segments:
+          type: string
+          description: The number of segments
+        num_media:
+          type: string
+          description: The number of media files
+        direction:
+          type: string
+          description: The direction of the message
+        api_version:
+          type: string
+          description: The API version used
+        price:
+          type: string
+          nullable: true
+          description: The price of the message
+        price_unit:
+          type: string
+          description: The currency unit
+        error_code:
+          type: string
+          nullable: true
+          description: Error code (if any)
+        error_message:
+          type: string
+          nullable: true
+          description: Error message (if any)
+        uri:
+          type: string
+          description: The URI of the message resource
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: Error code
+        message:
+          type: string
+          description: Error message
+        more_info:
+          type: string
+          description: Link to more information about the error
+        status:
+          type: integer
+          description: HTTP status code
+
+    TemplateInfo:
+      type: object
+      description: |
+        Information about available templates and their required parameters.
+
+        Available templates:
+        1. message_opt_in
+           - Template ID: HX048d466c235e75fe38439e6b54b171b2
+           - Parameters: None required
+
+        2. notifications_appointment_reminder_template
+           - Template ID: HXb5b62575e6e4ff6129ad7c8efe1f983e
+           - Parameters: 
+             * 1: Appointment date (e.g., "12/1")
+             * 2: Appointment time (e.g., "3pm")
+
+        3. notifications_order_update_template
+           - Template ID: HX350d429d32e64a552466cafecbe95f3c
+           - Parameters:
+             * 1: Order date (e.g., "12th January 2025")
+             * 2: Order time (e.g., "3pm")
+
+        4. notification_order_tracking
+           - Template ID: HX1642ffbf48c51971b45513ad401e1717
+           - Parameters:
+             * 1: Order number (e.g., "#79326")
+             * 2: Estimated arrival date (e.g., "June 28th, 2025")
+
+        5. verifications_2fa_template
+           - Template ID: HX43cb1add60e91787940415fe9ddfcadd
+           - Parameters:
+             * 1: Verification code (e.g., "409173")
