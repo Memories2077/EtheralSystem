@@ -5,6 +5,10 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { v4 as uuidv4 } from "uuid";
 import type { ChatMessage, ChatSettings, ChatHistoryItem } from "@/lib/types";
 import { BACKEND_API, MODEL_CONFIG } from "@/lib/config";
+import {
+  buildChatResearchContext,
+  buildMcpMetadataRequestPayload,
+} from "@/lib/research-context";
 
 // Simple error logger - can be replaced with a proper logging service
 const logError = (...args: any[]) => {
@@ -232,6 +236,10 @@ export const useChatStore = create<ChatState>()(
 
         const aiMessageId = uuidv4();
         const buildRequestId = userMessage.id;
+        const researchContext = buildChatResearchContext({
+          sessionId: chatId,
+          buildRequestId,
+        });
         const clientId = getStableClientId();
         const workspaceId = "default_workspace";
 
@@ -252,8 +260,10 @@ export const useChatStore = create<ChatState>()(
               model: settings?.model,
               temperature: settings?.temperature,
               mcpServers: settings?.mcpServers?.map((s) => s.url) || [],
-              sessionId: chatId,
-              buildRequestId,
+              sessionId: researchContext.sessionId,
+              buildRequestId: researchContext.buildRequestId,
+              traceId: researchContext.traceId,
+              experimentId: researchContext.experimentId,
               userId: clientId,
               workspaceId,
               email: `${clientId}@local`,
@@ -309,7 +319,13 @@ export const useChatStore = create<ChatState>()(
               const metadataResponse = await fetch(BACKEND_API.mcpMetadata(), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url: mcpUrl }),
+                body: JSON.stringify(
+                  buildMcpMetadataRequestPayload({
+                    url: mcpUrl,
+                    context: researchContext,
+                    serverId,
+                  }),
+                ),
               });
               const metadata = await metadataResponse.json();
               if (!metadataResponse.ok || metadata.status === "error") return;

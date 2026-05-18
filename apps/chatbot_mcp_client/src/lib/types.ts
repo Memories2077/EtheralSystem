@@ -32,6 +32,10 @@ export interface McpServer {
   hostPort?: number;
   containerPort?: number;
   containerId?: string;
+  traceId?: string;
+  experimentId?: string;
+  sessionId?: string;
+  buildRequestId?: string;
   buildLogs?: string[];
   inputContent?: string;
   action?: string;

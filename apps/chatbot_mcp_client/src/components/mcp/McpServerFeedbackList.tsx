@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useChatStore } from '@/lib/hooks/use-chat-store';
 import { BACKEND_API } from '@/lib/config';
+import { buildMcpMetadataRequestPayload } from '@/lib/research-context';
 import { useToast } from '@/hooks/use-toast';
 
 interface McpServerFeedbackListProps {
@@ -144,7 +145,18 @@ export function McpServerFeedbackList({ className }: McpServerFeedbackListProps)
       const metadataResponse = await fetch(BACKEND_API.mcpMetadata(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(
+          buildMcpMetadataRequestPayload({
+            url,
+            context: {
+              traceId: server.traceId,
+              experimentId: server.experimentId,
+              sessionId: server.sessionId,
+              buildRequestId: server.buildRequestId,
+              serverId: server.serverId,
+            },
+          }),
+        ),
       });
       const metadata = await metadataResponse.json();
       if (!metadataResponse.ok || metadata.status === 'error') {

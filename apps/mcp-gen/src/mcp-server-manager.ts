@@ -1329,6 +1329,16 @@ export class MCPServerManager {
                 lastError,
                 rag_context,
                 idempotencyKey || serverId,
+                undefined,
+                undefined,
+                undefined,
+                {
+                  traceId: serverConfig.traceId,
+                  experimentId: serverConfig.experimentId,
+                  sessionId: serverConfig.sessionId,
+                  buildRequestId: serverConfig.buildRequestId,
+                  serverId,
+                },
               );
 
               // Validate the generated spec
@@ -2082,6 +2092,27 @@ export class MCPServerManager {
           );
         }
         await this.buildDockerImage(config, buildPath);
+      } else {
+        await recordResearchEvent({
+          service: "mcp-gen",
+          stage: "docker",
+          eventName: "docker_build_completed",
+          status: "success",
+          durationMs: Date.now() - start,
+          context: {
+            traceId: config.traceId,
+            experimentId: config.experimentId,
+            sessionId: config.sessionId,
+            buildRequestId: config.buildRequestId,
+            serverId: config.serverId,
+          },
+          metrics: {
+            docker_build_success: true,
+            image: config.dockerImage,
+            image_already_exists: true,
+            build_log_count: config.buildLogs?.length || 0,
+          },
+        });
       }
 
       if (!config.hostPort) {
@@ -2139,6 +2170,7 @@ export class MCPServerManager {
           `BUILD_REQUEST_ID=${config.buildRequestId || config.serverId}`,
           `RESEARCH_METRICS_ENABLED=${process.env.RESEARCH_METRICS_ENABLED || ""}`,
           `RESEARCH_EXPERIMENT_ID=${config.experimentId || process.env.RESEARCH_EXPERIMENT_ID || ""}`,
+          `RESEARCH_EVENTS_DB=${process.env.RESEARCH_EVENTS_DB || ""}`,
           `RESEARCH_EVENTS_COLLECTION=${process.env.RESEARCH_EVENTS_COLLECTION || ""}`,
           `RESEARCH_EVENTS_JSONL_PATH=${process.env.RESEARCH_EVENTS_JSONL_PATH || ""}`,
           `RESEARCH_EVENTS_JSONL_MIRROR=${process.env.RESEARCH_EVENTS_JSONL_MIRROR || ""}`,

@@ -13,6 +13,8 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
+    "test:e2e": "playwright test",
+    "test:e2e:jsonplaceholder": "playwright test tests/e2e/jsonplaceholder-ui-metrics-flow.spec.ts",
     "research:benchmark": "bun scripts/research/run-paper-mvp-benchmark.ts",
     "research:export": "bun scripts/research/export-research-report.ts",
     "manager": "turbo manager --filter=@etheral-system/mcp-gen",
@@ -22,6 +24,8 @@
     "docker:up": "docker compose up --build"
   },
   "devDependencies": {
+    "@playwright/test": "^1.51.1",
+    "mongodb": "^7.0.0",
     "turbo": "^2.9.14"
   }
 }

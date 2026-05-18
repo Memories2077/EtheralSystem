@@ -76,6 +76,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
       - jwt_data:/repo/apps/mcp-gen/data
       - shared_input:/repo/apps/mcp-gen/input
       - shared_openapi_spec:/repo/apps/mcp-gen/src-generated-yaml
@@ -110,6 +111,7 @@ services:
       - SKILL_SELECTION_VARIANT=${SKILL_SELECTION_VARIANT:-dynamic}
       - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
       - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_DB=${RESEARCH_EVENTS_DB:-docker}
       - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
       - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
       - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
@@ -144,6 +146,7 @@ services:
       - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
       - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
       - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_DB=${RESEARCH_EVENTS_DB:-docker}
       - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
       - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
       - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
@@ -151,6 +154,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - jwt_data:/repo/apps/mcp-gen/data
+      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
     depends_on:
       docker-manager:
         condition: service_healthy
@@ -171,6 +175,8 @@ services:
     container_name: agent-service
     ports:
       - "2024:2024"
+    volumes:
+      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
     environment:
       - CHROMA_HOST=chromadb-server
       - CHROMA_PORT=8000
@@ -192,8 +198,10 @@ services:
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-default}
       - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
       - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
       - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_DB=${RESEARCH_EVENTS_DB:-docker}
       - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
       - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
       - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
@@ -216,6 +224,8 @@ services:
       dockerfile: Dockerfile
       target: chatbot-backend
     container_name: chatbot-backend
+    volumes:
+      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
@@ -237,6 +247,7 @@ services:
       - MONGODB_URL=${MONGODB_URL:-mongodb://mongodb:27017}
       - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
       - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_DB=${RESEARCH_EVENTS_DB:-docker}
       - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
       - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
       - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
@@ -273,9 +284,11 @@ services:
       target: chatbot-frontend
       args:
         - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+        - NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID=${NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID:-${RESEARCH_EXPERIMENT_ID:-local-dev}}
     container_name: chatbot-frontend
     environment:
       - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID=${NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID:-${RESEARCH_EXPERIMENT_ID:-local-dev}}
       - NODE_ENV=production
     ports:
       - "9002:9002"
