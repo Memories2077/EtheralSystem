@@ -1,0 +1,58 @@
+[
+  {
+    "id": "crud-public-httpbin",
+    "apiType": "simple_crud",
+    "title": "HTTPBin public request tools",
+    "prompt": "Create an MCP server for HTTPBin public endpoints. Base URL: https://httpbin.org. Authentication: none. Endpoints: GET /get with query parameters anything accepted; POST /post with JSON body; GET /status/{code} with path parameter code returning that status. The MCP tools should expose safe request methods for these endpoints.",
+    "expectedFeatures": ["public", "get", "post", "path_parameter"]
+  },
+  {
+    "id": "rickmorty-pagination",
+    "apiType": "pagination",
+    "title": "Rick and Morty paginated API",
+    "prompt": "Create an MCP server for the Rick and Morty API. Base URL: https://rickandmortyapi.com/api. Authentication: none. Endpoints: GET /character with query parameters page, name, status, species, type, gender; GET /character/{id}; GET /location with page and name; GET /episode/{id}. Responses are JSON and list endpoints include pagination info.",
+    "expectedFeatures": ["public", "pagination", "filtering", "path_parameter"]
+  },
+  {
+    "id": "github-bearer-issues",
+    "apiType": "auth",
+    "title": "GitHub issues bearer token API",
+    "prompt": "Create an MCP server for GitHub repository issues. Base URL: https://api.github.com. Authentication: bearer token provided by the user at tool call time. Endpoints: GET /repos/{owner}/{repo}/issues with query parameters state, labels, per_page, page; GET /repos/{owner}/{repo}/issues/{issue_number}; POST /repos/{owner}/{repo}/issues with JSON body title and body.",
+    "expectedFeatures": ["bearer_auth", "pagination", "post_json", "path_parameter"]
+  },
+  {
+    "id": "stripe-api-key-customers",
+    "apiType": "auth",
+    "title": "Stripe customers API key flow",
+    "prompt": "Create an MCP server for Stripe customer lookup. Base URL: https://api.stripe.com/v1. Authentication: secret API key as bearer token provided by the user at tool call time. Endpoints: GET /customers with query parameters limit, email, starting_after; GET /customers/{customer}; POST /customers with form-url-encoded fields email, name, description.",
+    "expectedFeatures": ["bearer_auth", "pagination", "form_urlencoded", "path_parameter"]
+  },
+  {
+    "id": "jsonplaceholder-posts",
+    "apiType": "simple_crud",
+    "title": "JSONPlaceholder posts",
+    "prompt": "Create an MCP server for JSONPlaceholder. Base URL: https://jsonplaceholder.typicode.com. Authentication: none. Endpoints: GET /posts with optional userId query parameter; GET /posts/{id}; GET /posts/{id}/comments; POST /posts with JSON fields title, body, userId.",
+    "expectedFeatures": ["public", "crud", "post_json", "path_parameter"]
+  },
+  {
+    "id": "upload-multipart",
+    "apiType": "file_upload",
+    "title": "Multipart document upload API",
+    "prompt": "Create an MCP server for a document upload API. Base URL: https://api.example-docs.test/v1. Authentication: API key provided by the user in X-API-Key. Endpoint: POST /documents/upload accepts multipart/form-data with file field document, string field title, optional string field folder_id. Endpoint: GET /documents/{document_id} returns metadata. Endpoint: DELETE /documents/{document_id} deletes a document.",
+    "expectedFeatures": ["api_key_auth", "multipart", "file_upload", "delete"]
+  },
+  {
+    "id": "noisy-weather-docs",
+    "apiType": "noisy_docs",
+    "title": "Noisy weather natural language docs",
+    "prompt": "Build an MCP server from this informal API guide. WeatherBox is at https://weather.example.test/api. Use the user supplied key as query parameter api_key. To search current weather, call GET /current with city and units. Forecast uses GET /forecast with city, days from 1 to 7, and units. Historical lookup is GET /history/{date} where date is YYYY-MM-DD and query city is required. All responses are JSON. Ignore marketing text and do not invent OAuth.",
+    "expectedFeatures": ["api_key_query", "noisy_docs", "path_parameter"]
+  },
+  {
+    "id": "rate-limit-cursor",
+    "apiType": "pagination",
+    "title": "Cursor paginated events API",
+    "prompt": "Create an MCP server for an events API. Base URL: https://events.example.test. Authentication: bearer token provided by the user. Endpoint: GET /v2/events supports cursor pagination using cursor and limit query parameters, filters type and created_after, and returns next_cursor. Endpoint: GET /v2/events/{event_id}. Rate limit headers may include X-RateLimit-Remaining and Retry-After.",
+    "expectedFeatures": ["bearer_auth", "cursor_pagination", "rate_limit", "path_parameter"]
+  }
+]

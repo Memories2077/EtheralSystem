@@ -3,6 +3,7 @@ import os
 import json
 import re
 import logging
+from collections import Counter
 from contextlib import AsyncExitStack
 from typing import Optional, List, Dict, Any, AsyncGenerator, Union, cast
 
@@ -36,6 +37,12 @@ import database
 from shared import create_mcp_server_tool, stream_langgraph_build, extract_create_mcp_tool_call, normalize_request_context
 from metaclaw_client import MetaClawClient
 from mcp_server_filtering import ACTIVE_GENERATED_MCP_STATUSES, filter_active_mcp_server_payload
+from research_metrics import (
+    content_hash,
+    duration_since_ms,
+    monotonic_ms,
+    record_research_event,
+)
 
 StandardAgent = Runnable[Any, Any]
 AgentLike = Union[StandardAgent, MetaClawClient]
@@ -64,6 +71,8 @@ class ChatRequest(BaseModel):
     mcpServers: Optional[List[str]] = []
     sessionId: Optional[str] = None
     buildRequestId: Optional[str] = None
+    traceId: Optional[str] = None
+    experimentId: Optional[str] = None
     userId: Optional[str] = None
     workspaceId: Optional[str] = None
     email: Optional[str] = None
@@ -71,6 +80,11 @@ class ChatRequest(BaseModel):
 
 class McpMetadataRequest(BaseModel):
     url: str
+    traceId: Optional[str] = None
+    experimentId: Optional[str] = None
+    sessionId: Optional[str] = None
+    buildRequestId: Optional[str] = None
+    serverId: Optional[str] = None
 
 class AgentState:
     def __init__(self):
@@ -282,9 +296,17 @@ async def health_check():
 
 @app.post("/mcp/metadata")
 async def get_mcp_metadata(request: McpMetadataRequest):
+    start_ms = monotonic_ms()
     original_url = request.url.strip() if request.url else ""
     if not original_url:
         raise HTTPException(status_code=400, detail="URL is required")
+    event_context = {
+        "traceId": request.traceId,
+        "experimentId": request.experimentId,
+        "sessionId": request.sessionId,
+        "buildRequestId": request.buildRequestId,
+        "serverId": request.serverId,
+    }
 
     url = resolve_docker_url(original_url)
     if url in state.mcp_connections:
@@ -296,12 +318,27 @@ async def get_mcp_metadata(request: McpMetadataRequest):
             }
             for tool_item in conn.get("tools", [])
         ]
-        return {
+        response_payload = {
             "name": conn.get("name") or "Connected Server",
             "url": original_url,
             "status": "connected",
             "tools": tools_list,
         }
+        await record_research_event(
+            service="chatbot-backend",
+            stage="runtime",
+            event_name="mcp_metadata_checked",
+            status="success",
+            duration_ms=duration_since_ms(start_ms),
+            context=event_context,
+            metrics={
+                "mcp_initialize_success": True,
+                "mcp_tool_count": len(tools_list),
+                "cached_connection": True,
+            },
+            tags={"url_hash": content_hash(original_url)},
+        )
+        return response_payload
 
     stack = AsyncExitStack()
     try:
@@ -338,10 +375,36 @@ async def get_mcp_metadata(request: McpMetadataRequest):
             state.mcp_connections[url] = {"stack": stack, "tools": tools, "name": server_name}
             state.agent = None
 
+        await record_research_event(
+            service="chatbot-backend",
+            stage="runtime",
+            event_name="mcp_metadata_checked",
+            status="success",
+            duration_ms=duration_since_ms(start_ms),
+            context=event_context,
+            metrics={
+                "mcp_initialize_success": True,
+                "mcp_list_tools_latency_ms": duration_since_ms(start_ms),
+                "mcp_tool_count": len(tools_list),
+                "cached_connection": False,
+            },
+            tags={"url_hash": content_hash(original_url)},
+        )
         return {"name": server_name, "url": original_url, "status": "connected", "tools": tools_list}
     except asyncio.TimeoutError as e:
         await stack.aclose()
         logger.error(f"Timed out fetching metadata for {url}: {e}", exc_info=True)
+        await record_research_event(
+            service="chatbot-backend",
+            stage="runtime",
+            event_name="mcp_metadata_checked",
+            status="timeout",
+            duration_ms=duration_since_ms(start_ms),
+            error_code="timeout",
+            context=event_context,
+            metrics={"mcp_initialize_success": False},
+            tags={"url_hash": content_hash(original_url)},
+        )
         return {
             "name": original_url.split("/")[-1] or "External Server",
             "url": original_url,
@@ -352,6 +415,17 @@ async def get_mcp_metadata(request: McpMetadataRequest):
     except ValueError as e:
         await stack.aclose()
         logger.error(f"Unsupported MCP transport or invalid URL for {url}: {e}", exc_info=True)
+        await record_research_event(
+            service="chatbot-backend",
+            stage="runtime",
+            event_name="mcp_metadata_checked",
+            status="failure",
+            duration_ms=duration_since_ms(start_ms),
+            error_code="unsupported_transport",
+            context=event_context,
+            metrics={"mcp_initialize_success": False},
+            tags={"url_hash": content_hash(original_url)},
+        )
         return {
             "name": original_url.split("/")[-1] or "External Server",
             "url": original_url,
@@ -364,6 +438,17 @@ async def get_mcp_metadata(request: McpMetadataRequest):
         error_text = str(e)
         error_code = "initialization_error" if "initialize" in error_text.lower() else "connect_error"
         logger.error(f"Failed to fetch metadata for {url}: {e}", exc_info=True)
+        await record_research_event(
+            service="chatbot-backend",
+            stage="runtime",
+            event_name="mcp_metadata_checked",
+            status="failure",
+            duration_ms=duration_since_ms(start_ms),
+            error_code=error_code,
+            context=event_context,
+            metrics={"mcp_initialize_success": False},
+            tags={"url_hash": content_hash(original_url)},
+        )
         return {
             "name": original_url.split("/")[-1] or "External Server",
             "url": original_url,
@@ -380,6 +465,8 @@ async def chat_endpoint(request: ChatRequest):
         request_context = normalize_request_context({
             "sessionId": request.sessionId,
             "buildRequestId": request.buildRequestId,
+            "traceId": request.traceId,
+            "experimentId": request.experimentId,
             "userId": request.userId,
             "workspaceId": request.workspaceId,
             "email": request.email,
@@ -403,13 +490,87 @@ async def chat_endpoint(request: ChatRequest):
                             yield std_sse
                         return
                     yield sse
-            return StreamingResponse(metaclaw_stream(), media_type="text/event-stream")
+            return StreamingResponse(_instrument_chat_stream(metaclaw_stream(), request, request_context, prov, model, state), media_type="text/event-stream")
 
-        return StreamingResponse(_stream_standard_agent_response(request, [{"role": m.role, "content": m.content} for m in request.messages], request.mcpServers, request.temperature or 0.0, state, agent), media_type="text/event-stream")
+        standard_stream = _stream_standard_agent_response(request, [{"role": m.role, "content": m.content} for m in request.messages], request.mcpServers, request.temperature or 0.0, state, agent)
+        return StreamingResponse(_instrument_chat_stream(standard_stream, request, request_context, prov, model, state), media_type="text/event-stream")
 
     except Exception as e:
         logger.exception("Chat error")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _count_sse_payload(sse: str, counter: Counter) -> None:
+    for line in sse.splitlines():
+        if not line.startswith("data:"):
+            continue
+        raw = line[5:].strip()
+        if not raw or raw == "[DONE]":
+            continue
+        try:
+            payload = json.loads(raw)
+            if isinstance(payload, dict):
+                counter[str(payload.get("type") or "content")] += 1
+            else:
+                counter["content"] += 1
+        except Exception:
+            counter["content"] += 1
+
+
+async def _instrument_chat_stream(
+    stream: AsyncGenerator[str, None],
+    request: ChatRequest,
+    request_context: Dict[str, Any],
+    provider: str,
+    model: str,
+    state: AgentState,
+) -> AsyncGenerator[str, None]:
+    start_ms = monotonic_ms()
+    first_sse_ms: Optional[int] = None
+    counts: Counter = Counter()
+    status = "success"
+    error_code: Optional[str] = None
+    try:
+        async for sse in stream:
+            if first_sse_ms is None:
+                first_sse_ms = duration_since_ms(start_ms)
+            _count_sse_payload(sse, counts)
+            yield sse
+    except Exception as exc:
+        status = "failure"
+        error_code = exc.__class__.__name__
+        raise
+    finally:
+        if counts.get("error", 0) > 0 and status == "success":
+            status = "failure"
+            error_code = "sse_error"
+        await record_research_event(
+            service="chatbot-backend",
+            stage="chat",
+            event_name="chat_stream_completed",
+            status=status,
+            duration_ms=duration_since_ms(start_ms),
+            error_code=error_code,
+            provider=provider,
+            model=model,
+            context=request_context,
+            metrics={
+                "time_to_first_sse_ms": first_sse_ms,
+                "chat_total_latency_ms": duration_since_ms(start_ms),
+                "stream_chunk_count": sum(counts.values()),
+                "sse_type_counts": dict(counts),
+                "message_count": len(request.messages),
+                "last_user_message_length": len(request.messages[-1].content) if request.messages else 0,
+                "last_user_message_hash": content_hash(request.messages[-1].content) if request.messages else "",
+                "mcp_url_count": len(request.mcpServers or []),
+                "mcp_tool_count": state.current_mcp_tool_count,
+                "mcp_connection_failure_count": len(state.current_mcp_failures),
+            },
+            tags={
+                "route": provider,
+                "temperature": request.temperature,
+            },
+        )
 
 async def _stream_standard_agent_response(
     request: ChatRequest,
@@ -517,11 +678,16 @@ class McpFeedbackRequest(BaseModel):
     type: str
     userId: Optional[str] = None
     comment: Optional[str] = None
+    traceId: Optional[str] = None
+    experimentId: Optional[str] = None
+    sessionId: Optional[str] = None
+    buildRequestId: Optional[str] = None
 
 
 @app.post("/mcp/{server_id}/feedback")
 async def submit_mcp_feedback(server_id: str, request: McpFeedbackRequest):
     """Proxy mcp-gen feedback submission through FastAPI."""
+    start_ms = monotonic_ms()
     if request.type not in {"like", "dislike"}:
         raise HTTPException(status_code=400, detail="Feedback type must be 'like' or 'dislike'.")
 
@@ -533,9 +699,45 @@ async def submit_mcp_feedback(server_id: str, request: McpFeedbackRequest):
             timeout=llm_config.default_timeout_ms / 1000,
         )
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
+        await record_research_event(
+            service="chatbot-backend",
+            stage="feedback",
+            event_name="mcp_feedback_submitted",
+            status="success",
+            duration_ms=duration_since_ms(start_ms),
+            context={
+                "traceId": request.traceId,
+                "experimentId": request.experimentId,
+                "sessionId": request.sessionId,
+                "buildRequestId": request.buildRequestId,
+                "serverId": server_id,
+            },
+            metrics={
+                "feedback_type": request.type,
+                "feedback_has_comment": bool(request.comment),
+                "feedback_total": payload.get("totalFeedbacks"),
+            },
+        )
+        return payload
     except requests.RequestException as e:
         logger.error(f"Failed to proxy mcp-gen feedback for {server_id}: {e}", exc_info=True)
+        await record_research_event(
+            service="chatbot-backend",
+            stage="feedback",
+            event_name="mcp_feedback_submitted",
+            status="failure",
+            duration_ms=duration_since_ms(start_ms),
+            error_code=e.__class__.__name__,
+            context={
+                "traceId": request.traceId,
+                "experimentId": request.experimentId,
+                "sessionId": request.sessionId,
+                "buildRequestId": request.buildRequestId,
+                "serverId": server_id,
+            },
+            metrics={"feedback_type": request.type},
+        )
         raise HTTPException(status_code=502, detail=f"mcp-gen feedback unavailable: {e}")
 
 

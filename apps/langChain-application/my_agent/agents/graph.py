@@ -39,6 +39,7 @@ from my_agent.agents.sub_agents.examiner_agent import examiner_agent_node
 from my_agent.agents.sub_agents.generator_agent import generator_agent_node
 from my_agent.config import AGENT_CONFIG
 from my_agent.prompts import supervisor as supervisor_prompts
+from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, record_research_event, state_research_context
 
 # ============================================================================
 # CONSTANTS
@@ -313,6 +314,7 @@ async def supervisor_node(state: AgentState) -> AgentState:
     - state["retry_count"]: How many times we've retried
     - messages: Full conversation, including sub-agent outputs
     """
+    start_ms = monotonic_ms()
     messages = state["messages"]
     history = state.get("history", [])
     retry_count = state.get("retry_count", 0)
@@ -326,6 +328,16 @@ async def supervisor_node(state: AgentState) -> AgentState:
         response.tool_calls = [{"name": "mark_task_complete", 
                                 "args": {"summary": "MCP Server created and verified successfully."}, 
                                 "id": "forced_complete_001"}]
+        await record_research_event(
+            service="langgraph-agent",
+            stage="orchestration",
+            event_name="supervisor_routed",
+            status="success",
+            duration_ms=duration_since_ms(start_ms),
+            context=state_research_context(state),
+            metrics={"retry_count": retry_count, "history_count": len(history)},
+            tags={"next_agent": "tools", "reason": "forced_completion_marker"},
+        )
         return {
             "messages": [response],
             "next_agent": "tools",
@@ -342,6 +354,17 @@ async def supervisor_node(state: AgentState) -> AgentState:
     if retry_count >= MAX_RETRIES:
         print(f"[Supervisor] ⚠️ Max retries ({MAX_RETRIES}) reached. Forcing completion.")
         last_content = str(messages[-1].content) if messages else "Max retries exceeded."
+        await record_research_event(
+            service="langgraph-agent",
+            stage="orchestration",
+            event_name="supervisor_routed",
+            status="failure",
+            duration_ms=duration_since_ms(start_ms),
+            error_code="max_retry_hit",
+            context=state_research_context(state),
+            metrics={"retry_count": retry_count, "max_retries": MAX_RETRIES},
+            tags={"next_agent": "end"},
+        )
         return {
             "messages": [],
             "next_agent": "end",
@@ -457,6 +480,21 @@ Most Recent Agent Output:
 
     next_agent = "tools" if has_tool_calls else "end"
     print(f"[Supervisor] → Route to: {next_agent}")
+    await record_research_event(
+        service="langgraph-agent",
+        stage="orchestration",
+        event_name="supervisor_routed",
+        status="success",
+        duration_ms=duration_since_ms(start_ms),
+        context=state_research_context(state),
+        metrics={
+            "retry_count": retry_count,
+            "history_count": len(history),
+            "tool_call_count": len(getattr(response, "tool_calls", []) or []),
+            "raw_api_doc_length": len(raw_api_doc),
+        },
+        tags={"next_agent": next_agent},
+    )
 
     return {
         "messages": [response],
@@ -526,6 +564,15 @@ ENRICHED_CONTEXT (RAG):
 
         if examiner_output:
             print("[SupervisorFinal] ⚡ Fast-path: Examiner produced generator task. Injecting generator tool call.")
+            await record_research_event(
+                service="langgraph-agent",
+                stage="orchestration",
+                event_name="supervisor_final_routed",
+                status="success",
+                context=state_research_context(state),
+                metrics={"retry_count": retry_count, "examiner_output_length": len(examiner_output)},
+                tags={"agent_that_ran": agent_that_ran, "next_agent": "tools"},
+            )
             injected_response = AIMessage(
                 content="Examiner completed. Delegating enriched task to Generator.",
                 tool_calls=[{
@@ -560,6 +607,15 @@ ENRICHED_CONTEXT (RAG):
         if _is_successful_generator_output(last_output):
             is_complete = True
             print("[SupervisorFinal] Generator output contains successful server JSON.")
+            await record_research_event(
+                service="langgraph-agent",
+                stage="orchestration",
+                event_name="supervisor_final_routed",
+                status="success",
+                context=state_research_context(state),
+                metrics={"retry_count": retry_count, "generator_output_length": len(last_output)},
+                tags={"agent_that_ran": agent_that_ran, "next_agent": "end", "is_complete": True},
+            )
 
             # Add a clear success marker for the frontend to detect
             final_msg = f"✅ MCP Server created successfully!\n\n{last_output}"
@@ -646,6 +702,15 @@ Return ONLY a JSON object:
         final_response = ""
         final_messages = []
     
+    await record_research_event(
+        service="langgraph-agent",
+        stage="orchestration",
+        event_name="supervisor_final_routed",
+        status="success" if is_complete else "skipped",
+        context=state_research_context(state),
+        metrics={"retry_count": retry_count, "new_retry_count": new_retry_count},
+        tags={"agent_that_ran": agent_that_ran, "next_agent": next_agent, "is_complete": is_complete},
+    )
     return {
         "messages": final_messages,
         "next_agent": next_agent,
@@ -845,7 +910,12 @@ class MultiAgentSystem:
             "is_complete": False,
             "current_plan": "initial",
             "raw_api_doc": "",
-            "enriched_context": ""
+            "enriched_context": "",
+            "trace_id": "",
+            "experiment_id": "",
+            "session_id": "",
+            "build_request_id": "",
+            "server_id": "",
         }
 
         try:

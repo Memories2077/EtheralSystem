@@ -41,14 +41,23 @@ class MCPCreateRequest:
     userId: str
     email: str
     rag_context: List[Any] = field(default_factory=list)
+    traceId: Optional[str] = None
+    experimentId: Optional[str] = None
+    sessionId: Optional[str] = None
+    buildRequestId: Optional[str] = None
 
     def to_payload(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "request": self.request,
             "userId": self.userId,
             "email": self.email,
             "rag_context": self.rag_context,
         }
+        for key in ("traceId", "experimentId", "sessionId", "buildRequestId"):
+            value = getattr(self, key)
+            if value:
+                payload[key] = value
+        return payload
 
 
 @dataclass(frozen=True)

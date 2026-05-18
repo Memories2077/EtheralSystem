@@ -28,6 +28,7 @@ else:
     LlamaDocument = Any
 from my_agent.config import API_CONFIG
 from my_agent.utils.llm_factory import get_llm
+from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, record_research_event
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,7 @@ async def save_mcp_artifacts(server_id: str, user_id: str, email: str, artifacts
     Returns:
         Dict with status and details about the operation
     """
+    start_ms = monotonic_ms()
     logger.info(f"[VectorDB] Saving artifacts for server {server_id} using Hierarchical Indexing...")
 
     try:
@@ -237,6 +239,19 @@ async def save_mcp_artifacts(server_id: str, user_id: str, email: str, artifacts
         num_leaves = await asyncio.to_thread(_sync_process_and_save, server_id, documents)
 
         logger.info(f"[VectorDB] ✅ Successfully indexed {num_leaves} leaf nodes for {server_id}")
+        await record_research_event(
+            service="langgraph-agent",
+            stage="artifact_indexing",
+            event_name="artifact_index_completed",
+            status="success",
+            duration_ms=duration_since_ms(start_ms),
+            context={"server_id": server_id},
+            metrics={
+                "artifact_index_success": True,
+                "artifact_document_count": len(documents),
+                "artifact_leaf_node_count": num_leaves,
+            },
+        )
         return {
             "status": "success",
             "indexed_nodes": num_leaves,
@@ -245,6 +260,15 @@ async def save_mcp_artifacts(server_id: str, user_id: str, email: str, artifacts
 
     except Exception as e:
         logger.error(f"[VectorDB] ❌ Failed to save artifacts: {e}")
+        await record_research_event(
+            service="langgraph-agent",
+            stage="artifact_indexing",
+            event_name="artifact_index_completed",
+            status="failure",
+            duration_ms=duration_since_ms(start_ms),
+            error_code=e.__class__.__name__,
+            context={"server_id": server_id},
+        )
         return {"status": "error", "reason": str(e)}
 
 def _sync_search_artifacts(query_text: str, n_results: int) -> List[Dict[str, Any]]:
@@ -309,6 +333,7 @@ async def search_mcp_artifacts(query_text: str, n_results: int = 3) -> List[Dict
     """
     Search for related MCP artifacts using AutoMergingRetriever.
     """
+    start_ms = monotonic_ms()
     logger.info(f"[VectorDB] 🔍 Searching with AutoMergingRetriever: '{query_text[:50]}...'")
     try:
         _ensure_vector_db_dependencies()
@@ -316,8 +341,37 @@ async def search_mcp_artifacts(query_text: str, n_results: int = 3) -> List[Dict
         formatted_results = await asyncio.to_thread(_sync_search_artifacts, query_text, n_results)
         
         logger.info(f"[VectorDB] ✅ Found {len(formatted_results)} relevant (possibly merged) documents")
+        scores = [
+            float(result.get("distance", 0.0))
+            for result in formatted_results
+            if isinstance(result.get("distance", 0.0), (int, float))
+        ]
+        await record_research_event(
+            service="langgraph-agent",
+            stage="rag",
+            event_name="rag_retrieval_completed",
+            status="success",
+            duration_ms=duration_since_ms(start_ms),
+            metrics={
+                "rag_top_k": n_results,
+                "rag_returned_count": len(formatted_results),
+                "rag_similarity_min": min(scores) if scores else None,
+                "rag_similarity_max": max(scores) if scores else None,
+                "rag_similarity_mean": sum(scores) / len(scores) if scores else None,
+                "query_length": len(query_text),
+            },
+        )
         return formatted_results
             
     except Exception as e:
         logger.error(f"[VectorDB] ❌ Search failed: {e}")
+        await record_research_event(
+            service="langgraph-agent",
+            stage="rag",
+            event_name="rag_retrieval_completed",
+            status="failure",
+            duration_ms=duration_since_ms(start_ms),
+            error_code=e.__class__.__name__,
+            metrics={"rag_top_k": n_results, "query_length": len(query_text)},
+        )
         return []

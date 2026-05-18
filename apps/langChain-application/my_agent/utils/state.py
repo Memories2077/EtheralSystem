@@ -1,11 +1,20 @@
 from typing import Sequence, List
-from typing_extensions import TypedDict, Annotated
+from typing_extensions import TypedDict, Annotated, NotRequired
 import operator
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 class InputState(TypedDict):
     """User-facing input state - only requires messages"""
     messages: Annotated[Sequence[HumanMessage | AIMessage | SystemMessage | ToolMessage], operator.add]
+    raw_api_doc: NotRequired[str]
+    trace_id: NotRequired[str]
+    experiment_id: NotRequired[str]
+    session_id: NotRequired[str]
+    build_request_id: NotRequired[str]
+    user_id: NotRequired[str]
+    workspace_id: NotRequired[str]
+    email: NotRequired[str]
+    memory_scope: NotRequired[str]
 
 class AgentState(TypedDict):
     """Internal overall state for the multi-agent system.
@@ -27,8 +36,11 @@ class AgentState(TypedDict):
     # Technical Data (Explicit state passing)
     raw_api_doc: str         # The original verbatim API documentation from user
     enriched_context: str    # RAG data and technical analysis from Examiner
-
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+    trace_id: NotRequired[str]            # Research trace id for cross-service correlation
+    experiment_id: NotRequired[str]       # Research experiment id
+    session_id: NotRequired[str]          # Chat/session id
+    build_request_id: NotRequired[str]    # MCP build request id
+    server_id: NotRequired[str]           # Generated server id when available
 
 def is_human_message(msg) -> bool:
     """Helper to robustly identify human messages in various representations."""

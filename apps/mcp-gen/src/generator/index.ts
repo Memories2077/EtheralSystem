@@ -10,6 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { SkillSelectionAgent } from "../skill-intelligence/agent.js";
 import type { GenerationOutcome, SpecProfile, SkillComposition, SkillScore } from "../skill-intelligence/types.js";
+import { contentHash, recordResearchEvent } from "../utils/research-metrics.js";
 
 // Helper to create a minimal SpecProfile when none is available
 function createMinimalSpecProfile(): SpecProfile {
@@ -169,6 +170,24 @@ async function recordGenerationFeedback(
 
     await agent.recordFeedback(outcome);
     console.log(`📊 Recorded feedback for request ${requestId} (validation: ${validationPassed ? 'PASS' : 'FAIL'})`);
+    await recordResearchEvent({
+      service: "mcp-gen",
+      stage: "generation",
+      eventName: "generation_feedback_recorded",
+      status: validationPassed ? "success" : "failure",
+      durationMs: generationTimeMs,
+      context: { buildRequestId, serverId },
+      metrics: {
+        validation_passed: validationPassed,
+        validation_error_count: validationErrors.length,
+        selected_skill_ids: selectedSkillIds,
+        selected_skill_count: selectedSkillIds.length,
+        token_count: tokenCount,
+        llm_calls: llmCalls,
+        required_retries: requiredRetries,
+        code_quality: codeQuality,
+      },
+    });
   } catch (error) {
     console.warn('⚠️ Failed to record feedback:', error);
     // Non-blocking: continue even if feedback recording fails
@@ -204,6 +223,7 @@ export async function generateOpenAPISpec(
     startTime = Date.now();
     console.log("📖 Reading Input...");
     const read_input = await readFile(input);
+    const inputHash = contentHash(read_input);
 
     console.log("📖⬅️ Reading Input Examples...");
     const input_Example = await readFile(api_input_example);
@@ -448,6 +468,25 @@ export async function generateOpenAPISpec(
     } catch (feedbackError) {
       console.warn('⚠️ Failed to record feedback:', feedbackError);
     }
+    await recordResearchEvent({
+      service: "mcp-gen",
+      stage: "generation",
+      eventName: "openapi_generation_completed",
+      status: "success",
+      durationMs: endTime - startTime,
+      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      metrics: {
+        input_length: read_input.length,
+        input_hash: inputHash,
+        generated_length: fullCode.length,
+        prompt_token_estimate: Math.round(tokenCount),
+        llm_calls: llmCalls,
+        retry_count: retryCount,
+        validation_passed: true,
+        selected_skill_count: compositionInternal?.skills.length || 0,
+        selected_skill_ids: compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
+      },
+    });
 
     return { code: fullCode, llmCallCount: llmCalls };
   } catch (error) {
@@ -474,6 +513,21 @@ export async function generateOpenAPISpec(
       console.warn('⚠️ Failed to record failure feedback:', feedbackError);
     }
     console.error("❌ Error generating OpenAPI spec:", error);
+    await recordResearchEvent({
+      service: "mcp-gen",
+      stage: "generation",
+      eventName: "openapi_generation_completed",
+      status: "failure",
+      durationMs: endTime - startTime,
+      errorCode: error instanceof Error ? error.name : "GenerationError",
+      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      metrics: {
+        prompt_token_estimate: Math.round(tokenCount),
+        llm_calls: llmCalls,
+        retry_count: retryCount,
+        validation_passed: false,
+      },
+    });
     throw error;
   }
 }
@@ -505,6 +559,7 @@ export async function generateMCP(
     startTime = Date.now();
     console.log("📖 Reading OpenAPI spec...");
     const spec = await readFile(specPath);
+    const specHash = contentHash(spec);
 
     console.log("✅ Validating OpenAPI spec");
     const result = await confirm(specPath);
@@ -671,6 +726,24 @@ export async function generateMCP(
     } catch (feedbackError) {
       console.warn('⚠️ Failed to record feedback:', feedbackError);
     }
+    await recordResearchEvent({
+      service: "mcp-gen",
+      stage: "generation",
+      eventName: "mcp_generation_completed",
+      status: "success",
+      durationMs: endTime - startTime,
+      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      metrics: {
+        spec_length: spec.length,
+        spec_hash: specHash,
+        generated_length: fullCode.length,
+        llm_calls: llmCalls,
+        retry_count: retryCount,
+        validation_passed: true,
+        selected_skill_count: compositionInternal?.skills.length || 0,
+        selected_skill_ids: compositionInternal?.skills.map((s: SkillScore) => s.skillId) || [],
+      },
+    });
 
     return {
       code: fullCode,
@@ -700,6 +773,20 @@ export async function generateMCP(
       console.warn('⚠️ Failed to record failure feedback:', feedbackError);
     }
     console.error("❌ Error generating MCP server:", error);
+    await recordResearchEvent({
+      service: "mcp-gen",
+      stage: "generation",
+      eventName: "mcp_generation_completed",
+      status: "failure",
+      durationMs: endTime - startTime,
+      errorCode: error instanceof Error ? error.name : "GenerationError",
+      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      metrics: {
+        llm_calls: llmCalls,
+        retry_count: retryCount,
+        validation_passed: false,
+      },
+    });
     throw error;
   }
 }

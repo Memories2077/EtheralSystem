@@ -13,6 +13,8 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
+    "research:benchmark": "bun scripts/research/run-paper-mvp-benchmark.ts",
+    "research:export": "bun scripts/research/export-research-report.ts",
     "manager": "turbo manager --filter=@etheral-system/mcp-gen",
     "proxy": "turbo proxy --filter=@etheral-system/mcp-gen",
     "dev:backend": "turbo dev:backend --filter=@etheral-system/chatbot-mcp-client",

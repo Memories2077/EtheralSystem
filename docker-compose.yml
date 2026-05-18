@@ -108,6 +108,11 @@ services:
       - SKILL_FEEDBACK_ENABLED=${SKILL_FEEDBACK_ENABLED:-true}
       - DYNAMIC_SKILL_SELECTION=${DYNAMIC_SKILL_SELECTION:-false}
       - SKILL_SELECTION_VARIANT=${SKILL_SELECTION_VARIANT:-dynamic}
+      - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
+      - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
+      - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
+      - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -137,6 +142,11 @@ services:
     environment:
       - BACKEND_HOST=${BACKEND_HOST:-host.docker.internal}
       - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
+      - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
+      - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
+      - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
+      - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -182,6 +192,11 @@ services:
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-default}
       - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
+      - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
+      - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
+      - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -220,6 +235,11 @@ services:
       - LANGGRAPH_API_URL=${LANGGRAPH_API_URL:-http://agent-service:2024}
       - MCP_GEN_URL=${MCP_GEN_URL:-http://docker-manager:8080}
       - MONGODB_URL=${MONGODB_URL:-mongodb://mongodb:27017}
+      - RESEARCH_METRICS_ENABLED=${RESEARCH_METRICS_ENABLED:-false}
+      - RESEARCH_EXPERIMENT_ID=${RESEARCH_EXPERIMENT_ID:-local-dev}
+      - RESEARCH_EVENTS_COLLECTION=${RESEARCH_EVENTS_COLLECTION:-research_events}
+      - RESEARCH_EVENTS_JSONL_PATH=${RESEARCH_EVENTS_JSONL_PATH:-/tmp/etheral-research-events.jsonl}
+      - RESEARCH_EVENTS_JSONL_MIRROR=${RESEARCH_EVENTS_JSONL_MIRROR:-false}
     ports:
       - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
     healthcheck:

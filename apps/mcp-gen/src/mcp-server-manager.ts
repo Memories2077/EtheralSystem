@@ -17,6 +17,7 @@ import { generateOpenAPISpec } from "./generator/index.ts";
 import { SkillSelectionAgent } from "./skill-intelligence/agent.js";
 import type { ServerFeedbackLog } from "./skill-intelligence/types.js";
 import { FEATURE_FLAGS } from "./utils/config.ts";
+import { contentHash, recordResearchEvent } from "./utils/research-metrics.js";
 
 // Simple in-memory rate limiter for feedback endpoint
 interface RateLimitWindow {
@@ -116,6 +117,8 @@ interface ServerLogEntry {
   buildRequestId?: string;
   requestId?: string;
   sessionId?: string;
+  traceId?: string;
+  experimentId?: string;
   workspaceId?: string;
   memoryScope?: string;
   // Feedback fields
@@ -381,6 +384,25 @@ export class MCPServerManager {
 
       // Save to database
       await this.SaveToDB(server, status as any);
+      await recordResearchEvent({
+        service: "mcp-gen",
+        stage: "build",
+        eventName: "mcp_status_updated",
+        status: status === "error" ? "failure" : "success",
+        errorCode: error ? "status_update_error" : undefined,
+        context: {
+          traceId: server.traceId,
+          experimentId: server.experimentId,
+          sessionId: server.sessionId,
+          buildRequestId: server.buildRequestId,
+          serverId,
+        },
+        metrics: {
+          status,
+          has_container_id: Boolean(server.containerId),
+          build_log_count: server.buildLogs?.length || 0,
+        },
+      });
 
       console.log(`Status updated for server ${serverId}: ${status}`);
 
@@ -1018,7 +1040,10 @@ export class MCPServerManager {
         res.header("Access-Control-Allow-Credentials", "true");
       }
       res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-Trace-Id, X-Experiment-Id",
+      );
       if (req.method === "OPTIONS") {
         return res.sendStatus(200);
       }
@@ -1033,8 +1058,10 @@ export class MCPServerManager {
 
     // API to create a new MCP server.
     this.app.post("/api/mcp/create", async (req, res) => {
+      const routeStart = Date.now();
       let idempotencyKey = "";
       let allocatedServerId = "";
+      let allocatedHostPort = 0;
       try {
         const {
           request,
@@ -1044,6 +1071,8 @@ export class MCPServerManager {
           email,
           rag_context,
           buildRequestId,
+          traceId,
+          experimentId,
           sessionId,
           workspaceId,
           memoryScope,
@@ -1115,6 +1144,7 @@ export class MCPServerManager {
           this.buildRequestIndex.set(idempotencyKey, serverId);
         }
         const hostPort = await this.getAvailablePort();
+        allocatedHostPort = hostPort;
 
         const now = Math.floor(Date.now() / 1000);
         const expiration = now + 365 * 24 * 60 * 60; // 1 year
@@ -1151,6 +1181,8 @@ export class MCPServerManager {
           action: "created",
           ragContext: rag_context,
           buildRequestId: idempotencyKey || undefined,
+          traceId: traceId ? String(traceId) : req.header("X-Trace-Id") || undefined,
+          experimentId: experimentId ? String(experimentId) : req.header("X-Experiment-Id") || process.env.RESEARCH_EXPERIMENT_ID,
           sessionId: sessionId ? String(sessionId) : undefined,
           workspaceId: workspaceId ? String(workspaceId) : undefined,
           memoryScope: memoryScope ? String(memoryScope) : undefined,
@@ -1186,6 +1218,26 @@ export class MCPServerManager {
           }
         }
         serverConfig.buildLogs?.push(`Input type detected: ${inputType}`);
+        await recordResearchEvent({
+          service: "mcp-gen",
+          stage: "input_normalization",
+          eventName: "mcp_create_input_normalized",
+          status: "success",
+          durationMs: Date.now() - routeStart,
+          context: {
+            traceId: serverConfig.traceId,
+            experimentId: serverConfig.experimentId,
+            sessionId: serverConfig.sessionId,
+            buildRequestId: serverConfig.buildRequestId,
+            serverId,
+          },
+          metrics: {
+            input_type: inputType,
+            input_length: String(request).length,
+            input_hash: contentHash(String(request)),
+            host_port: hostPort,
+          },
+        });
 
         // Resolve the current module directory for artifact paths.
         const __filename = fileURLToPath(import.meta.url);
@@ -1376,6 +1428,27 @@ export class MCPServerManager {
 
           if (finalStatus === "running") {
             const updatedServer = this.servers.get(serverId) || serverConfig;
+            await recordResearchEvent({
+              service: "mcp-gen",
+              stage: "build",
+              eventName: "mcp_create_completed",
+              status: "success",
+              durationMs: Date.now() - routeStart,
+              context: {
+                traceId: updatedServer.traceId,
+                experimentId: updatedServer.experimentId,
+                sessionId: updatedServer.sessionId,
+                buildRequestId: updatedServer.buildRequestId,
+                serverId,
+              },
+              metrics: {
+                build_total_latency_ms: Date.now() - routeStart,
+                input_type: inputType,
+                host_port: updatedServer.hostPort,
+                container_port: updatedServer.containerPort,
+                docker_status: updatedServer.status,
+              },
+            });
             res.json(
               this.createResponsePayload(
                 updatedServer,
@@ -1384,6 +1457,22 @@ export class MCPServerManager {
             );
           } else {
             if (idempotencyKey) this.buildRequestIndex.delete(idempotencyKey);
+            await recordResearchEvent({
+              service: "mcp-gen",
+              stage: "build",
+              eventName: "mcp_create_completed",
+              status: "failure",
+              durationMs: Date.now() - routeStart,
+              errorCode: "startup_error",
+              context: {
+                traceId: serverConfig.traceId,
+                experimentId: serverConfig.experimentId,
+                sessionId: serverConfig.sessionId,
+                buildRequestId: serverConfig.buildRequestId,
+                serverId,
+              },
+              metrics: { build_total_latency_ms: Date.now() - routeStart },
+            });
             res.status(500).json({
               error: "Server encountered an error during startup",
               serverId: serverId,
@@ -1400,6 +1489,22 @@ export class MCPServerManager {
           await this.SaveToDB(serverConfig, "updated");
 
           const updatedServer = this.servers.get(serverId) || serverConfig;
+          await recordResearchEvent({
+            service: "mcp-gen",
+            stage: "build",
+            eventName: "mcp_create_completed",
+            status: "timeout",
+            durationMs: Date.now() - routeStart,
+            errorCode: "wait_for_running_timeout",
+            context: {
+              traceId: updatedServer.traceId,
+              experimentId: updatedServer.experimentId,
+              sessionId: updatedServer.sessionId,
+              buildRequestId: updatedServer.buildRequestId,
+              serverId,
+            },
+            metrics: { build_total_latency_ms: Date.now() - routeStart },
+          });
           res
             .status(202)
             .json(
@@ -1414,6 +1519,21 @@ export class MCPServerManager {
         if (idempotencyKey && allocatedServerId) {
           this.buildRequestIndex.delete(idempotencyKey);
         }
+        if (allocatedHostPort) {
+          this.usedPorts.delete(allocatedHostPort);
+        }
+        await recordResearchEvent({
+          service: "mcp-gen",
+          stage: "build",
+          eventName: "mcp_create_completed",
+          status: "failure",
+          durationMs: Date.now() - routeStart,
+          errorCode: error instanceof Error ? error.name : "CreateMCPError",
+          context: {
+            buildRequestId: idempotencyKey,
+            serverId: allocatedServerId,
+          },
+        });
         this.sendError(res, 500, "Failed to create MCP server", error);
       }
     });
@@ -1541,7 +1661,15 @@ export class MCPServerManager {
         }
 
         const { serverId } = req.params;
-        const { type, userId, comment } = req.body;
+        const {
+          type,
+          userId,
+          comment,
+          traceId,
+          experimentId,
+          sessionId,
+          buildRequestId,
+        } = req.body;
 
         // Validate required fields
         if (!type || !["like", "dislike"].includes(type)) {
@@ -1605,6 +1733,9 @@ export class MCPServerManager {
               serverId: 1,
               requestId: 1,
               buildRequestId: 1,
+              traceId: 1,
+              experimentId: 1,
+              sessionId: 1,
               likeCount: 1,
               dislikeCount: 1,
               feedbacks: 1,
@@ -1625,6 +1756,44 @@ export class MCPServerManager {
           likeCount: updatedDoc?.likeCount || 0,
           dislikeCount: updatedDoc?.dislikeCount || 0,
           feedbacks: updatedDoc?.feedbacks || [],
+        });
+        void recordResearchEvent({
+          service: "mcp-gen",
+          stage: "feedback",
+          eventName: "mcp_feedback_received",
+          status: "success",
+          context: {
+            traceId:
+              traceId ||
+              req.header("X-Trace-Id") ||
+              (typeof updatedDoc?.traceId === "string"
+                ? updatedDoc.traceId
+                : undefined),
+            experimentId:
+              experimentId ||
+              req.header("X-Experiment-Id") ||
+              (typeof updatedDoc?.experimentId === "string"
+                ? updatedDoc.experimentId
+                : undefined),
+            sessionId:
+              sessionId ||
+              (typeof updatedDoc?.sessionId === "string"
+                ? updatedDoc.sessionId
+                : undefined),
+            serverId,
+            buildRequestId:
+              buildRequestId ||
+              (typeof updatedDoc?.buildRequestId === "string"
+                ? updatedDoc.buildRequestId
+                : undefined),
+          },
+          metrics: {
+            feedback_type: type,
+            feedback_has_comment: Boolean(sanitizedComment),
+            like_count: updatedDoc?.likeCount || 0,
+            dislike_count: updatedDoc?.dislikeCount || 0,
+            total_feedbacks: updatedDoc?.feedbacks?.length || 0,
+          },
         });
 
         res.json({
@@ -1899,6 +2068,7 @@ export class MCPServerManager {
     config: ServerLogEntry,
     dockerfilePath?: string,
   ): Promise<string> {
+    const start = Date.now();
     try {
       // Check whether the configured image already exists.
       let imageExists = await this.checkImageExists(config.dockerImage);
@@ -1967,6 +2137,12 @@ export class MCPServerManager {
           `MANAGER_URL=${process.env.MANAGER_URL || "http://docker-manager:8080"}`,
           `RAG_CONTEXT=${config.ragContext || ""}`,
           `BUILD_REQUEST_ID=${config.buildRequestId || config.serverId}`,
+          `RESEARCH_METRICS_ENABLED=${process.env.RESEARCH_METRICS_ENABLED || ""}`,
+          `RESEARCH_EXPERIMENT_ID=${config.experimentId || process.env.RESEARCH_EXPERIMENT_ID || ""}`,
+          `RESEARCH_EVENTS_COLLECTION=${process.env.RESEARCH_EVENTS_COLLECTION || ""}`,
+          `RESEARCH_EVENTS_JSONL_PATH=${process.env.RESEARCH_EVENTS_JSONL_PATH || ""}`,
+          `RESEARCH_EVENTS_JSONL_MIRROR=${process.env.RESEARCH_EVENTS_JSONL_MIRROR || ""}`,
+          `RESEARCH_TRACE_ID=${config.traceId || ""}`,
           `GEMINI_API_KEY=${process.env.GEMINI_API_KEY || ""}`,
           `GEMINI_MODEL=${process.env.GEMINI_MODEL || ""}`,
           `GROQ_API_KEY=${process.env.GROQ_API_KEY || ""}`,
@@ -2007,6 +2183,26 @@ export class MCPServerManager {
         "Container started, waiting for service to be ready...",
       );
       config.containerId = container.id;
+      await recordResearchEvent({
+        service: "mcp-gen",
+        stage: "docker",
+        eventName: "container_start_completed",
+        status: "success",
+        durationMs: Date.now() - start,
+        context: {
+          traceId: config.traceId,
+          experimentId: config.experimentId,
+          sessionId: config.sessionId,
+          buildRequestId: config.buildRequestId,
+          serverId: config.serverId,
+        },
+        metrics: {
+          container_start_success: true,
+          host_port: config.hostPort,
+          container_port: config.containerPort,
+          image: config.dockerImage,
+        },
+      });
       return container.id;
     } catch (error) {
       config.status = "error";
@@ -2015,6 +2211,25 @@ export class MCPServerManager {
       config.buildLogs?.push(
         `Failed to build and run container: ${errorMessage}`,
       );
+      await recordResearchEvent({
+        service: "mcp-gen",
+        stage: "docker",
+        eventName: "container_start_completed",
+        status: "failure",
+        durationMs: Date.now() - start,
+        errorCode: error instanceof Error ? error.name : "ContainerStartError",
+        context: {
+          traceId: config.traceId,
+          experimentId: config.experimentId,
+          sessionId: config.sessionId,
+          buildRequestId: config.buildRequestId,
+          serverId: config.serverId,
+        },
+        metrics: {
+          container_start_success: false,
+          image: config.dockerImage,
+        },
+      });
 
       throw error;
     }
@@ -2025,6 +2240,7 @@ export class MCPServerManager {
     dockerfilePath?: string,
     contextPath?: string,
   ): Promise<void> {
+    const start = Date.now();
     try {
       const buildPath = dockerfilePath || this.defaultDockerfilePath;
       const context = contextPath || buildPath;
@@ -2082,10 +2298,49 @@ export class MCPServerManager {
           },
         );
       });
+      await recordResearchEvent({
+        service: "mcp-gen",
+        stage: "docker",
+        eventName: "docker_build_completed",
+        status: "success",
+        durationMs: Date.now() - start,
+        context: {
+          traceId: config.traceId,
+          experimentId: config.experimentId,
+          sessionId: config.sessionId,
+          buildRequestId: config.buildRequestId,
+          serverId: config.serverId,
+        },
+        metrics: {
+          docker_build_success: true,
+          image: config.dockerImage,
+          build_log_count: config.buildLogs?.length || 0,
+        },
+      });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       config.buildLogs?.push(`Build failed: ${errorMessage}`);
+      await recordResearchEvent({
+        service: "mcp-gen",
+        stage: "docker",
+        eventName: "docker_build_completed",
+        status: "failure",
+        durationMs: Date.now() - start,
+        errorCode: error instanceof Error ? error.name : "DockerBuildError",
+        context: {
+          traceId: config.traceId,
+          experimentId: config.experimentId,
+          sessionId: config.sessionId,
+          buildRequestId: config.buildRequestId,
+          serverId: config.serverId,
+        },
+        metrics: {
+          docker_build_success: false,
+          image: config.dockerImage,
+          build_log_count: config.buildLogs?.length || 0,
+        },
+      });
       throw error;
     }
   }
