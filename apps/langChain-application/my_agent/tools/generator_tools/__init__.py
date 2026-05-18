@@ -4,7 +4,7 @@ Generate Tools - Tools for generating MCP Server
 
 import httpx
 import json
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 import asyncio
 import logging
@@ -50,7 +50,11 @@ def sanitize_api_documentation(doc: str) -> str:
 
 
 @tool
-async def create_MCPServer(query: List[str], rag_context: Optional[List[dict]] = None) -> str:
+async def create_MCPServer(
+    query: List[str],
+    rag_context: Optional[List[dict]] = None,
+    research_context: Optional[Dict[str, str]] = None,
+) -> str:
     """
         The tool for creating MCP server
         
@@ -135,6 +139,10 @@ async def create_MCPServer(query: List[str], rag_context: Optional[List[dict]] =
         userId=user_id,
         email=email,
         rag_context=structured_rag_context,
+        traceId=(research_context or {}).get("trace_id"),
+        experimentId=(research_context or {}).get("experiment_id"),
+        sessionId=(research_context or {}).get("session_id"),
+        buildRequestId=(research_context or {}).get("build_request_id"),
     )
     mcp_urls = get_mcp_urls()
     

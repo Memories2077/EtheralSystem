@@ -6,6 +6,7 @@ from my_agent.config import AGENT_CONFIG
 from my_agent.utils.state import AgentState, get_message_content
 from my_agent.utils.vector_db import search_mcp_artifacts
 from my_agent.utils.llm_factory import get_llm
+from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, record_research_event, state_research_context
 
 # Initialize LLM via factory
 llm = get_llm(temperature=AGENT_CONFIG["examiner_agent"]["temperature"])
@@ -19,6 +20,7 @@ async def examiner_agent_node(state: AgentState) -> AgentState:
     3. Enriches the context with related historical data.
     4. Prepares the task for the Generator Agent.
     """
+    start_ms = monotonic_ms()
     print("[Examiner] 🕵️ Examiner Node started.")
     
     messages = state.get("messages", [])
@@ -86,6 +88,20 @@ USER_ID: {user_id}
     delegation_msg = f"DELEGATE_TO_GENERATOR: {enriched_task}"
     
     print(f"[Examiner] ✅ Technical data extracted. Enriched context saved to state.")
+    await record_research_event(
+        service="langgraph-agent",
+        stage="rag",
+        event_name="examiner_completed",
+        status="success",
+        duration_ms=duration_since_ms(start_ms),
+        context=state_research_context(state),
+        metrics={
+            "api_doc_length": len(api_doc),
+            "rag_returned_count": len(related_contents),
+            "rag_context_item_count": len(rag_context_data),
+            "rag_context_chars": len(rag_context_json),
+        },
+    )
     
     return {
         "messages": [AIMessage(content=delegation_msg)],

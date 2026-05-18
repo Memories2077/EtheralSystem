@@ -13,6 +13,7 @@ import { SpecProfileAnalyzer } from "./analyzer.js";
 import { SkillComposer } from "./composer.js";
 import { FeedbackTracker } from "./feedback.js";
 import { ProfileCache } from "./cache.js";
+import { recordResearchEvent } from "../utils/research-metrics.js";
 
 export class SkillSelectionAgent {
   private static instance: SkillSelectionAgent | null = null;
@@ -125,6 +126,18 @@ export class SkillSelectionAgent {
     console.log(
       `[SkillSelect] initialization_duration_ms=${durationMs} warmed_skills=${warmedSkillCount}`,
     );
+    void recordResearchEvent({
+      service: "mcp-gen",
+      stage: "skill_selection",
+      eventName: "skill_selection_initialized",
+      status: "success",
+      durationMs,
+      metrics: {
+        skill_selection_initialization_ms: durationMs,
+        warmed_skill_count: warmedSkillCount,
+        registry_error_count: Object.values(errors).reduce((sum, values) => sum + values.length, 0),
+      },
+    });
 
     return {
       registryErrors: {
@@ -170,6 +183,21 @@ export class SkillSelectionAgent {
     console.log(
       `[SkillSelect] skill_selection_duration_ms=${durationMs} skills_selected_count=${composition.skills.length} selection_confidence=${this.metrics.lastSelectionConfidence.toFixed(2)} selected=${composition.skills.map((s) => s.skillId).join(",")}`,
     );
+    void recordResearchEvent({
+      service: "mcp-gen",
+      stage: "skill_selection",
+      eventName: "skill_selection_completed",
+      status: "success",
+      durationMs,
+      metrics: {
+        skill_selection_duration_ms: durationMs,
+        selected_skill_count: composition.skills.length,
+        selection_confidence: this.metrics.lastSelectionConfidence,
+        selected_skill_ids: composition.skills.map((s) => s.skillId),
+        skill_total_tokens: composition.totalTokens,
+        fallback_reason: composition.fallbackReason,
+      },
+    });
     return composition;
   }
 
@@ -181,6 +209,18 @@ export class SkillSelectionAgent {
     console.log(
       `[SkillSelect] spec_analysis_duration_ms=${durationMs} cache_hit=${cacheHit} cache_hit_rate=${cacheStats.hitRate.toFixed(2)}`,
     );
+    void recordResearchEvent({
+      service: "mcp-gen",
+      stage: "skill_selection",
+      eventName: "spec_analysis_completed",
+      status: "success",
+      durationMs,
+      metrics: {
+        spec_analysis_duration_ms: durationMs,
+        analysis_cache_hit: cacheHit,
+        analysis_cache_hit_rate: cacheStats.hitRate,
+      },
+    });
   }
 
   assemblePrompt(basePrompt: string, composition: SkillComposition): string {

@@ -12,6 +12,7 @@ import asyncio
 from typing import Any, Dict, Optional, AsyncGenerator, Callable
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain.tools import tool
+from research_metrics import duration_since_ms, monotonic_ms, new_trace_id, record_research_event
 
 logger = logging.getLogger(__name__)
 
@@ -184,12 +185,16 @@ def normalize_request_context(context: Optional[Dict[str, Any]] = None) -> Dict[
 
     session_id = clean("sessionId") or clean("session_id") or "chat-session"
     build_request_id = clean("buildRequestId") or clean("build_request_id")
+    trace_id = clean("traceId") or clean("trace_id") or build_request_id or new_trace_id()
+    experiment_id = clean("experimentId") or clean("experiment_id") or os.getenv("RESEARCH_EXPERIMENT_ID", "local-dev")
     user_id = clean("userId") or clean("user_id") or DEFAULT_USER_ID
     workspace_id = clean("workspaceId") or clean("workspace_id") or DEFAULT_WORKSPACE_ID
     email = clean("email") or f"{user_id}@local"
     memory_scope = clean("memoryScope") or clean("memory_scope") or f"user:{user_id}|workspace:{workspace_id}"
 
     return {
+        "traceId": trace_id,
+        "experimentId": experiment_id,
         "sessionId": session_id,
         "buildRequestId": build_request_id,
         "userId": user_id,
@@ -214,6 +219,8 @@ def build_metaclaw_headers(
         "X-Memory-Scope": normalized["memoryScope"],
         "X-User-Id": normalized["userId"],
         "X-Workspace-Id": normalized["workspaceId"],
+        "X-Trace-Id": normalized["traceId"],
+        "X-Experiment-Id": normalized["experimentId"],
     }
     return {key: value for key, value in headers.items() if value}
 
@@ -326,15 +333,17 @@ async def stream_langgraph_build(
     if "localhost" in normalized_url and os.path.exists("/.dockerenv"):
         normalized_url = normalized_url.replace("localhost", "host.docker.internal")
 
+    start_ms = monotonic_ms()
+    stream_counts = {"partial": 0, "complete": 0, "error": 0}
     yield f"data: {json.dumps({'content': chr(10) + chr(10) + '> [SYSTEM]: Building MCP Server...' + chr(10) + chr(10)})}\n\n"
 
     lg_client = None
+    request_context = normalize_request_context(request_context)
     try:
         lg_client = get_client(url=normalized_url)
         logger.info(f"Connected to LangGraph service at {normalized_url}")
         thread = await lg_client.threads.create()
 
-        request_context = normalize_request_context(request_context)
         partial_content_lengths = {}
         streamed_ids = set()
         last_msg_id = ""
@@ -348,6 +357,8 @@ async def stream_langgraph_build(
                 "raw_api_doc": requirements,
                 "session_id": request_context["sessionId"],
                 "build_request_id": request_context["buildRequestId"],
+                "trace_id": request_context["traceId"],
+                "experiment_id": request_context["experimentId"],
                 "user_id": request_context["userId"],
                 "workspace_id": request_context["workspaceId"],
                 "email": request_context["email"],
@@ -359,6 +370,7 @@ async def stream_langgraph_build(
             data = lg_chunk.data
 
             if event_type == "error":
+                stream_counts["error"] += 1
                 error_content = f"\n\n❌ LANGGRAPH ERROR:\n{json.dumps(data, indent=2)}\n\n"
                 yield f"data: {json.dumps({'content': error_content})}\n\n"
                 continue
@@ -367,6 +379,7 @@ async def stream_langgraph_build(
                 continue
 
             if event_type == "messages/partial" and isinstance(data, list):
+                stream_counts["partial"] += 1
                 for msg_chunk in data:
                     msg_id = msg_chunk.get("id")
                     content = msg_chunk.get("content", "")
@@ -385,6 +398,7 @@ async def stream_langgraph_build(
                             partial_content_lengths[msg_id] = len(content)
 
             elif event_type == "messages/complete" and isinstance(data, list):
+                stream_counts["complete"] += 1
                 for msg_chunk in data:
                     msg_id = msg_chunk.get("id")
                     content = msg_chunk.get("content", "")
@@ -403,9 +417,42 @@ async def stream_langgraph_build(
 
         logger.info("--- LangGraph build completed ---")
         yield f"data: {json.dumps(build_mcp_complete_payload(latest_build_result))}\n\n"
+        event_context = dict(request_context)
+        if latest_build_result and latest_build_result.get("serverId"):
+            event_context["serverId"] = latest_build_result["serverId"]
+        await record_research_event(
+            service="chatbot-backend",
+            stage="langgraph_stream",
+            event_name="langgraph_stream_completed",
+            status="success" if stream_counts["error"] == 0 else "failure",
+            duration_ms=duration_since_ms(start_ms),
+            context=event_context,
+            metrics={
+                "langgraph_stream_duration_ms": duration_since_ms(start_ms),
+                "langgraph_partial_event_count": stream_counts["partial"],
+                "langgraph_complete_event_count": stream_counts["complete"],
+                "langgraph_error_event_count": stream_counts["error"],
+                "server_created": bool(latest_build_result and latest_build_result.get("serverId")),
+            },
+        )
 
     except Exception as lg_err:
         logger.exception("LangGraph build error")
+        await record_research_event(
+            service="chatbot-backend",
+            stage="langgraph_stream",
+            event_name="langgraph_stream_completed",
+            status="failure",
+            duration_ms=duration_since_ms(start_ms),
+            error_code=lg_err.__class__.__name__,
+            context=request_context,
+            metrics={
+                "langgraph_stream_duration_ms": duration_since_ms(start_ms),
+                "langgraph_partial_event_count": stream_counts["partial"],
+                "langgraph_complete_event_count": stream_counts["complete"],
+                "langgraph_error_event_count": stream_counts["error"] + 1,
+            },
+        )
         err_msg = f"\n\n> [ERROR]: Cannot connect to LangGraph service: {str(lg_err)}\n\n"
         yield f"data: {json.dumps({'content': err_msg})}\n\n"
     finally:

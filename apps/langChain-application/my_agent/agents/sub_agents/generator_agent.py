@@ -6,6 +6,7 @@ from my_agent.utils.vector_db import save_mcp_artifacts
 
 from my_agent.config import load_prompt, AGENT_CONFIG
 from my_agent.utils.state import AgentState, get_message_content # Import from centralized location
+from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, record_research_event, state_research_context
 
 import json
 import httpx
@@ -37,6 +38,7 @@ def parse_rag_context(enriched_context_json: str) -> List[Any]:
 
 async def generator_agent_node(state: AgentState) -> AgentState:
     """Generator agent that handles content generation tasks"""
+    start_ms = monotonic_ms()
     messages = state["messages"]
     
     # Initialize LLM for this agent
@@ -174,6 +176,7 @@ async def generator_agent_node(state: AgentState) -> AgentState:
                 result = await create_MCPServer.ainvoke({
                     "query": query,
                     "rag_context": rag_context_data,
+                    "research_context": state_research_context(state),
                 })
                 result_str = str(result)
                 tool_results.append((tool_call_id, result_str))
@@ -254,6 +257,20 @@ async def generator_agent_node(state: AgentState) -> AgentState:
 
         # If there was an error, return it directly
         if has_error:
+            await record_research_event(
+                service="langgraph-agent",
+                stage="generation",
+                event_name="generator_completed",
+                status="failure",
+                duration_ms=duration_since_ms(start_ms),
+                error_code="tool_error",
+                context=state_research_context(state),
+                metrics={
+                    "api_doc_length": len(api_doc),
+                    "rag_context_item_count": len(rag_context_data),
+                    "tool_call_count": len(tool_calls),
+                },
+            )
             return {
                 "messages": [AIMessage(content=error_message)],
                 "next_agent": "supervisor_final",
@@ -268,6 +285,30 @@ async def generator_agent_node(state: AgentState) -> AgentState:
 
         # Return exact tool output. Do not pass config/token JSON through a final LLM.
         content = tool_results[-1][1] if tool_results else ""
+        server_id = ""
+        try:
+            parsed_content = json.loads(content)
+            if isinstance(parsed_content, dict):
+                server_id = str(parsed_content.get("serverId") or "")
+        except Exception:
+            server_id = ""
+        research_context = state_research_context(state)
+        if server_id:
+            research_context["server_id"] = server_id
+        await record_research_event(
+            service="langgraph-agent",
+            stage="generation",
+            event_name="generator_completed",
+            status="success",
+            duration_ms=duration_since_ms(start_ms),
+            context=research_context,
+            metrics={
+                "api_doc_length": len(api_doc),
+                "rag_context_item_count": len(rag_context_data),
+                "tool_call_count": len(tool_calls),
+                "server_created": bool(server_id),
+            },
+        )
         return {
             "messages": [AIMessage(content=content)],
             "next_agent": "supervisor_final",
