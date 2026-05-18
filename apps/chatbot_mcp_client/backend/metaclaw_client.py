@@ -7,6 +7,7 @@ Handles two-stage routing: MetaClaw (intent detection) → Gemini (execution).
 import os
 import json
 import logging
+import asyncio
 from typing import Optional, Dict, Any, AsyncGenerator, List, cast
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -341,7 +342,37 @@ LANGUAGE: Always respond in the same language as the user.
                 request_context=request_context,
                 turn_type="main",
             )
-            metaclaw_response = await metaclaw_llm.ainvoke(metaclaw_msgs)
+            router_timeout = float(os.getenv("METACLAW_ROUTER_TIMEOUT_SECONDS", "45"))
+            try:
+                metaclaw_response = await asyncio.wait_for(
+                    metaclaw_llm.ainvoke(metaclaw_msgs),
+                    timeout=router_timeout,
+                )
+            except asyncio.TimeoutError:
+                last_user_content = ""
+                for msg in reversed(messages):
+                    if msg.get("role") == "user":
+                        last_user_content = str(msg.get("content", ""))
+                        break
+
+                if last_user_content and self._detect_tool_intent({}, last_user_content):
+                    logger.warning(
+                        "[MetaClaw] Router timed out after %ss; continuing direct MCP build",
+                        router_timeout,
+                    )
+                    yield sse_content(
+                        "\n\n> [SYSTEM]: MetaClaw routing timed out; continuing MCP server build directly.\n\n"
+                    )
+                    async for sse_chunk in stream_langgraph_build(
+                        last_user_content,
+                        langgraph_url,
+                        request_context,
+                    ):
+                        yield sse_chunk
+                    yield sse_done()
+                    return
+
+                raise
 
             raw_content = getattr(cast(Any, metaclaw_response), "content", None)
             if raw_content is None and isinstance(metaclaw_response, dict):
@@ -438,6 +469,30 @@ LANGUAGE: Always respond in the same language the user is using. If the user wri
             gemini_agent = await self._get_gemini_executor(temperature)
         except Exception as e:
             error_msg = str(e)
+            direct_requirements = requirements
+            if not direct_requirements:
+                for msg in reversed(original_messages):
+                    if msg.get("role") == "user":
+                        direct_requirements = str(msg.get("content", ""))
+                        break
+
+            if direct_requirements:
+                logger.warning(
+                    "[MetaClaw] Gemini executor unavailable (%s); continuing direct MCP build",
+                    error_msg,
+                )
+                yield sse_content(
+                    "\n\n> [SYSTEM]: Gemini executor unavailable; continuing MCP server build directly.\n\n"
+                )
+                async for sse_chunk in stream_langgraph_build(
+                    direct_requirements,
+                    langgraph_url,
+                    request_context,
+                ):
+                    yield sse_chunk
+                yield sse_done()
+                return
+
             yield sse_content(f"\n\n> [ERROR]: Cannot create Gemini executor: {error_msg}\n\n")
             yield sse_done()
             return

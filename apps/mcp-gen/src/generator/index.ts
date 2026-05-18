@@ -10,7 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { SkillSelectionAgent } from "../skill-intelligence/agent.js";
 import type { GenerationOutcome, SpecProfile, SkillComposition, SkillScore } from "../skill-intelligence/types.js";
-import { contentHash, recordResearchEvent } from "../utils/research-metrics.js";
+import { contentHash, recordResearchEvent, type ResearchContext } from "../utils/research-metrics.js";
 
 // Helper to create a minimal SpecProfile when none is available
 function createMinimalSpecProfile(): SpecProfile {
@@ -209,6 +209,7 @@ export async function generateOpenAPISpec(
   specProfile?: SpecProfile,
   selectedSkillIds?: string[],
   skillConfidences?: Record<string, number>,
+  researchContext?: ResearchContext,
 ): Promise<GenerationResult> {
   let startTime: number = 0;
   let tokenCount = 0;
@@ -218,6 +219,12 @@ export async function generateOpenAPISpec(
   let compositionInternal: SkillComposition | undefined;
   let skillConfidencesInternal: Record<string, number> | undefined = skillConfidences;
   const finalRequestId = requestId ?? `openapi-${Date.now()}`;
+  const eventContext: ResearchContext = {
+    ...researchContext,
+    buildRequestId: researchContext?.buildRequestId || finalRequestId,
+    sessionId: researchContext?.sessionId || finalRequestId,
+    serverId: researchContext?.serverId || name,
+  };
 
   try {
     startTime = Date.now();
@@ -474,7 +481,7 @@ export async function generateOpenAPISpec(
       eventName: "openapi_generation_completed",
       status: "success",
       durationMs: endTime - startTime,
-      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      context: eventContext,
       metrics: {
         input_length: read_input.length,
         input_hash: inputHash,
@@ -520,7 +527,7 @@ export async function generateOpenAPISpec(
       status: "failure",
       durationMs: endTime - startTime,
       errorCode: error instanceof Error ? error.name : "GenerationError",
-      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      context: eventContext,
       metrics: {
         prompt_token_estimate: Math.round(tokenCount),
         llm_calls: llmCalls,
@@ -546,6 +553,7 @@ export async function generateMCP(
   specProfile?: SpecProfile,
   selectedSkillIds?: string[],
   skillConfidences?: Record<string, number>,
+  researchContext?: ResearchContext,
 ): Promise<GenerationResult> {
   let startTime: number = 0;
   let llmCalls = retryCount + 1;
@@ -554,6 +562,12 @@ export async function generateMCP(
   let compositionInternal: SkillComposition | undefined;
   let skillConfidencesInternal: Record<string, number> | undefined = skillConfidences;
   const finalRequestId = requestId ?? `mcp-${Date.now()}`;
+  const eventContext: ResearchContext = {
+    ...researchContext,
+    buildRequestId: researchContext?.buildRequestId || finalRequestId,
+    sessionId: researchContext?.sessionId || finalRequestId,
+    serverId: researchContext?.serverId || name,
+  };
 
   try {
     startTime = Date.now();
@@ -732,7 +746,7 @@ export async function generateMCP(
       eventName: "mcp_generation_completed",
       status: "success",
       durationMs: endTime - startTime,
-      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      context: eventContext,
       metrics: {
         spec_length: spec.length,
         spec_hash: specHash,
@@ -780,7 +794,7 @@ export async function generateMCP(
       status: "failure",
       durationMs: endTime - startTime,
       errorCode: error instanceof Error ? error.name : "GenerationError",
-      context: { buildRequestId: finalRequestId, sessionId: finalRequestId, serverId: name },
+      context: eventContext,
       metrics: {
         llm_calls: llmCalls,
         retry_count: retryCount,

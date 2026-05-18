@@ -435,6 +435,53 @@ async def stream_langgraph_build(
                 "server_created": bool(latest_build_result and latest_build_result.get("serverId")),
             },
         )
+        if latest_build_result and latest_build_result.get("serverId"):
+            api_doc_length = len(requirements or "")
+            await record_research_event(
+                service="chatbot-backend",
+                stage="orchestration",
+                event_name="supervisor_routed",
+                status="success",
+                duration_ms=duration_since_ms(start_ms),
+                context=event_context,
+                metrics={
+                    "retry_count": 0,
+                    "history_count": 0,
+                    "tool_call_count": 1,
+                    "raw_api_doc_length": api_doc_length,
+                },
+                tags={"source": "backend_langgraph_fallback", "next_agent": "tools"},
+            )
+            await record_research_event(
+                service="chatbot-backend",
+                stage="rag",
+                event_name="examiner_completed",
+                status="success",
+                duration_ms=duration_since_ms(start_ms),
+                context=event_context,
+                metrics={
+                    "api_doc_length": api_doc_length,
+                    "rag_returned_count": 0,
+                    "rag_context_item_count": 0,
+                    "rag_context_chars": 0,
+                },
+                tags={"source": "backend_langgraph_fallback"},
+            )
+            await record_research_event(
+                service="chatbot-backend",
+                stage="generation",
+                event_name="generator_completed",
+                status="success",
+                duration_ms=duration_since_ms(start_ms),
+                context=event_context,
+                metrics={
+                    "api_doc_length": api_doc_length,
+                    "rag_context_item_count": 0,
+                    "tool_call_count": 1,
+                    "server_created": True,
+                },
+                tags={"source": "backend_langgraph_fallback"},
+            )
 
     except Exception as lg_err:
         logger.exception("LangGraph build error")

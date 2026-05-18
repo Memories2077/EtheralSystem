@@ -9,6 +9,7 @@
     "start": "next start -p 9002",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test:frontend": "bun test src/lib/__tests__/*.test.mjs",
     "test": "cd backend && python -m pytest"
   },
   "dependencies": {
