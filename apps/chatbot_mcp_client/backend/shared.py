@@ -437,6 +437,7 @@ async def stream_langgraph_build(
         )
         if latest_build_result and latest_build_result.get("serverId"):
             api_doc_length = len(requirements or "")
+            rag_enabled = os.getenv("RAG_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
             await record_research_event(
                 service="chatbot-backend",
                 stage="orchestration",
@@ -456,16 +457,20 @@ async def stream_langgraph_build(
                 service="chatbot-backend",
                 stage="rag",
                 event_name="examiner_completed",
-                status="success",
+                status="success" if rag_enabled else "skipped",
                 duration_ms=duration_since_ms(start_ms),
                 context=event_context,
                 metrics={
                     "api_doc_length": api_doc_length,
+                    "rag_enabled": rag_enabled,
                     "rag_returned_count": 0,
                     "rag_context_item_count": 0,
                     "rag_context_chars": 0,
                 },
-                tags={"source": "backend_langgraph_fallback"},
+                tags={
+                    "source": "backend_langgraph_fallback",
+                    **({} if rag_enabled else {"rag_disabled_reason": "RAG_ENABLED=false"}),
+                },
             )
             await record_research_event(
                 service="chatbot-backend",

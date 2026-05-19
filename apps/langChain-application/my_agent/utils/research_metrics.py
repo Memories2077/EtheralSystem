@@ -174,7 +174,7 @@ def _persist_sync(event: Dict[str, Any]) -> None:
                 _mongo_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=1000)
             db_name = os.getenv("RESEARCH_EVENTS_DB") or os.getenv("MONGO_DB_NAME") or os.getenv("MONGODB_DB") or "mcp_agent_db"
             collection_name = os.getenv("RESEARCH_EVENTS_COLLECTION", "research_events")
-            _mongo_client[db_name][collection_name].insert_one(event)
+            _mongo_client[db_name][collection_name].insert_one(deepcopy(event))
             persisted = True
         except Exception:
             persisted = False

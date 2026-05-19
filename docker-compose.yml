@@ -239,6 +239,7 @@ services:
       - METACLAW_ENABLED=${METACLAW_ENABLED:-false}
       - METACLAW_BASE_URL=${METACLAW_BASE_URL:-http://host.docker.internal:30000/v1}
       - METACLAW_MODEL=${METACLAW_MODEL:-qwen/qwen3-next-80b-a3b-instruct}
+      - RAG_ENABLED=${RAG_ENABLED:-true}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - PYTHONUNBUFFERED=1
       - BACKEND_PORT=${BACKEND_PORT:-8000}
