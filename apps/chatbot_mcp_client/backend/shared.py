@@ -175,6 +175,32 @@ def normalize_docker_urls_in_dict(data: Dict[str, Any]) -> Dict[str, Any]:
 
 # ==================== Request Context ====================
 
+def _normalize_bool_string(value: Any, default: str = "") -> str:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return "true"
+    if normalized in {"0", "false", "no", "off"}:
+        return "false"
+    return default
+
+
+def _normalize_skill_selection_variant(value: Any, dynamic_skill_selection: str) -> str:
+    if dynamic_skill_selection == "true":
+        return "dynamic"
+    if dynamic_skill_selection == "false":
+        return "static"
+    normalized = str(value or "").strip().lower()
+    if normalized in {"dynamic", "hybrid"}:
+        return "dynamic"
+    if normalized in {"static", "control"}:
+        return "static"
+    return "dynamic" if dynamic_skill_selection == "true" else "static"
+
+
 def normalize_request_context(context: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     """Return a stable cross-service context for MetaClaw/LangGraph/mcp-gen."""
     raw = context or {}
@@ -191,6 +217,25 @@ def normalize_request_context(context: Optional[Dict[str, Any]] = None) -> Dict[
     workspace_id = clean("workspaceId") or clean("workspace_id") or DEFAULT_WORKSPACE_ID
     email = clean("email") or f"{user_id}@local"
     memory_scope = clean("memoryScope") or clean("memory_scope") or f"user:{user_id}|workspace:{workspace_id}"
+    rag_enabled = _normalize_bool_string(
+        raw.get("ragEnabled", raw.get("rag_enabled")),
+        _normalize_bool_string(os.getenv("RAG_ENABLED"), "true"),
+    )
+    dynamic_skill_selection = _normalize_bool_string(
+        raw.get("dynamicSkillSelection", raw.get("dynamic_skill_selection")),
+        _normalize_bool_string(os.getenv("DYNAMIC_SKILL_SELECTION"), "false"),
+    )
+    skill_selection_variant = _normalize_skill_selection_variant(
+        clean("skillSelectionVariant")
+        or clean("skill_selection_variant")
+        or os.getenv("SKILL_SELECTION_VARIANT", ""),
+        dynamic_skill_selection,
+    )
+    variant_id = (
+        clean("variantId")
+        or clean("variant_id")
+        or f"{skill_selection_variant}-rag-{'on' if rag_enabled == 'true' else 'off'}"
+    )
 
     return {
         "traceId": trace_id,
@@ -201,6 +246,10 @@ def normalize_request_context(context: Optional[Dict[str, Any]] = None) -> Dict[
         "workspaceId": workspace_id,
         "email": email,
         "memoryScope": memory_scope,
+        "ragEnabled": rag_enabled,
+        "dynamicSkillSelection": dynamic_skill_selection,
+        "skillSelectionVariant": skill_selection_variant,
+        "variantId": variant_id,
     }
 
 
@@ -363,6 +412,10 @@ async def stream_langgraph_build(
                 "workspace_id": request_context["workspaceId"],
                 "email": request_context["email"],
                 "memory_scope": request_context["memoryScope"],
+                "rag_enabled": request_context["ragEnabled"],
+                "dynamic_skill_selection": request_context["dynamicSkillSelection"],
+                "skill_selection_variant": request_context["skillSelectionVariant"],
+                "variant_id": request_context["variantId"],
             },
             stream_mode="messages"
         ):
@@ -437,7 +490,10 @@ async def stream_langgraph_build(
         )
         if latest_build_result and latest_build_result.get("serverId"):
             api_doc_length = len(requirements or "")
-            rag_enabled = os.getenv("RAG_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
+            rag_enabled = (
+                request_context.get("ragEnabled")
+                or os.getenv("RAG_ENABLED", "true")
+            ).lower() not in {"0", "false", "no", "off"}
             await record_research_event(
                 service="chatbot-backend",
                 stage="orchestration",

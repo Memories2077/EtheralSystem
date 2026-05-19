@@ -16,6 +16,14 @@ export interface ResearchContext {
   build_request_id?: string;
   serverId?: string;
   server_id?: string;
+  ragEnabled?: string;
+  rag_enabled?: string;
+  dynamicSkillSelection?: string;
+  dynamic_skill_selection?: string;
+  skillSelectionVariant?: string;
+  skill_selection_variant?: string;
+  variantId?: string;
+  variant_id?: string;
 }
 
 export interface ResearchEventInput {
@@ -110,6 +118,10 @@ export function normalizeResearchContext(context: ResearchContext = {}) {
     session_id: String(context.sessionId || context.session_id || "").trim(),
     build_request_id: String(context.buildRequestId || context.build_request_id || "").trim(),
     server_id: String(context.serverId || context.server_id || "").trim(),
+    rag_enabled: String(context.ragEnabled || context.rag_enabled || "").trim(),
+    dynamic_skill_selection: String(context.dynamicSkillSelection || context.dynamic_skill_selection || "").trim(),
+    skill_selection_variant: String(context.skillSelectionVariant || context.skill_selection_variant || "").trim(),
+    variant_id: String(context.variantId || context.variant_id || "").trim(),
   };
 }
 

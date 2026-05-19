@@ -143,6 +143,10 @@ async def create_MCPServer(
         experimentId=(research_context or {}).get("experiment_id"),
         sessionId=(research_context or {}).get("session_id"),
         buildRequestId=(research_context or {}).get("build_request_id"),
+        ragEnabled=(research_context or {}).get("rag_enabled"),
+        dynamicSkillSelection=(research_context or {}).get("dynamic_skill_selection"),
+        skillSelectionVariant=(research_context or {}).get("skill_selection_variant"),
+        variantId=(research_context or {}).get("variant_id"),
     )
     mcp_urls = get_mcp_urls()
     

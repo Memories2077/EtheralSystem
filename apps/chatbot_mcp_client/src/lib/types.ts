@@ -36,6 +36,10 @@ export interface McpServer {
   experimentId?: string;
   sessionId?: string;
   buildRequestId?: string;
+  ragEnabled?: string | boolean;
+  dynamicSkillSelection?: string | boolean;
+  skillSelectionVariant?: string;
+  variantId?: string;
   buildLogs?: string[];
   inputContent?: string;
   action?: string;
@@ -57,6 +61,9 @@ export interface ChatSettings {
   model: string;
   temperature: number;
   maxTokens: number;
+  experimentId: string;
+  ragEnabled: boolean;
+  skillSelectionMode: 'static' | 'dynamic';
   mcpServers: ActiveMcpServer[];
 }
 

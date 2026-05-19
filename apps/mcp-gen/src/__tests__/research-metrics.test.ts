@@ -81,6 +81,10 @@ describe("research metrics helper", () => {
       session_id: "session-123",
       build_request_id: "build-123",
       server_id: "server-123",
+      rag_enabled: "",
+      dynamic_skill_selection: "",
+      skill_selection_variant: "",
+      variant_id: "",
     });
   });
 
@@ -95,6 +99,10 @@ describe("research metrics helper", () => {
         sessionId: "session-123",
         buildRequestId: "build-123",
         serverId: "server-123",
+        ragEnabled: "false",
+        dynamicSkillSelection: "false",
+        skillSelectionVariant: "static",
+        variantId: "static-rag-off",
       },
       metrics: { mcpToolCount: 4 },
     });
@@ -104,6 +112,10 @@ describe("research metrics helper", () => {
     expect(event.session_id).toBe("session-123");
     expect(event.build_request_id).toBe("build-123");
     expect(event.server_id).toBe("server-123");
+    expect(event.rag_enabled).toBe("false");
+    expect(event.dynamic_skill_selection).toBe("false");
+    expect(event.skill_selection_variant).toBe("static");
+    expect(event.variant_id).toBe("static-rag-off");
     expect(event.metrics).toEqual({ mcpToolCount: 4 });
   });
 

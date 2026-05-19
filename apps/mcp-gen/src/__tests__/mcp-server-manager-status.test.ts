@@ -18,6 +18,13 @@ function createManagerWithServer(status: string = "running") {
     inputContent: "openapi: 3.0.0",
     action: "created",
     buildRequestId: "build-123",
+    traceId: "trace-123",
+    experimentId: "experiment-123",
+    sessionId: "session-123",
+    ragEnabled: "false",
+    dynamicSkillSelection: "false",
+    skillSelectionVariant: "static",
+    variantId: "static-rag-off",
     likeCount: 0,
     dislikeCount: 0,
     feedbacks: [],
@@ -56,6 +63,12 @@ describe("MCPServerManager status endpoint", () => {
     expect(response.body.serverId).toBe("server-123");
     expect(response.body.status).toBe("running");
     expect(response.body.buildRequestId).toBe("build-123");
+    expect(response.body.traceId).toBe("trace-123");
+    expect(response.body.experimentId).toBe("experiment-123");
+    expect(response.body.ragEnabled).toBe("false");
+    expect(response.body.dynamicSkillSelection).toBe("false");
+    expect(response.body.skillSelectionVariant).toBe("static");
+    expect(response.body.variantId).toBe("static-rag-off");
     expect(response.body.claudeConfig.mcpServers["server-123"].args[1]).toContain(
       "token=token-123",
     );

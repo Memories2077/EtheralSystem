@@ -70,6 +70,10 @@ class ChatRequest(BaseModel):
     model: Optional[str] = "gemini-2.5-flash"
     temperature: Optional[float] = 0.0
     mcpServers: Optional[List[str]] = []
+    ragEnabled: Optional[bool] = None
+    dynamicSkillSelection: Optional[bool] = None
+    skillSelectionVariant: Optional[str] = None
+    variantId: Optional[str] = None
     sessionId: Optional[str] = None
     buildRequestId: Optional[str] = None
     traceId: Optional[str] = None
@@ -86,6 +90,10 @@ class McpMetadataRequest(BaseModel):
     sessionId: Optional[str] = None
     buildRequestId: Optional[str] = None
     serverId: Optional[str] = None
+    ragEnabled: Optional[bool] = None
+    dynamicSkillSelection: Optional[bool] = None
+    skillSelectionVariant: Optional[str] = None
+    variantId: Optional[str] = None
 
 class McpToolOutcomeItem(BaseModel):
     tool_name: str
@@ -330,6 +338,9 @@ async def health_check():
             "configuredFallbacks": configured_fallbacks,
             "langgraphApiUrl": llm_config.langgraph_api_url,
             "mcpGenUrl": llm_config.mcp_gen_base_url,
+            "ragEnabled": os.getenv("RAG_ENABLED", "true").lower() not in {"0", "false", "no", "off"},
+            "dynamicSkillSelection": os.getenv("DYNAMIC_SKILL_SELECTION", "false").lower() in {"1", "true", "yes", "on"},
+            "skillSelectionVariant": os.getenv("SKILL_SELECTION_VARIANT", ""),
         }
     except Exception as e:
         return {"status": "unhealthy", "service": "backend", "detail": str(e)}
@@ -340,13 +351,18 @@ async def get_mcp_metadata(request: McpMetadataRequest):
     original_url = request.url.strip() if request.url else ""
     if not original_url:
         raise HTTPException(status_code=400, detail="URL is required")
-    event_context = {
+    event_context = normalize_request_context({
         "traceId": request.traceId,
         "experimentId": request.experimentId,
         "sessionId": request.sessionId,
         "buildRequestId": request.buildRequestId,
         "serverId": request.serverId,
-    }
+        "ragEnabled": request.ragEnabled,
+        "dynamicSkillSelection": request.dynamicSkillSelection,
+        "skillSelectionVariant": request.skillSelectionVariant,
+        "variantId": request.variantId,
+    })
+    event_context["serverId"] = request.serverId or ""
 
     url = resolve_docker_url(original_url)
     if url in state.mcp_connections:
@@ -511,6 +527,10 @@ async def record_mcp_tool_outcomes(request: McpToolOutcomesRequest):
             "sessionId": request.sessionId,
             "buildRequestId": request.buildRequestId,
             "serverId": request.serverId,
+            "ragEnabled": request.ragEnabled,
+            "dynamicSkillSelection": request.dynamicSkillSelection,
+            "skillSelectionVariant": request.skillSelectionVariant,
+            "variantId": request.variantId,
         },
         mcp_urls=[request.mcpUrl] if request.mcpUrl else [],
         provider=request.provider,
@@ -534,6 +554,10 @@ async def chat_endpoint(request: ChatRequest):
             "workspaceId": request.workspaceId,
             "email": request.email,
             "memoryScope": request.memoryScope,
+            "ragEnabled": request.ragEnabled,
+            "dynamicSkillSelection": request.dynamicSkillSelection,
+            "skillSelectionVariant": request.skillSelectionVariant,
+            "variantId": request.variantId,
         })
         
         agent = await get_or_create_agent(prov, model, request.mcpServers, request.temperature or 0.0)
@@ -651,6 +675,10 @@ async def _instrument_chat_stream(
             tags={
                 "route": provider,
                 "temperature": request.temperature,
+                "rag_enabled": request_context.get("ragEnabled"),
+                "dynamic_skill_selection": request_context.get("dynamicSkillSelection"),
+                "skill_selection_variant": request_context.get("skillSelectionVariant"),
+                "variant_id": request_context.get("variantId"),
             },
         )
 

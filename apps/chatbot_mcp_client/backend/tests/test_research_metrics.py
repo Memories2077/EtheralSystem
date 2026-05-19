@@ -44,6 +44,10 @@ def test_build_research_event_preserves_correlation_context():
             "sessionId": "session-123",
             "buildRequestId": "build-123",
             "serverId": "server-123",
+            "ragEnabled": "false",
+            "dynamicSkillSelection": "false",
+            "skillSelectionVariant": "static",
+            "variantId": "static-rag-off",
         },
         metrics={"mcp_tool_count": 3},
     )
@@ -53,6 +57,10 @@ def test_build_research_event_preserves_correlation_context():
     assert event["session_id"] == "session-123"
     assert event["build_request_id"] == "build-123"
     assert event["server_id"] == "server-123"
+    assert event["rag_enabled"] == "false"
+    assert event["dynamic_skill_selection"] == "false"
+    assert event["skill_selection_variant"] == "static"
+    assert event["variant_id"] == "static-rag-off"
     assert event["metrics"]["mcp_tool_count"] == 3
 
 
@@ -110,3 +118,21 @@ def test_normalize_request_context_defaults_and_preserves_research_ids(monkeypat
     assert context["experimentId"] == "paper-default"
     assert context["buildRequestId"] == "build-123"
     assert context["sessionId"] == "chat-session"
+    assert context["ragEnabled"] == "true"
+    assert context["dynamicSkillSelection"] == "false"
+    assert context["skillSelectionVariant"] == "static"
+    assert context["variantId"] == "static-rag-on"
+
+
+def test_normalize_request_context_derives_dashboard_variant():
+    context = normalize_request_context({
+        "buildRequestId": "build-123",
+        "ragEnabled": False,
+        "dynamicSkillSelection": False,
+        "skillSelectionVariant": "control",
+    })
+
+    assert context["ragEnabled"] == "false"
+    assert context["dynamicSkillSelection"] == "false"
+    assert context["skillSelectionVariant"] == "static"
+    assert context["variantId"] == "static-rag-off"

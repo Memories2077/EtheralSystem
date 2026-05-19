@@ -20,6 +20,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import type { ChatSettings } from '@/lib/types';
 import { Separator } from '../ui/separator';
 import { MODEL_CONFIG } from '@/lib/config';
@@ -34,6 +35,9 @@ const settingsSchema = z.object({
   model: z.string(),
   temperature: z.number().min(0).max(1),
   maxTokens: z.number().min(1),
+  experimentId: z.string().min(1),
+  ragEnabled: z.boolean(),
+  skillSelectionMode: z.enum(['static', 'dynamic']),
   mcpServers: z.array(z.object({
     url: z.string().url('Please enter a valid URL.'),
     name: z.string().optional(),
@@ -193,6 +197,61 @@ export function ChatSettings({ settings, setSettings }: ChatSettingsProps) {
                         </FormItem>
                     )}
                 />
+            </div>
+
+            <Separator />
+
+            <div className="space-y-4">
+              <h3 className="font-medium">Run Controls</h3>
+              <FormField
+                control={form.control}
+                name="experimentId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Experiment ID</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="manual-dashboard" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="skillSelectionMode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Skill Selection</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select skill mode" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="static">Static</SelectItem>
+                        <SelectItem value="dynamic">Dynamic</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="ragEnabled"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-lg border border-outline-variant/20 p-3">
+                    <div>
+                      <FormLabel>RAG</FormLabel>
+                    </div>
+                    <FormControl>
+                      <Switch checked={field.value} onCheckedChange={field.onChange} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
             </div>
 
             <Separator />

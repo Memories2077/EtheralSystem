@@ -7,6 +7,7 @@ import type { ChatMessage, ChatSettings, ChatHistoryItem } from "@/lib/types";
 import { BACKEND_API, MODEL_CONFIG } from "@/lib/config";
 import {
   buildChatResearchContext,
+  buildChatRunRequestPayload,
   buildMcpMetadataRequestPayload,
 } from "@/lib/research-context";
 
@@ -45,6 +46,9 @@ const defaultSettings: ChatSettings = {
   model: "gemini-2.5-flash",
   temperature: 0.7,
   maxTokens: 2048,
+  experimentId: "manual-dashboard",
+  ragEnabled: true,
+  skillSelectionMode: "dynamic",
   mcpServers: [],
 };
 
@@ -239,6 +243,12 @@ export const useChatStore = create<ChatState>()(
         const researchContext = buildChatResearchContext({
           sessionId: chatId,
           buildRequestId,
+          experimentId: settings.experimentId,
+        });
+        const runPayload = buildChatRunRequestPayload({
+          context: researchContext,
+          ragEnabled: settings.ragEnabled,
+          skillSelectionMode: settings.skillSelectionMode,
         });
         const clientId = getStableClientId();
         const workspaceId = "default_workspace";
@@ -260,14 +270,11 @@ export const useChatStore = create<ChatState>()(
               model: settings?.model,
               temperature: settings?.temperature,
               mcpServers: settings?.mcpServers?.map((s) => s.url) || [],
-              sessionId: researchContext.sessionId,
-              buildRequestId: researchContext.buildRequestId,
-              traceId: researchContext.traceId,
-              experimentId: researchContext.experimentId,
+              ...runPayload,
               userId: clientId,
               workspaceId,
               email: `${clientId}@local`,
-              memoryScope: `user:${clientId}|workspace:${workspaceId}`,
+              memoryScope: `user:${clientId}|workspace:${workspaceId}|experiment:${researchContext.experimentId}`,
             }),
           });
 
@@ -322,7 +329,7 @@ export const useChatStore = create<ChatState>()(
                 body: JSON.stringify(
                   buildMcpMetadataRequestPayload({
                     url: mcpUrl,
-                    context: researchContext,
+                    context: { ...researchContext, ...runPayload },
                     serverId,
                   }),
                 ),
@@ -470,6 +477,15 @@ export const useChatStore = create<ChatState>()(
           if (!provider || !validProviders.includes(provider)) {
             state.settings.provider = "gemini";
             state.settings.model = MODEL_CONFIG.gemini.defaultModel;
+          }
+          if (!state.settings.experimentId) {
+            state.settings.experimentId = "manual-dashboard";
+          }
+          if (typeof state.settings.ragEnabled !== "boolean") {
+            state.settings.ragEnabled = true;
+          }
+          if (!["static", "dynamic"].includes(String(state.settings.skillSelectionMode))) {
+            state.settings.skillSelectionMode = "dynamic";
           }
 
           const now = Date.now();

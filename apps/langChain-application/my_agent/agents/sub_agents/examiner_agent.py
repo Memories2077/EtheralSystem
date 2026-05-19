@@ -13,8 +13,11 @@ from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, rec
 llm = get_llm(temperature=AGENT_CONFIG["examiner_agent"]["temperature"])
 
 
-def rag_enabled() -> bool:
-    return os.getenv("RAG_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
+def rag_enabled(state: AgentState | None = None) -> bool:
+    value = (state or {}).get("rag_enabled")
+    if value is None or value == "":
+        value = os.getenv("RAG_ENABLED", "true")
+    return str(value).lower() not in {"0", "false", "no", "off"}
 
 
 async def examiner_agent_node(state: AgentState) -> AgentState:
@@ -65,7 +68,7 @@ async def examiner_agent_node(state: AgentState) -> AgentState:
     if email_match:
         email = email_match.group(1).strip()
 
-    if not rag_enabled():
+    if not rag_enabled(state):
         rag_context_json = "[]"
         enriched_task = f"""ORIGINAL_PROMPT:
 {original_prompt}
