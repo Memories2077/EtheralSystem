@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from langchain_core.messages import AIMessage
 
@@ -10,6 +11,10 @@ from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, rec
 
 # Initialize LLM via factory
 llm = get_llm(temperature=AGENT_CONFIG["examiner_agent"]["temperature"])
+
+
+def rag_enabled() -> bool:
+    return os.getenv("RAG_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
 
 
 async def examiner_agent_node(state: AgentState) -> AgentState:
@@ -48,6 +53,62 @@ async def examiner_agent_node(state: AgentState) -> AgentState:
 
     # 3. Preserve original prompt separately from extracted API documentation.
     original_prompt = canonical_raw_api_doc or task_content
+
+    # Extract user info before the optional RAG bypass so both paths preserve the
+    # generator handoff shape.
+    user_id = "default_user"
+    email = "user@example.com"
+    user_id_match = re.search(r"USER_ID:\s*([^\n\r]*)", task_content)
+    if user_id_match:
+        user_id = user_id_match.group(1).strip()
+    email_match = re.search(r"EMAIL:\s*([^\n\r]*)", task_content)
+    if email_match:
+        email = email_match.group(1).strip()
+
+    if not rag_enabled():
+        rag_context_json = "[]"
+        enriched_task = f"""ORIGINAL_PROMPT:
+{original_prompt}
+
+API_DOCUMENTATION:
+{api_doc}
+
+ENRICHED_CONTEXT (RAG):
+{rag_context_json}
+
+USER_ID: {user_id}
+{f"EMAIL: {email}" if email != "user@example.com" else ""}"""
+        delegation_msg = f"DELEGATE_TO_GENERATOR: {enriched_task}"
+
+        print("[Examiner] RAG disabled by RAG_ENABLED=false. Passing empty context to generator.")
+        await record_research_event(
+            service="langgraph-agent",
+            stage="rag",
+            event_name="examiner_completed",
+            status="skipped",
+            duration_ms=duration_since_ms(start_ms),
+            context=state_research_context(state),
+            metrics={
+                "api_doc_length": len(api_doc),
+                "rag_enabled": False,
+                "rag_returned_count": 0,
+                "rag_context_item_count": 0,
+                "rag_context_chars": len(rag_context_json),
+            },
+            tags={"rag_disabled_reason": "RAG_ENABLED=false"},
+        )
+
+        return {
+            "messages": [AIMessage(content=delegation_msg)],
+            "next_agent": "generator",
+            "final_response": "",
+            "history": [],
+            "retry_count": state.get("retry_count", 0),
+            "current_plan": state.get("current_plan", ""),
+            "is_complete": state.get("is_complete", False),
+            "enriched_context": rag_context_json,
+            "raw_api_doc": canonical_raw_api_doc or api_doc,
+        }
         
     print(f"[Examiner] 🔍 API Doc ready ({len(api_doc)} chars). Searching for related content...")
     
@@ -60,16 +121,6 @@ async def examiner_agent_node(state: AgentState) -> AgentState:
     rag_context_data = await extract_structured_context(related_contents, llm)
     rag_context_json = json.dumps(rag_context_data, indent=2)
     
-    # 6. Extract User info to pass through
-    user_id = "default_user"
-    email = "user@example.com"
-    user_id_match = re.search(r"USER_ID:\s*([^\n\r]*)", task_content)
-    if user_id_match:
-        user_id = user_id_match.group(1).strip()
-    email_match = re.search(r"EMAIL:\s*([^\n\r]*)", task_content)
-    if email_match:
-        email = email_match.group(1).strip()
-
     # 7. Prepare Enriched Task 
     # Passing BOTH original prompt and extracted doc to ensure no loss of intent
     enriched_task = f"""ORIGINAL_PROMPT:
@@ -97,6 +148,7 @@ USER_ID: {user_id}
         context=state_research_context(state),
         metrics={
             "api_doc_length": len(api_doc),
+            "rag_enabled": True,
             "rag_returned_count": len(related_contents),
             "rag_context_item_count": len(rag_context_data),
             "rag_context_chars": len(rag_context_json),

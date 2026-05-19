@@ -76,7 +76,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
+      - ./reports:/repo/reports
       - jwt_data:/repo/apps/mcp-gen/data
       - shared_input:/repo/apps/mcp-gen/input
       - shared_openapi_spec:/repo/apps/mcp-gen/src-generated-yaml
@@ -154,7 +154,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - jwt_data:/repo/apps/mcp-gen/data
-      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
+      - ./reports:/repo/reports
     depends_on:
       docker-manager:
         condition: service_healthy
@@ -176,7 +176,7 @@ services:
     ports:
       - "2024:2024"
     volumes:
-      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
+      - ./reports:/repo/reports
     environment:
       - CHROMA_HOST=chromadb-server
       - CHROMA_PORT=8000
@@ -194,6 +194,7 @@ services:
       - METACLAW_ENABLED=${METACLAW_ENABLED:-false}
       - METACLAW_BASE_URL=${METACLAW_BASE_URL:-http://host.docker.internal:30000/v1}
       - METACLAW_MODEL=${METACLAW_MODEL:-qwen/qwen3-next-80b-a3b-instruct}
+      - RAG_ENABLED=${RAG_ENABLED:-true}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
       - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-default}
@@ -225,7 +226,7 @@ services:
       target: chatbot-backend
     container_name: chatbot-backend
     volumes:
-      - ./reports/jsonplaceholder-ui-metrics:/repo/reports/jsonplaceholder-ui-metrics
+      - ./reports:/repo/reports
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}

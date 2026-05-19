@@ -18,9 +18,13 @@ type ResearchEvent = JsonRecord & {
 
 type BenchmarkRun = JsonRecord & {
   type?: string;
+  benchmarkType?: string;
   experimentId?: string;
+  caseId?: string;
   itemId?: string;
   apiType?: string;
+  variantId?: string;
+  skillSelectionMode?: string;
   mode?: string;
   repeatIndex?: number;
   ok?: boolean;
@@ -33,6 +37,14 @@ type BenchmarkRun = JsonRecord & {
   dynamicSkillSelection?: string;
   ragEnabled?: string;
   metaclawEnabled?: string;
+  totalToolCount?: number | string;
+  attemptedToolCount?: number | string;
+  successToolCount?: number | string;
+  failedToolCount?: number | string;
+  skippedToolCount?: number | string;
+  toolCallPassRate?: number | string | null;
+  skippedCoverage?: number | string | null;
+  estimatedUsage?: JsonRecord;
 };
 
 type CsvRow = Record<string, unknown>;
@@ -45,6 +57,11 @@ function arg(name: string, fallback = ""): string {
 
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function resolveRepoPath(raw: string): string {
+  if (raw.startsWith("/repo/")) return path.resolve(raw.slice("/repo/".length));
+  return path.resolve(raw);
 }
 
 function csvEscape(value: unknown): string {
@@ -140,6 +157,16 @@ function rate(part: number, total: number): number | null {
   return Number((part / total).toFixed(4));
 }
 
+function numeric(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && Number.isFinite(Number(value))) return Number(value);
+  return 0;
+}
+
+function nestedNumber(row: JsonRecord | undefined, key: string): number {
+  return numeric(row?.[key]);
+}
+
 function summarizeBenchmarkGroups(
   runs: BenchmarkRun[],
   groupName: string,
@@ -175,6 +202,43 @@ function summarizeModeComparison(runs: BenchmarkRun[]): CsvRow[] {
     const metaclaw = run.metaclawEnabled === "true" ? "metaclaw" : "standard";
     return `${run.mode || "unknown"}:${selection}:${rag}:${metaclaw}`;
   });
+}
+
+function summarizeToolcallMatrixGroups(
+  runs: BenchmarkRun[],
+  groupName: string,
+  keyFn: (run: BenchmarkRun) => string,
+): CsvRow[] {
+  const rows: CsvRow[] = [];
+  for (const [key, group] of groupBy(runs, keyFn)) {
+    const durations = group.map((run) => Number(run.durationMs)).filter((value) => Number.isFinite(value));
+    const totalTools = group.reduce((sum, run) => sum + numeric(run.totalToolCount), 0);
+    const attemptedTools = group.reduce((sum, run) => sum + numeric(run.attemptedToolCount), 0);
+    const successfulTools = group.reduce((sum, run) => sum + numeric(run.successToolCount), 0);
+    const skippedTools = group.reduce((sum, run) => sum + numeric(run.skippedToolCount), 0);
+    const estimatedPromptTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedPromptTokens"), 0);
+    const estimatedCompletionTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedCompletionTokens"), 0);
+    const llmCallCount = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "llmCallCount"), 0);
+    const selectedSkillTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "selectedSkillTokens"), 0);
+    rows.push({
+      [groupName]: key,
+      count: group.length,
+      build_success_rate: rate(group.filter((run) => run.ok === true).length, group.length),
+      metadata_readiness_rate: rate(group.filter((run) => run.runtimeMetadataOk === true).length, group.length),
+      tool_call_pass_rate: rate(successfulTools, attemptedTools),
+      skipped_coverage: rate(skippedTools, totalTools),
+      attempted_tool_count: attemptedTools,
+      successful_tool_count: successfulTools,
+      skipped_tool_count: skippedTools,
+      p50_ms: percentile(durations, 50),
+      p95_ms: percentile(durations, 95),
+      estimated_prompt_tokens: estimatedPromptTokens,
+      estimated_completion_tokens: estimatedCompletionTokens,
+      llm_call_count: llmCallCount,
+      selected_skill_tokens: selectedSkillTokens,
+    });
+  }
+  return rows.sort((a, b) => String(a[groupName]).localeCompare(String(b[groupName])));
 }
 
 function summarizeRuntimeReliability(events: ResearchEvent[], runs: BenchmarkRun[]): CsvRow[] {
@@ -235,14 +299,20 @@ function markdownTable(rows: CsvRow[], headers: string[]): string {
 
 async function main() {
   const experimentId = arg("experiment-id", "");
-  const eventsPath = path.resolve(arg("events", process.env.RESEARCH_EVENTS_JSONL_PATH || "/tmp/etheral-research-events.jsonl"));
-  const runsPath = path.resolve(arg("runs", "experiments/research-metrics/runs.jsonl"));
+  const eventsPath = resolveRepoPath(arg("events", process.env.RESEARCH_EVENTS_JSONL_PATH || "/tmp/etheral-research-events.jsonl"));
+  const runsPath = resolveRepoPath(arg("runs", "experiments/research-metrics/runs.jsonl"));
+  const matrixRunsPath = resolveRepoPath(arg("matrix-runs", "experiments/research-metrics/backend-toolcall-matrix-runs.jsonl"));
   const outputDir = path.resolve(arg("output-dir", `experiments/research-metrics/reports/${experimentId || "all"}`));
   ensureDir(outputDir);
 
   const allEvents = readJsonl<ResearchEvent>(eventsPath);
   const events = experimentId ? allEvents.filter((event) => event.experiment_id === experimentId) : allEvents;
-  const runs = readJsonl<BenchmarkRun>(runsPath).filter((row) => row.type === "benchmark_result" && (!experimentId || row.experimentId === experimentId));
+  const rawRuns = [
+    ...readJsonl<BenchmarkRun>(runsPath),
+    ...(matrixRunsPath === runsPath ? [] : readJsonl<BenchmarkRun>(matrixRunsPath)),
+  ];
+  const runs = rawRuns.filter((row) => row.type === "benchmark_result" && (!experimentId || row.experimentId === experimentId));
+  const matrixRuns = runs.filter((row) => row.benchmarkType === "backend_toolcall_matrix");
 
   const stageRows = summarizeStages(events);
   const buildRows = summarizeBuilds(events);
@@ -251,10 +321,21 @@ async function main() {
   const apiTypeRows = summarizeBenchmarkGroups(runs, "apiType", (run) => run.apiType || "unknown");
   const runtimeRows = summarizeRuntimeReliability(events, runs);
   const feedbackRows = summarizeFeedback(events);
+  const toolcallVariantRows = summarizeToolcallMatrixGroups(matrixRuns, "variantId", (run) => run.variantId || "unknown");
+  const toolcallCaseRows = summarizeToolcallMatrixGroups(matrixRuns, "caseId", (run) => run.caseId || run.itemId || "unknown");
+  const toolcallApiTypeRows = summarizeToolcallMatrixGroups(matrixRuns, "apiType", (run) => run.apiType || "unknown");
+  const toolcallSkillRows = summarizeToolcallMatrixGroups(matrixRuns, "skillSelectionMode", (run) => run.skillSelectionMode || run.selectionVariant || "unknown");
+  const toolcallRagRows = summarizeToolcallMatrixGroups(matrixRuns, "ragEnabled", (run) => run.ragEnabled === "true" ? "rag_on" : "rag_off");
   writeCsv(path.join(outputDir, "events.csv"), events);
   writeCsv(path.join(outputDir, "stage_summary.csv"), stageRows);
   writeCsv(path.join(outputDir, "build_summary.csv"), buildRows);
   writeCsv(path.join(outputDir, "benchmark_runs.csv"), runs);
+  writeCsv(path.join(outputDir, "toolcall_matrix_runs.csv"), matrixRuns);
+  writeCsv(path.join(outputDir, "toolcall_by_variant.csv"), toolcallVariantRows);
+  writeCsv(path.join(outputDir, "toolcall_by_case.csv"), toolcallCaseRows);
+  writeCsv(path.join(outputDir, "toolcall_by_api_type.csv"), toolcallApiTypeRows);
+  writeCsv(path.join(outputDir, "toolcall_by_skill_selection.csv"), toolcallSkillRows);
+  writeCsv(path.join(outputDir, "toolcall_by_rag.csv"), toolcallRagRows);
   writeCsv(path.join(outputDir, "mode_comparison.csv"), modeRows);
   writeCsv(path.join(outputDir, "rag_comparison.csv"), ragRows);
   writeCsv(path.join(outputDir, "runtime_reliability.csv"), runtimeRows);
@@ -266,6 +347,17 @@ async function main() {
     ``,
     `Experiment: ${experimentId || "all"}`,
     `Generated: ${new Date().toISOString()}`,
+    ``,
+    `## Backend Tool-Call Matrix By Variant`,
+    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens"]),
+    `## Backend Tool-Call Matrix By Case`,
+    markdownTable(toolcallCaseRows, ["caseId", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens"]),
+    `## Backend Tool-Call Matrix By API Type`,
+    markdownTable(toolcallApiTypeRows, ["apiType", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens"]),
+    `## Backend Tool-Call Matrix By Skill Selection`,
+    markdownTable(toolcallSkillRows, ["skillSelectionMode", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens"]),
+    `## Backend Tool-Call Matrix By RAG`,
+    markdownTable(toolcallRagRows, ["ragEnabled", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens"]),
     ``,
     `## Benchmark Runs`,
     markdownTable(runs, ["itemId", "apiType", "mode", "repeatIndex", "ok", "serverId", "durationMs"]),
