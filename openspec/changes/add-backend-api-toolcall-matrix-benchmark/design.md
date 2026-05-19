@@ -8,7 +8,7 @@ The benchmark must avoid browser noise. It should still exercise the real backen
 
 **Goals:**
 
-- Produce repeatable backend API E2E benchmark results for 4 live-public API cases across a 2x2 static/dynamic skill-selection and RAG on/off matrix.
+- Produce repeatable backend API E2E benchmark results for 3 checked-in input API docs across a 2x2 static/dynamic skill-selection and RAG on/off matrix.
 - Measure build success, metadata readiness, live tool-call pass rate, skipped coverage, latency, and estimated token usage.
 - Export paper-friendly CSV and Markdown tables while preserving raw JSONL evidence.
 - Enforce `RAG_ENABLED` as an actual runtime behavior switch before interpreting RAG ablation results.
@@ -26,9 +26,10 @@ The benchmark must avoid browser noise. It should still exercise the real backen
    - The runner will build through `POST /chat`, connect through `POST /mcp/metadata`, and probe tools through follow-up `POST /chat` with `mcpServers`.
    - Alternative considered: Playwright E2E. It validates UI behavior but adds browser/localStorage timing noise and is slower to replay.
 
-2. **Use 4 live-public cases for primary paper metrics.**
-   - Cases: JSONPlaceholder, HTTPBin, Rick and Morty API, and TheDogAPI public GET subset.
-   - Alternative considered: use the existing 8-case frozen dataset. It is better for generation robustness, but several cases use `*.example.test` or auth-required APIs that would distort live tool-call pass rate.
+2. **Use the 3 checked-in API docs as primary paper cases.**
+   - Cases: `input/jsonplaceholder.txt`, `input/reddit.txt`, and `input/thedogapi.txt`.
+   - Auth format files for Reddit and TheDogAPI are included in generation input so generated tools can model required parameters without embedding secrets.
+   - Alternative considered: use 4 public API cases including HTTPBin and Rick and Morty. That is broader, but it no longer matches the user's fixed input corpus for the paper comparison.
 
 3. **Represent variants as a 2x2 matrix.**
    - Variants are `static-rag-off`, `static-rag-on`, `dynamic-rag-off`, and `dynamic-rag-on`.
@@ -48,4 +49,5 @@ The benchmark must avoid browser noise. It should still exercise the real backen
 - **Variant env may not affect already-running containers** -> Recreate or restart affected services per variant phase and record the effective flags in every run.
 - **RAG off may still route through examiner logic** -> Add an explicit runtime bypass that returns empty RAG context and logs disabled retrieval.
 - **Generated tool names vary by model** -> Probe planning should match tools by safe operation intent and metadata, then fall back to conservative skips with diagnostics.
-- **48 full runs can be slow and costly** -> Support `--limit`, `--variants`, and `--repeats` for smoke runs while keeping the default paper matrix fixed.
+- **36 full runs can be slow and costly** -> Support `--limit`, `--cases`, `--variants`, and `--repeats` for smoke runs while keeping the default paper matrix fixed.
+- **Auth docs do not contain live credentials** -> Include auth format in generation input, but skip auth-required live tool probes unless credentials are explicitly provided.

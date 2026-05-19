@@ -27,7 +27,11 @@ type MatrixCase = {
   apiType: string;
   title: string;
   baseUrl: string;
-  prompt: string;
+  prompt?: string;
+  inputPath?: string;
+  authInfoPath?: string;
+  inputDocHash?: string;
+  authInfoHash?: string;
   probes: ProbeDefinition[];
   skipRules?: SkipRule[];
 };
@@ -168,6 +172,31 @@ function ensureDir(dir: string): void {
 
 function readJson<T>(filePath: string): T {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
+}
+
+function readOptionalText(filePath?: string): string {
+  if (!filePath) return "";
+  return fs.readFileSync(path.resolve(root, filePath), "utf8").trim();
+}
+
+function materializeCase(item: MatrixCase): MatrixCase {
+  const apiDoc = readOptionalText(item.inputPath);
+  const authInfo = readOptionalText(item.authInfoPath);
+  const promptParts = [
+    item.prompt || "Create an MCP Server from the following API documentation. Treat credentials as user-provided tool arguments; do not load secrets from environment variables.",
+    apiDoc ? `API documentation source: ${item.inputPath}\n\n${apiDoc}` : "",
+    authInfo ? `Additional auth/test-call information source: ${item.authInfoPath}\n\n${authInfo}` : "",
+  ].filter(Boolean);
+  return {
+    ...item,
+    prompt: promptParts.join("\n\n---\n\n"),
+    inputDocHash: apiDoc ? contentHash(apiDoc) : undefined,
+    authInfoHash: authInfo ? contentHash(authInfo) : undefined,
+  };
+}
+
+function materializeDataset(dataset: MatrixCase[]): MatrixCase[] {
+  return dataset.map(materializeCase);
 }
 
 function appendJsonl(filePath: string, value: JsonRecord): void {
@@ -509,7 +538,7 @@ async function validateTool({
 
   const probe = matchedProbe(item, tool);
   if (!probe) {
-    return skippedOutcome(tool, index, "no_safe_probe_match", "No live-public safe probe matched this generated tool.");
+    return skippedOutcome(tool, index, "no_safe_probe_match", "No safe live probe matched this generated tool.");
   }
 
   const toolSessionId = `${baseSessionId}-tool-${index + 1}`;
@@ -756,6 +785,10 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     apiType: item.apiType,
     caseTitle: item.title,
     baseUrl: item.baseUrl,
+    inputPath: item.inputPath || "",
+    authInfoPath: item.authInfoPath || "",
+    inputDocHash: item.inputDocHash || "",
+    authInfoHash: item.authInfoHash || "",
     variantId: variant.id,
     mode: "backend-api-toolcall",
     skillSelectionMode: variant.skillSelectionMode,
@@ -776,7 +809,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
   try {
     const build = await postChat({
       backendUrl: options.backendUrl,
-      messages: [{ role: "user", content: item.prompt }],
+      messages: [{ role: "user", content: item.prompt || "" }],
       mcpServers: [],
       sessionId,
       buildRequestId,
@@ -925,9 +958,14 @@ function selectVariants(options: Options): Variant[] {
 function validateDataset(dataset: MatrixCase[]): void {
   if (!Array.isArray(dataset) || dataset.length === 0) throw new Error("Dataset must contain at least one case.");
   for (const item of dataset) {
-    if (!item.id || !item.apiType || !item.baseUrl || !item.prompt) throw new Error(`Dataset case is missing required fields: ${JSON.stringify(item)}`);
+    if (!item.id || !item.apiType || !item.baseUrl || (!item.prompt && !item.inputPath)) throw new Error(`Dataset case is missing required fields: ${JSON.stringify(item)}`);
     if (!/^https?:\/\//.test(item.baseUrl)) throw new Error(`Dataset case ${item.id} has invalid baseUrl: ${item.baseUrl}`);
-    if (!Array.isArray(item.probes) || item.probes.length === 0) throw new Error(`Dataset case ${item.id} must define at least one safe probe.`);
+    if (item.inputPath && !fs.existsSync(path.resolve(root, item.inputPath))) throw new Error(`Dataset case ${item.id} inputPath does not exist: ${item.inputPath}`);
+    if (item.authInfoPath && !fs.existsSync(path.resolve(root, item.authInfoPath))) throw new Error(`Dataset case ${item.id} authInfoPath does not exist: ${item.authInfoPath}`);
+    if (!Array.isArray(item.probes)) throw new Error(`Dataset case ${item.id} probes must be an array.`);
+    if (item.probes.length === 0 && (!Array.isArray(item.skipRules) || item.skipRules.length === 0)) {
+      throw new Error(`Dataset case ${item.id} must define at least one safe probe or explicit skip rule.`);
+    }
     for (const probe of item.probes) {
       if (!probe.id || !probe.operation || !Array.isArray(probe.match) || probe.match.length === 0 || !probe.prompt.includes("{toolName}")) {
         throw new Error(`Dataset case ${item.id} has invalid probe: ${JSON.stringify(probe)}`);
@@ -938,7 +976,7 @@ function validateDataset(dataset: MatrixCase[]): void {
 
 async function main(): Promise<void> {
   const options = parseOptions();
-  const dataset = readJson<MatrixCase[]>(options.datasetPath);
+  const dataset = materializeDataset(readJson<MatrixCase[]>(options.datasetPath));
   validateDataset(dataset);
   const selectedCases = selectCases(dataset, options);
   const selectedVariants = selectVariants(options);
@@ -958,6 +996,13 @@ async function main(): Promise<void> {
     model: options.model,
     restartStack: options.restartStack,
     caseIds: selectedCases.map((item) => item.id),
+    caseInputs: selectedCases.map((item) => ({
+      caseId: item.id,
+      inputPath: item.inputPath || "",
+      authInfoPath: item.authInfoPath || "",
+      inputDocHash: item.inputDocHash || "",
+      authInfoHash: item.authInfoHash || "",
+    })),
     variantIds: selectedVariants.map((item) => item.id),
     totalRuns: selectedCases.length * selectedVariants.length * options.repeats,
   };

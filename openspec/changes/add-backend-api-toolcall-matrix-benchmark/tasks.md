@@ -1,7 +1,7 @@
 ## 1. Dataset And Variant Setup
 
-- [x] 1.1 Create `experiments/research-metrics/backend_toolcall_matrix_dataset.json` with JSONPlaceholder, HTTPBin, Rick and Morty API, and TheDogAPI public GET subset cases.
-- [x] 1.2 Include per-case safe probe definitions, expected API type, public base URL, and skip rules for auth-required or unsafe operations.
+- [x] 1.1 Create `experiments/research-metrics/backend_toolcall_matrix_dataset.json` with the 3 checked-in input API-doc cases: JSONPlaceholder, Reddit, and TheDogAPI.
+- [x] 1.2 Include per-case input doc paths, auth information paths where available, safe probe definitions, expected API type, public base URL, and skip rules for auth-required or unsafe operations.
 - [x] 1.3 Define the four benchmark variants: `static-rag-off`, `static-rag-on`, `dynamic-rag-off`, and `dynamic-rag-on`.
 - [x] 1.4 Add CLI options for smoke and paper runs: dataset path, variants, case limit, repeats, provider, model, experiment ID, output path, backend URL, and mcp-gen URL.
 
@@ -32,5 +32,5 @@
 
 - [x] 5.1 Add focused tests or dry-run assertions for dataset loading, variant expansion, safe probe matching, skip classification, and aggregate metric calculations.
 - [x] 5.2 Run a smoke benchmark with 1 case, 1 variant, and 1 repeat against the local stack.
-- [ ] 5.3 Run the full 4 case x 4 variant x 3 repeat matrix when credentials and time budget are available.
+- [ ] 5.3 Run the full 3 input-doc case x 4 variant x 3 repeat matrix when credentials and time budget are available.
 - [x] 5.4 Document the benchmark runbook, smoke command, full paper command, output files, and metric definitions.

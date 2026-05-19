@@ -1,27 +1,34 @@
 [
   {
-    "id": "jsonplaceholder-posts",
-    "apiType": "simple_crud",
-    "title": "JSONPlaceholder public posts and comments",
+    "id": "jsonplaceholder-input-doc",
+    "apiType": "public_crud_input_doc",
+    "title": "JSONPlaceholder input API document",
     "baseUrl": "https://jsonplaceholder.typicode.com",
-    "prompt": "Create an MCP server for JSONPlaceholder public testing endpoints. Base URL: https://jsonplaceholder.typicode.com. Authentication: none. Endpoints: GET /posts with optional userId query parameter; GET /posts/{id}; GET /posts/{id}/comments; GET /comments with optional postId query parameter; GET /users/{id}; POST /posts with harmless fake JSON fields title, body, and userId. JSONPlaceholder write operations are fake and do not persist data.",
+    "inputPath": "input/jsonplaceholder.txt",
+    "prompt": "Create an MCP Server from the provided JSONPlaceholder API documentation. Preserve all documented request and response shapes. JSONPlaceholder write operations are fake test operations and do not persist data.",
     "probes": [
+      {
+        "id": "create-post",
+        "operation": "POST /posts",
+        "match": ["create-post", "create post", "add-post", "add post", "post /posts"],
+        "prompt": "Use the active MCP tool named \"{toolName}\" to create a fake JSONPlaceholder post with title=\"benchmark\", body=\"tool call\", and userId=1. Return the created id or title."
+      },
       {
         "id": "list-posts",
         "operation": "GET /posts",
-        "match": ["post", "posts"],
+        "match": ["get-all-posts", "list-posts", "list posts", "all posts", "get posts"],
         "prompt": "Use the active MCP tool named \"{toolName}\" to list JSONPlaceholder posts. If arguments are needed, use userId=1 or a limit of 3. Return a compact answer with at least one post id or title."
       },
       {
         "id": "post-comments",
         "operation": "GET /posts/{id}/comments or GET /comments",
-        "match": ["comment", "comments"],
+        "match": ["post-comments", "comments-by-post", "get-comments", "list-comments", "comments"],
         "prompt": "Use the active MCP tool named \"{toolName}\" to fetch comments for JSONPlaceholder postId=1 or post id 1. Return a compact answer with at least one email or comment id."
       },
       {
         "id": "get-user",
         "operation": "GET /users/{id}",
-        "match": ["user", "users"],
+        "match": ["get-user", "user-by-id", "users"],
         "prompt": "Use the active MCP tool named \"{toolName}\" to fetch JSONPlaceholder user id 1. Return the user's name or username."
       }
     ],
@@ -34,98 +41,43 @@
     ]
   },
   {
-    "id": "httpbin-public",
-    "apiType": "http_debug",
-    "title": "HTTPBin public request tools",
-    "baseUrl": "https://httpbin.org",
-    "prompt": "Create an MCP server for HTTPBin public endpoints. Base URL: https://httpbin.org. Authentication: none. Endpoints: GET /get with arbitrary query parameters; POST /post with JSON body; GET /anything/{value}; GET /status/{code} with path parameter code. Use only safe public HTTPBin endpoints.",
-    "probes": [
-      {
-        "id": "get-query",
-        "operation": "GET /get",
-        "match": ["get"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to call HTTPBin GET /get with query parameter benchmark=toolcall. Return the echoed args."
-      },
-      {
-        "id": "anything-path",
-        "operation": "GET /anything/{value}",
-        "match": ["anything"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to call HTTPBin /anything/matrix-benchmark. Return the echoed URL or path."
-      },
-      {
-        "id": "post-json",
-        "operation": "POST /post",
-        "match": ["post"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to call HTTPBin POST /post with JSON {\"benchmark\":\"toolcall\"}. Return the echoed JSON."
-      }
-    ],
+    "id": "reddit-input-doc",
+    "apiType": "oauth_auth_input_doc",
+    "title": "Reddit input API document with OAuth password flow",
+    "baseUrl": "https://oauth.reddit.com",
+    "inputPath": "input/reddit.txt",
+    "authInfoPath": "input/reddit_auth_information.txt",
+    "prompt": "Create an MCP Server from the provided Reddit API documentation and auth call example. All Reddit credentials and bearer tokens must be user-provided tool arguments. Do not hard-code or load credentials from environment variables.",
+    "probes": [],
     "skipRules": [
       {
-        "match": ["status", "404", "500", "redirect", "delay"],
-        "errorCode": "unstable_or_negative_httpbin_probe",
-        "diagnostic": "HTTP status, redirect, and delay probes are skipped to keep pass-rate semantics stable."
+        "match": ["reddit", "access-token", "access token", "oauth", "bearer", "credential", "client", "secret", "password", "username", "karma", "prefs", "trophies", "announcement", "me"],
+        "errorCode": "auth_required_credentials_missing",
+        "diagnostic": "Reddit tools require user-provided OAuth credentials or bearer tokens; benchmark input only contains auth format, not live credentials."
       }
     ]
   },
   {
-    "id": "rickmorty-pagination",
-    "apiType": "pagination",
-    "title": "Rick and Morty public paginated API",
-    "baseUrl": "https://rickandmortyapi.com/api",
-    "prompt": "Create an MCP server for the Rick and Morty API. Base URL: https://rickandmortyapi.com/api. Authentication: none. Endpoints: GET /character with query parameters page, name, status, species, type, and gender; GET /character/{id}; GET /location with page and name; GET /episode/{id}. Responses are JSON and list endpoints include pagination info.",
-    "probes": [
-      {
-        "id": "search-character",
-        "operation": "GET /character",
-        "match": ["character", "characters"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to search Rick and Morty characters with name=rick and page=1 if supported. Return one character name and id."
-      },
-      {
-        "id": "get-location",
-        "operation": "GET /location",
-        "match": ["location", "locations"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to list or fetch Rick and Morty locations with page=1 if supported. Return one location name."
-      },
-      {
-        "id": "get-episode",
-        "operation": "GET /episode/{id}",
-        "match": ["episode", "episodes"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch Rick and Morty episode id 1. Return the episode name."
-      }
-    ],
-    "skipRules": [
-      {
-        "match": ["post", "delete", "patch", "put", "auth", "token"],
-        "errorCode": "unsupported_by_public_api",
-        "diagnostic": "The public Rick and Morty API benchmark only probes public GET endpoints."
-      }
-    ]
-  },
-  {
-    "id": "thedogapi-public",
-    "apiType": "public_media",
-    "title": "TheDogAPI public GET subset",
+    "id": "thedogapi-input-doc",
+    "apiType": "api_key_media_input_doc",
+    "title": "TheDogAPI input API document with API-key sections",
     "baseUrl": "https://api.thedogapi.com/v1",
-    "prompt": "Create an MCP server for the public GET subset of TheDogAPI. Base URL: https://api.thedogapi.com/v1. Authentication: none for this benchmark subset. Endpoints: GET /images/search with query parameters limit, size, mime_types, format, has_breeds, order, page; GET /breeds; GET /breeds/search with query parameter q; GET /images/{image_id}. Do not include votes, favourites, uploads, account, or API-key-only operations in benchmark probes.",
+    "inputPath": "input/thedogapi.txt",
+    "authInfoPath": "input/thedogapi_auth_information.txt",
+    "prompt": "Create an MCP Server from the provided TheDogAPI documentation and API-key information. Preserve documented request and response shapes. API keys must be user-provided tool arguments; do not hard-code or load credentials from environment variables.",
     "probes": [
       {
         "id": "search-images",
         "operation": "GET /images/search",
-        "match": ["image", "images", "search"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to search TheDogAPI images with limit=1 and has_breeds=1 if supported. Return the image id or URL."
-      },
-      {
-        "id": "list-breeds",
-        "operation": "GET /breeds",
-        "match": ["breed", "breeds"],
-        "prompt": "Use the active MCP tool named \"{toolName}\" to list TheDogAPI breeds or search breeds with q=hound if supported. Return one breed name."
+        "match": ["images-search", "search-images", "search images", "image search"],
+        "prompt": "Use the active MCP tool named \"{toolName}\" to search TheDogAPI images with limit=1 and include_breeds=true or has_breeds=true if supported. Return the image id or URL."
       }
     ],
     "skipRules": [
       {
-        "match": ["vote", "votes", "favourite", "favorite", "upload", "account", "api_key", "x-api-key", "delete", "post", "patch", "put"],
+        "match": ["status", "label", "delete", "public-request", "public request", "breed", "favourite", "favorite", "health", "pet", "ban", "category", "account", "sub-id", "sub id", "quota", "upload", "vote", "api-key", "x-api-key", "bearer", "patch", "post", "put"],
         "errorCode": "auth_required_or_unsafe",
-        "diagnostic": "TheDogAPI auth-required or mutation tools are excluded from the live-public benchmark."
+        "diagnostic": "TheDogAPI API-key-only, account-specific, mutation, or non-public tools are skipped unless live credentials are provided."
       }
     ]
   }

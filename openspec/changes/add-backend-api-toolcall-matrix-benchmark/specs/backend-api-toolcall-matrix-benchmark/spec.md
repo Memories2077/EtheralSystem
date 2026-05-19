@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Benchmark matrix is fixed and reproducible
-The system SHALL provide a backend API E2E benchmark matrix for paper runs with fixed live-public cases, fixed variants, and repeatable run metadata.
+The system SHALL provide a backend API E2E benchmark matrix for paper runs with fixed checked-in input API-doc cases, fixed variants, and repeatable run metadata.
 
 #### Scenario: Full matrix enumerates all benchmark cells
 - **WHEN** the benchmark runs with default paper settings
-- **THEN** it executes 4 live-public API cases across 4 variants and 3 repeats
+- **THEN** it executes 3 checked-in input API-doc cases across 4 variants and 3 repeats
 - **AND** every run records `experimentId`, `caseId`, `variantId`, `repeatIndex`, provider, model, git commit, and effective feature flags
 
 #### Scenario: Variant flags are applied explicitly
@@ -15,10 +15,11 @@ The system SHALL provide a backend API E2E benchmark matrix for paper runs with 
 - **AND** `dynamic-rag-off` uses dynamic skill selection with RAG disabled
 - **AND** `dynamic-rag-on` uses dynamic skill selection with RAG enabled
 
-#### Scenario: Benchmark cases are live-callable
+#### Scenario: Benchmark cases use checked-in input docs
 - **WHEN** the benchmark loads the default case set
-- **THEN** it includes JSONPlaceholder, HTTPBin, Rick and Morty API, and the public GET subset of TheDogAPI
-- **AND** the case definitions identify safe probe operations and any operations that must be skipped
+- **THEN** it includes `input/jsonplaceholder.txt`, `input/reddit.txt`, and `input/thedogapi.txt`
+- **AND** the Reddit and TheDogAPI auth information files are included as generation input context
+- **AND** the case definitions identify safe live probe operations and any auth-required or unsafe operations that must be skipped
 
 ### Requirement: Benchmark validates generated tools through backend APIs
 The system SHALL validate generated MCP servers without Playwright by using existing backend chat and metadata APIs.
@@ -36,8 +37,8 @@ The system SHALL validate generated MCP servers without Playwright by using exis
 - **AND** each live-callable probe records whether the generated MCP tool was invoked successfully
 - **AND** the run records success, failure, and skipped counts for all metadata tools
 
-#### Scenario: Unsafe tools are skipped with diagnostics
-- **WHEN** a metadata tool requires unavailable credentials, unsafe mutation, or an endpoint outside the case public subset
+#### Scenario: Unsafe or credential-bound tools are skipped with diagnostics
+- **WHEN** a metadata tool requires unavailable credentials, unsafe mutation, or an endpoint outside the case safe live-probe subset
 - **THEN** the benchmark marks that tool as skipped
 - **AND** the skipped outcome includes a safe reason code
 - **AND** skipped tools are excluded from live-callable pass-rate numerator and denominator

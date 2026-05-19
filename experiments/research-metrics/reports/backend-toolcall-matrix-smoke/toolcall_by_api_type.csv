@@ -1,2 +1,2 @@
 apiType,count,build_success_rate,metadata_readiness_rate,tool_call_pass_rate,skipped_coverage,attempted_tool_count,successful_tool_count,skipped_tool_count,p50_ms,p95_ms,estimated_prompt_tokens,estimated_completion_tokens,llm_call_count,selected_skill_tokens
-simple_crud,1,1,1,0.3333,0,6,2,0,249125,249125,0,0,0,0
+public_crud_input_doc,1,1,1,1,0.6923,4,4,9,137417,137417,0,0,0,0

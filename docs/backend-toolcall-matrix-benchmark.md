@@ -4,12 +4,11 @@ This benchmark is the paper-facing backend API E2E runner for generated MCP tool
 
 ## Cases And Variants
 
-Default cases live in `experiments/research-metrics/backend_toolcall_matrix_dataset.json`:
+Default cases live in `experiments/research-metrics/backend_toolcall_matrix_dataset.json` and reference the three API documents in `input/`:
 
-- `jsonplaceholder-posts`
-- `httpbin-public`
-- `rickmorty-pagination`
-- `thedogapi-public`
+- `jsonplaceholder-input-doc` -> `input/jsonplaceholder.txt`
+- `reddit-input-doc` -> `input/reddit.txt` plus `input/reddit_auth_information.txt`
+- `thedogapi-input-doc` -> `input/thedogapi.txt` plus `input/thedogapi_auth_information.txt`
 
 Default variants are:
 
@@ -18,7 +17,7 @@ Default variants are:
 - `dynamic-rag-off`
 - `dynamic-rag-on`
 
-The default paper matrix is 4 cases x 4 variants x 3 repeats = 48 runs.
+The default paper matrix is 3 cases x 4 variants x 3 repeats = 36 runs.
 
 ## Smoke Validation
 
@@ -38,7 +37,7 @@ RESEARCH_EVENTS_JSONL_MIRROR=true \
 bun run research:toolcall-matrix \
   --experiment-id=backend-toolcall-matrix-smoke \
   --variants=static-rag-off \
-  --limit=1 \
+  --cases=jsonplaceholder-input-doc \
   --repeats=1 \
   --no-restart-stack
 ```
@@ -91,3 +90,5 @@ Important outputs:
 - `tool_call_pass_rate`: successful live-callable tool probes divided by attempted live-callable probes.
 - `skipped_coverage`: skipped metadata tools divided by total metadata tools.
 - `estimated_prompt_tokens`, `estimated_completion_tokens`, `llm_call_count`, `selected_skill_tokens`: estimated usage metrics, not provider billing.
+
+For Reddit and auth-required TheDogAPI tools, the checked-in auth files document the credential format only. The benchmark includes that auth context in the generation input, but live tool probes skip tools that require unavailable user credentials so pass-rate does not penalize missing secrets.

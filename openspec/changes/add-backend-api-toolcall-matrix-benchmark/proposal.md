@@ -5,7 +5,7 @@ Current paper metrics prove the JSONPlaceholder flow and generated tool invocati
 ## What Changes
 
 - Add a backend API E2E benchmark that builds generated MCP servers through `POST /chat`, verifies metadata through `POST /mcp/metadata`, and probes generated tools through follow-up `POST /chat` requests.
-- Run a fixed matrix of 4 live-public API cases, 4 variants, and 3 repeats per cell.
+- Run a fixed matrix of 3 checked-in input API-doc cases, 4 variants, and 3 repeats per cell.
 - Record build success, runtime metadata readiness, tool-call pass rate, skipped tool coverage, latency, and estimated token usage.
 - Export machine-readable JSONL/CSV artifacts and Markdown paper tables grouped by case, API type, variant, skill-selection mode, and RAG mode.
 - Keep Playwright UI validation as smoke coverage only; paper benchmark metrics come from backend API E2E runs.
@@ -13,7 +13,7 @@ Current paper metrics prove the JSONPlaceholder flow and generated tool invocati
 ## Capabilities
 
 ### New Capabilities
-- `backend-api-toolcall-matrix-benchmark`: Reproducible backend API E2E benchmark for live-public MCP generation cases across static/dynamic skill-selection and RAG on/off variants.
+- `backend-api-toolcall-matrix-benchmark`: Reproducible backend API E2E benchmark for checked-in input API docs across static/dynamic skill-selection and RAG on/off variants.
 
 ### Modified Capabilities
 
