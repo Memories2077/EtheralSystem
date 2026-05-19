@@ -935,7 +935,7 @@ function parseOptions(): Options {
     variants: csvArg("variants"),
     cases: csvArg("cases"),
     limit: Number(arg("limit", "0")),
-    repeats: Number(arg("repeats", "3")),
+    repeats: Number(arg("repeats", "1")),
     provider: arg("provider", env("BACKEND_TOOLCALL_PROVIDER", "gemini")),
     model: arg("model", env("BACKEND_TOOLCALL_MODEL", "gemini-2.5-flash")),
     backendUrl: arg("backend-url", env("E2E_BACKEND_URL", "http://localhost:8000")),

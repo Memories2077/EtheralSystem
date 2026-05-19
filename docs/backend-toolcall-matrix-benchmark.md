@@ -17,7 +17,7 @@ Default variants are:
 - `dynamic-rag-off`
 - `dynamic-rag-on`
 
-The default paper matrix is 3 cases x 4 variants x 3 repeats = 36 runs.
+The default paper matrix is 3 cases x 4 variants x 1 repeat = 12 runs.
 
 ## Smoke Validation
 
@@ -49,7 +49,6 @@ The runner can restart Docker Compose per variant so process-level flags are app
 ```bash
 bun run research:toolcall-matrix \
   --experiment-id=backend-toolcall-matrix-paper \
-  --repeats=3 \
   --restart-stack
 ```
 

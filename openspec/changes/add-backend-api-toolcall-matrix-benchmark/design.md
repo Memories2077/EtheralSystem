@@ -49,5 +49,5 @@ The benchmark must avoid browser noise. It should still exercise the real backen
 - **Variant env may not affect already-running containers** -> Recreate or restart affected services per variant phase and record the effective flags in every run.
 - **RAG off may still route through examiner logic** -> Add an explicit runtime bypass that returns empty RAG context and logs disabled retrieval.
 - **Generated tool names vary by model** -> Probe planning should match tools by safe operation intent and metadata, then fall back to conservative skips with diagnostics.
-- **36 full runs can be slow and costly** -> Support `--limit`, `--cases`, `--variants`, and `--repeats` for smoke runs while keeping the default paper matrix fixed.
+- **12 full runs can still be slow and costly** -> Support `--limit`, `--cases`, `--variants`, and `--repeats` for smoke runs while keeping the default paper matrix fixed.
 - **Auth docs do not contain live credentials** -> Include auth format in generation input, but skip auth-required live tool probes unless credentials are explicitly provided.

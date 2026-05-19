@@ -32,5 +32,5 @@
 
 - [x] 5.1 Add focused tests or dry-run assertions for dataset loading, variant expansion, safe probe matching, skip classification, and aggregate metric calculations.
 - [x] 5.2 Run a smoke benchmark with 1 case, 1 variant, and 1 repeat against the local stack.
-- [ ] 5.3 Run the full 3 input-doc case x 4 variant x 3 repeat matrix when credentials and time budget are available.
+- [ ] 5.3 Run the full 3 input-doc case x 4 variant x 1 repeat matrix when credentials and time budget are available.
 - [x] 5.4 Document the benchmark runbook, smoke command, full paper command, output files, and metric definitions.

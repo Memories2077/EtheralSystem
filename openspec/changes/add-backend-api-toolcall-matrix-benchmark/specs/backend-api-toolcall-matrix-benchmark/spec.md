@@ -5,7 +5,7 @@ The system SHALL provide a backend API E2E benchmark matrix for paper runs with 
 
 #### Scenario: Full matrix enumerates all benchmark cells
 - **WHEN** the benchmark runs with default paper settings
-- **THEN** it executes 3 checked-in input API-doc cases across 4 variants and 3 repeats
+- **THEN** it executes 3 checked-in input API-doc cases across 4 variants and 1 repeat
 - **AND** every run records `experimentId`, `caseId`, `variantId`, `repeatIndex`, provider, model, git commit, and effective feature flags
 
 #### Scenario: Variant flags are applied explicitly
