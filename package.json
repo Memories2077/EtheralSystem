@@ -15,6 +15,7 @@
     "test": "turbo test",
     "test:e2e": "playwright test",
     "test:e2e:jsonplaceholder": "playwright test tests/e2e/jsonplaceholder-ui-metrics-flow.spec.ts",
+    "test:headless-mcp-tool": "bun scripts/validation/run-headless-mcp-tool-validation.ts",
     "research:benchmark": "bun scripts/research/run-paper-mvp-benchmark.ts",
     "research:export": "bun scripts/research/export-research-report.ts",
     "manager": "turbo manager --filter=@etheral-system/mcp-gen",

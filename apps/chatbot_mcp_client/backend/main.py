@@ -36,6 +36,7 @@ from config import config as llm_config
 import database
 from shared import create_mcp_server_tool, stream_langgraph_build, extract_create_mcp_tool_call, normalize_request_context
 from metaclaw_client import MetaClawClient
+from mcp_tool_invocation import McpToolInvocationTracker, record_mcp_tool_invocation_event
 from mcp_server_filtering import ACTIVE_GENERATED_MCP_STATUSES, filter_active_mcp_server_payload
 from research_metrics import (
     content_hash,
@@ -165,6 +166,22 @@ def sse_status(message: str) -> str:
 
 def sse_done() -> str:
     return f"data: {json.dumps({'type': 'done'})}\n\ndata: [DONE]\n\n"
+
+
+def active_mcp_tool_names(agent_state: AgentState, mcp_urls: Optional[List[str]]) -> List[str]:
+    target_urls = [resolve_docker_url(str(url)) for url in (mcp_urls or []) if url]
+    if not target_urls:
+        target_urls = agent_state.current_mcp_urls
+    names: List[str] = []
+    for url in target_urls:
+        conn = agent_state.mcp_connections.get(url)
+        if not conn:
+            continue
+        for tool_item in conn.get("tools", []):
+            name = str(getattr(tool_item, "name", "") or "").strip()
+            if name:
+                names.append(name)
+    return names
 
 # ------------------------------------------------------------------ #
 # Agent Factory (Keep-Alive Implementation)                            #
@@ -486,13 +503,32 @@ async def chat_endpoint(request: ChatRequest):
                 ):
                     if "__use_standard_agent__" in sse:
                         # Handoff logic (simplified for brevity)
-                        async for std_sse in _stream_standard_agent_response(request, [{"role": m.role, "content": m.content} for m in request.messages], request.mcpServers, request.temperature or 0.0, state):
+                        async for std_sse in _stream_standard_agent_response(
+                            request,
+                            [{"role": m.role, "content": m.content} for m in request.messages],
+                            request.mcpServers,
+                            request.temperature or 0.0,
+                            state,
+                            request_context=request_context,
+                            provider=prov,
+                            model=model,
+                        ):
                             yield std_sse
                         return
                     yield sse
             return StreamingResponse(_instrument_chat_stream(metaclaw_stream(), request, request_context, prov, model, state), media_type="text/event-stream")
 
-        standard_stream = _stream_standard_agent_response(request, [{"role": m.role, "content": m.content} for m in request.messages], request.mcpServers, request.temperature or 0.0, state, agent)
+        standard_stream = _stream_standard_agent_response(
+            request,
+            [{"role": m.role, "content": m.content} for m in request.messages],
+            request.mcpServers,
+            request.temperature or 0.0,
+            state,
+            agent,
+            request_context=request_context,
+            provider=prov,
+            model=model,
+        )
         return StreamingResponse(_instrument_chat_stream(standard_stream, request, request_context, prov, model, state), media_type="text/event-stream")
 
     except Exception as e:
@@ -579,11 +615,15 @@ async def _stream_standard_agent_response(
     temp: float,
     state: AgentState,
     agent: Optional[StandardAgent] = None,
+    request_context: Optional[Dict[str, Any]] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     if agent is None:
         provider = request.provider or llm_config.default_provider
         default_model = llm_config.gemini_model if provider == "gemini" else llm_config.groq_model
-        created_agent = await get_or_create_agent(provider, request.model or default_model, mcp_urls, temp)
+        model = request.model or default_model
+        created_agent = await get_or_create_agent(provider, model, mcp_urls, temp)
         if isinstance(created_agent, MetaClawClient):
             yield sse_error("MetaClaw cannot be used in the standard agent stream.")
             yield sse_done()
@@ -603,11 +643,15 @@ async def _stream_standard_agent_response(
         content = m.get("content", "")
         langchain_msgs.append(HumanMessage(content=content) if m.get("role") == "user" else AIMessage(content=content))
 
+    stream_start_ms = monotonic_ms()
+    tracker = McpToolInvocationTracker(active_mcp_tool_names(state, mcp_urls))
+
     try:
         full_content = ""
         agent_obj = cast(Any, agent)
         stream_input = {"messages": langchain_msgs} if agent_expects_dict else langchain_msgs
         async for chunk in agent_obj.astream(stream_input):
+            tracker.observe(chunk)
             content_chunk: Any = ""
             
             if isinstance(chunk, dict):
@@ -651,6 +695,17 @@ async def _stream_standard_agent_response(
     except Exception as e:
         yield sse_error(str(e))
     finally:
+        if has_tools and (mcp_urls or []):
+            await record_mcp_tool_invocation_event(
+                tracker,
+                request_context=request_context,
+                mcp_urls=mcp_urls or [],
+                available_tool_count=state.current_mcp_tool_count,
+                provider=provider or request.provider,
+                model=model or request.model,
+                duration_ms=duration_since_ms(stream_start_ms),
+                response_text=locals().get("full_content", ""),
+            )
         yield sse_done()
 
 # ------------------------------------------------------------------ #
