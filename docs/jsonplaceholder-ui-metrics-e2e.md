@@ -1,6 +1,6 @@
 # JSONPlaceholder UI Metrics E2E
 
-This E2E validates the root `INPUT_SAMPLE.txt` flow from browser chat submission through generated MCP server activation and correlated research metrics.
+This E2E validates the root `INPUT_SAMPLE.txt` flow from browser chat submission through generated MCP server activation, browser-visible active-server state, and correlated research metrics. For backend-only proof that a generated MCP tool is invoked from follow-up chat, use `docs/headless-mcp-tool-validation.md`.
 
 ## Required Environment
 
@@ -67,6 +67,8 @@ E2E_MONGO_URI=mongodb://localhost:27018 bun run test:e2e:jsonplaceholder
 - The generated server is confirmed through mcp-gen manager `GET /api/mcp/:serverId/status`.
 - The generated MCP URL is activated through backend `POST /mcp/metadata`.
 - Browser local storage contains the active generated MCP server with a non-empty tool list.
+
+This browser test intentionally focuses on UI activation and rendering state. It does not replace the headless MCP tool invocation validation, which drives backend APIs directly and asserts `mcp_tool_invocation_completed`.
 
 ## Expected Metric Events
 

@@ -1,0 +1,478 @@
+TheDogAPI Usage Guide
+Base URL: https://api.thedogapi.com/v1
+Authentication: Hầu hết các endpoint yêu cầu truyền header x-api-key. Một số endpoint GET công khai (như /images/search, /images/{id}) không bắt buộc API Key nhưng vẫn nên truyền để ghi lại analytics.
+
+1. Images Endpoints
+Data Model: Image Schema
+json
+{
+  "id": "string",
+  "url": "string (URI format)",
+  "width": "integer",
+  "height": "integer",
+  "species_id": "string",
+  "breeds": [ { /* Breed Object */ } ],
+  "categories": [ { /* Category Object */ } ],
+  "unsafe_reasons": ["string"]
+}
+
+**A. Search Images**
+- Method: `GET /images/search`
+- Description: Tìm kiếm ảnh công khai. Không yêu cầu API Key.
+- Query Params:
+  - `limit` (integer, optional): số kết quả trả về, từ 1 đến 100, default 1
+  - `page` (integer, optional): trang hiện tại, zero-based, default 0
+  - `order` (string, optional): `ASC`, `DESC`, hoặc `RANDOM`
+  - `species_id` (string, optional): lọc theo species
+  - `breed_id` (string, optional): lọc theo breed
+  - `breed_groups` (string, optional): danh sách breed groups phân cách bởi dấu phẩy
+  - `exclude_breed_groups` (string, optional): danh sách breed groups cần loại trừ
+  - `has_breeds` (boolean, optional): chỉ trả về ảnh có thông tin breed
+  - `include_breeds` (boolean, optional): đính kèm thông tin breed trong response
+  - `include_categories` (boolean, optional): đính kèm thông tin category trong response
+  - `sub_id` (string, optional): lọc theo sub_id
+  - `account_id` (string, optional): lọc ảnh thuộc account cụ thể
+  - `lang` (string, optional): mã ngôn ngữ 2 ký tự, ví dụ `en`
+- Response 200 OK: Array of Image objects.
+
+**B. Get an Image by ID**
+- Method: `GET /images/{id}`
+- Description: Không yêu cầu API Key.
+- Response 200 OK: Một Image object.
+C. Get Image Processing Status
+•        Method: GET /images/{id}/status
+•        Description: Trả về trạng thái xử lý hiện tại của ảnh. Yêu cầu API Key. Poll endpoint này cho đến khi status chuyển sang labelled hoặc unsafe.
+•        Response 200 OK:
+json
+{
+  "id": "string",
+  "status": "string (to_be_reviewed | clean | unsafe | flagged | does_not_contain_species | labelled)",
+  "updated_at": "string (ISO 8601)"
+}
+D. Get Image Labels
+•        Method: GET /images/{id}/labels
+•        Description: Lấy kết quả nhận diện breed mới nhất của ảnh. Yêu cầu API Key.
+•        Response 200 OK: Kết quả breed identification mới nhất.
+E. Delete an Image
+•        Method: DELETE /images/{id}
+•        Description: Yêu cầu API Key.
+•        Response 200 OK: Image deleted successfully.
+F. Request an Image to be Made Public
+•        Method: POST /images/{imageId}/public-requests
+•        Description: Gửi yêu cầu để ảnh được đưa lên public. Yêu cầu API Key.
+•        Request Body:
+json
+{ "request_message": "string (optional, tối đa 500 ký tự)" }
+•        Response 200 OK: ImagePublicRequest object.
+G. Get Public Request Status
+•        Method: GET /images/{imageId}/public-requests/status
+•        Description: Yêu cầu API Key.
+•        Response 200 OK:
+json
+{
+  "id": "string",
+  "image_id": "string",
+  "account_id": "string",
+  "status": "string (pending | approved | denied | cancelled)",
+  "request_message": "string",
+  "admin_message": "string",
+  "actioned_at": "string (ISO 8601)",
+  "created_at": "string (ISO 8601)",
+  "updated_at": "string (ISO 8601)"
+}
+H. Cancel a Public Request
+•        Method: DELETE /images/{imageId}/public-requests
+•        Description: Hủy yêu cầu public đang pending. Yêu cầu API Key.
+•        Response 204 No Content.
+
+2. Breeds Endpoints
+Data Model: Breed Schema
+Response trả về BasicBreedDto cho user thông thường hoặc ProBreedDto cho user có feature flag full_breed_schema. Các fields cơ bản:
+json
+{
+  "id": "string",
+  "name": "string",
+  "species_id": "string",
+  "life_span": "string",
+  "temperament": "string",
+  "origin": "string",
+  "country_codes": "string",
+  "country_code": "string",
+  "description": "string",
+  "history": "string",
+  "alt_names": "string",
+  "wikipedia_url": "string",
+  "bred_for": "string",
+  "breed_group": "string",
+  "reference_image_id": "string",
+  "weight": { "imperial": "string", "metric": "string" },
+  "image": { "id": "string", "url": "string", "width": "integer", "height": "integer" }
+}
+A. List All Breeds
+•        Method: GET /breeds
+•        Description: Yêu cầu API Key. Default trả về tối đa 1000 breeds.
+•        Query Params:
+o        limit (integer, optional): từ 1 đến 1000, default 1000
+o        page (integer, optional): zero-based, default 0
+o        order (string, optional): ASC, DESC, hoặc RANDOM
+o        species_id (string, optional): lọc theo species
+o        breed_groups (string, optional): danh sách breed groups phân cách bởi dấu phẩy
+o        exclude_breed_groups (string, optional): danh sách breed groups cần loại trừ
+o        extinct (boolean, optional): lọc theo trạng thái tuyệt chủng, default false
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Array of Breed objects.
+B. Get a Breed by ID
+•        Method: GET /breeds/{id}
+•        Description: Yêu cầu API Key.
+•        Query Params:
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Một Breed object.
+C. Search Breeds by Name
+•        Method: GET /breeds/search
+•        Description: Yêu cầu API Key.
+•        Query Params:
+o        q (string, optional): từ khóa tìm kiếm, từ 1 đến 30 ký tự
+o        limit (integer, optional): từ 1 đến 100, default 10
+o        page (integer, optional): zero-based, default 0
+o        order (string, optional): ASC, DESC, hoặc RANDOM
+o        species_id (string, optional): lọc theo species
+o        breed_groups (string, optional): danh sách breed groups phân cách bởi dấu phẩy
+o        exclude_breed_groups (string, optional): danh sách breed groups cần loại trừ
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Array of Breed objects khớp với từ khóa.
+D. List Breed Groups
+•        Method: GET /breeds/breed-groups
+•        Description: Lấy danh sách tất cả breed groups hiện có. Yêu cầu API Key.
+•        Query Params:
+o        species_id (string, optional): lọc theo species
+•        Response 200 OK: Array of strings (tên các breed groups).
+
+3. Favourites Endpoints
+Data Model: Favourite Schema
+json
+{
+  "id": "integer",
+  "image_id": "string",
+  "sub_id": "string",
+  "created_at": "string (ISO 8601)",
+  "image": { /* Image Object */ }
+}
+A. List Favourites
+•        Method: GET /favourites
+•        Description: Yêu cầu API Key. Hỗ trợ cả x-api-key và Bearer token.
+•        Query Params:
+o        limit (integer, optional): từ 1 đến 100, default 10
+o        page (integer, optional): zero-based, default 0
+o        order (string, optional): ASC, DESC, hoặc RANDOM
+o        species_id (string, optional): lọc theo species
+o        breed_groups (string, optional): danh sách breed groups phân cách bởi dấu phẩy
+o        exclude_breed_groups (string, optional): danh sách breed groups cần loại trừ
+o        image_id (string, optional): lọc theo image_id
+o        sub_id (string, optional): lọc theo sub_id
+o        account_id (string, optional): lọc theo account
+o        attach_image (boolean, optional): đính kèm thông tin ảnh trong response, default false
+o        is_deleted (boolean, optional): bao gồm cả các favourite đã xóa, default false
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Array of Favourite objects.
+B. Create a Favourite
+•        Method: POST /favourites
+•        Description: Yêu cầu API Key hoặc Bearer token.
+•        Request Body:
+json
+{
+  "image_id": "string (bắt buộc)",
+  "sub_id": "string (optional)",
+  "country_code": "string (optional, ISO Alpha-2)",
+  "client_ip_address": "string (optional)"
+}
+•        Response 200 OK: Favourite object vừa tạo.
+C. Get a Favourite by ID
+•        Method: GET /favourites/{id}
+•        Description: Yêu cầu API Key hoặc Bearer token.
+•        Response 200 OK: Một Favourite object.
+D. Delete a Favourite
+•        Method: DELETE /favourites/{id}
+•        Description: Yêu cầu API Key hoặc Bearer token.
+•        Response 200 OK:
+json
+{ "message": "SUCCESS" }
+
+4. Health Tips Endpoints
+Data Model: Health Tip Schema
+json
+{
+  "id": "string",
+  "title": "string",
+  "description": "string",
+  "species_id": "string",
+  "sources": ["string"]
+}
+A. List Health Tips
+•        Method: GET /health-tips
+•        Description: Lấy danh sách health tips với tùy chọn lọc theo breed hoặc species. Yêu cầu API Key.
+•        Query Params:
+o        limit (integer, optional): từ 1 đến 100
+o        offset (integer, optional): số tips bỏ qua khi paginate, default 0
+o        breed_id (string, optional): lọc theo breed ID
+o        species_id (string, optional): lọc theo species ID
+o        include_sources (boolean, optional): đính kèm sources, default false
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Array of Health Tip objects.
+B. Get a Health Tip by ID
+•        Method: GET /health-tips/{id}
+•        Description: Yêu cầu API Key.
+•        Query Params:
+o        include_sources (boolean, optional): default false
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Một Health Tip object.
+•        Response 404 Not Found: Health Tip không tồn tại.
+
+5. Pets Endpoints
+Data Model: Pet Schema
+json
+{
+  "id": "string",
+  "name": "string",
+  "breed_id": "string",
+  "species_id": "string",
+  "description": "string",
+  "microchip_id": "string",
+  "sub_id": "string",
+  "date_of_birth": "string (ISO date)",
+  "body_condition_score": "integer (WSAVA 1-9)",
+  "body_condition_score_reasons": "string",
+  "body_condition_score_timestamp": "string (ISO 8601)",
+  "estimated_age_months": "integer",
+  "estimated_age_reasons": "string",
+  "estimated_age_timestamp": "string (ISO 8601)",
+  "muscle_wasting_risk": "boolean",
+  "muscle_condition_reasons": "string",
+  "muscle_condition_timestamp": "string (ISO 8601)",
+  "genealogy_result": {},
+  "genealogy_timestamp": "string (ISO 8601)",
+  "images": [ { /* Pet Image Object */ } ],
+  "created_at": "string (ISO 8601)",
+  "updated_at": "string (ISO 8601)"
+}
+Data Model: Pet Image Schema
+json
+{
+  "id": "string",
+  "url": "string",
+  "pet_id": "string",
+  "width": "integer",
+  "height": "integer",
+  "pose": "string (front | side | rear | top)",
+  "pet_age_months": "integer",
+  "age_years": "integer",
+  "age_months": "integer (0-11)",
+  "description": "string",
+  "created_at": "string (ISO 8601)"
+}
+
+A. List Pets
+•        Method: GET /pets
+•        Description: Lấy danh sách pets của tài khoản hiện tại. Yêu cầu API Key.
+•        Query Params:
+o        limit (integer, optional): từ 1 đến 100, default 10
+o        page (integer, optional): zero-based, default 0
+o        order (string, optional): ASC, DESC, hoặc RANDOM, default ASC
+o        species_id (string, optional): lọc theo species
+o        breed_id (string, optional): lọc theo breed
+o        breed_groups (string, optional): danh sách breed groups phân cách bởi dấu phẩy
+o        exclude_breed_groups (string, optional): danh sách breed groups cần loại trừ
+o        sub_id (string, optional): lọc theo sub_id
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Array of Pet objects.
+B. Get a Pet by ID
+•        Method: GET /pets/{petId}
+•        Description: Yêu cầu API Key.
+•        Response 200 OK: Một Pet object.
+C. Update a Pet
+•        Method: PATCH /pets/{petId}
+•        Description: Cập nhật một phần thông tin của pet. Yêu cầu API Key.
+•        Request Body (chỉ gửi các field cần thay đổi):
+json
+{
+  "name": "string",
+  "breed_id": "string",
+  "species_id": "string",
+  "description": "string",
+  "microchip_id": "string",
+  "sub_id": "string",
+  "date_of_birth": "string (ISO date)",
+  "age_years": "integer",
+  "age_months": "integer (0-11)"
+}
+- Response 200 OK: Pet object đã được cập nhật.
+
+**D. Delete a Pet**
+- Method: `DELETE /pets/{petId}`
+- Description: Yêu cầu API Key.
+- Response 200 OK.
+
+E. List Available Portrait Styles
+•        Method: GET /pets/portrait-styles
+•        Description: Lấy danh sách các style có thể dùng khi tạo AI portrait. Yêu cầu API Key.
+•        Response 200 OK:
+json
+[{
+  "id": "string",
+  "name": "string",
+  "description": "string",
+  "category": "string",
+  "popularity_score": "float"
+}]
+F. Generate AI Portrait
+•        Method: POST /pets/{petId}/portrait
+•        Description: Tạo ảnh chân dung AI cho pet dựa trên ảnh đã upload. Yêu cầu API Key.
+•        Request Body:
+json
+{ "style": "string (bắt buộc, ví dụ: studio, pack_leader, birthday_party)" }
+•        Response 200 OK: Pet Image object của portrait vừa tạo.
+I. Generate Body Condition Score
+•        Method: POST /pets/{petId}/body-condition-score
+•        Description: Phân tích Body Condition Score (BCS) theo thang điểm WSAVA 1-9 dựa trên ảnh của pet. Yêu cầu API Key.
+•        Response 200 OK:
+json
+{
+  "score": "integer (1-9)",
+  "reasons": "string",
+  "generated_at": "string (ISO 8601)"
+}
+G. Generate Estimated Age
+•        Method: POST /pets/{petId}/estimated-age
+•        Description: Ước tính tuổi của pet dựa trên ảnh đã upload. Yêu cầu API Key.
+•        Response 200 OK:
+json
+{
+  "age_months": "integer",
+  "reasons": "string",
+  "generated_at": "string (ISO 8601)"
+}
+H. Generate Muscle Condition Score
+•        Method: POST /pets/{petId}/muscle-condition-score
+•        Description: Đánh giá nguy cơ muscle wasting dựa trên ảnh của pet. Yêu cầu API Key.
+•        Response 200 OK:
+json
+{
+  "wasting_risk_flag": "boolean",
+  "reasons": "string",
+  "generated_at": "string (ISO 8601)"
+}
+I. Generate Genealogy Analysis
+•        Method: POST /pets/{petId}/genealogy
+•        Description: Phân tích phả hệ và breed mixture dựa trên toàn bộ ảnh của pet. Yêu cầu API Key.
+•        Response 200 OK: Object chứa kết quả phân tích breed mixture, age, gender predictions và mô tả.
+
+6. Breed Bans Endpoints
+A. List Countries with Breed Legislation
+•        Method: GET /breeds/bans/countries
+•        Description: Lấy danh sách các quốc gia có luật liên quan đến breed. Yêu cầu API Key.
+•        Query Params:
+o        species_id (string, optional): lọc theo species
+o        animal_type (string, optional): dog hoặc cat
+•        Response 200 OK:
+json
+[{
+  "iso_code": "string",
+  "name": "string",
+  "has_national_legislation": "boolean",
+  "legislation_level": "string"
+}]
+B. Get Breed Bans by Country
+•        Method: GET /breeds/bans/country
+•        Description: Lấy toàn bộ thông tin ban/restriction của một quốc gia. Nếu không có luật cấp quốc gia, trả về luật cấp jurisdiction (tiểu bang/thành phố). Yêu cầu API Key.
+•        Query Params:
+o        country (string, bắt buộc): mã quốc gia ISO 3166-1 alpha-2, ví dụ AU
+o        limit (integer, optional): từ 1 đến 100, default 10
+o        page (integer, optional): zero-based, default 0
+o        order (string, optional): ASC, DESC, hoặc RANDOM, default ASC
+o        species_id (string, optional): lọc theo species
+o        legislation_type (string, optional): breed_specific, characteristic_based, behavior_based, hoặc hybrid
+o        approach (string, optional): ban, restriction, permit, hoặc approved_list
+o        jurisdiction (string, optional): lọc theo jurisdiction cụ thể trong quốc gia
+o        breed_groups (string, optional): danh sách breed groups phân cách bởi dấu phẩy
+o        exclude_breed_groups (string, optional): danh sách breed groups cần loại trừ
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Object chứa country, legislation (array), và jurisdictions (array).
+C. Get All Bans for a Specific Breed
+•        Method: GET /breeds/bans/breed/{breedId}
+•        Description: Lấy danh sách tất cả quốc gia và jurisdiction nơi breed này bị banned, restricted, hoặc cần permit. Yêu cầu API Key.
+•        Query Params:
+o        species_id (string, optional): lọc theo species
+•        Response 200 OK:
+json
+[{
+  "country_iso_code": "string",
+  "country_name": "string",
+  "jurisdiction_name": "string",
+  "ban_type": "string",
+  "legislation_name": "string",
+  "conditions": "string"
+}]
+
+7. Categories Endpoints
+Data Model: Category Schema
+json
+{
+  "id": "string",
+  "name": "string",
+  "species_id": "string"
+}
+A. List Categories
+•        Method: GET /categories
+•        Description: Yêu cầu API Key.
+•        Query Params:
+o        limit (integer, optional): từ 1 đến 100, default 10
+o        page (integer, optional): zero-based, default 0
+o        order (string, optional): ASC, DESC, hoặc RANDOM
+o        species_id (string, optional): lọc theo species
+o        breed_groups (string, optional): danh sách breed groups phân cách bởi dấu phẩy
+o        exclude_breed_groups (string, optional): danh sách breed groups cần loại trừ
+o        lang (string, optional): mã ngôn ngữ 2 ký tự
+•        Response 200 OK: Array of Category objects.
+B. Get a Category by ID
+•        Method: GET /categories/{id}
+•        Description: Yêu cầu API Key.
+•        Response 200 OK: Một Category object.
+
+8. Accounts Endpoints
+A. Get Enabled Feature Flags
+•        Method: GET /accounts/features
+•        Description: Lấy danh sách feature flags đang được bật cho tài khoản hiện tại. Yêu cầu API Key.
+•        Response 200 OK: Array of strings (tên các feature flags, ví dụ full_breed_schema).
+B. Get Upload Quota
+•        Method: GET /accounts/quota
+•        Description: Xem số lượng ảnh đã upload và còn lại trong tháng hiện tại. Yêu cầu API Key.
+•        Response 200 OK:
+json
+{
+  "quota": "integer (tổng quota upload mỗi tháng)",
+  "usage": "integer (số ảnh đã upload tháng này)",
+  "remaining": "integer (số ảnh còn được upload)"
+}
+C. Get Account Overview (Admin Only)
+•        Method: GET /accounts/{accountId}/overview
+•        Description: Lấy thống kê tổng quan của một account. Chỉ dành cho Admin. Yêu cầu API Key.
+•        Response 200 OK: Account overview stats.
+
+9. Sub IDs Endpoints
+Data Model: Sub ID Schema
+json
+{
+  "sub_id": "string",
+  "images": "integer",
+  "votes": "integer",
+  "favourites": "integer",
+  "pets": "integer"
+}
+A. List Sub IDs
+•        Method: GET /sub-ids
+•        Description: Lấy danh sách tất cả sub_id đã dùng trong tài khoản kèm theo số liệu hoạt động. Yêu cầu API Key.
+•        Query Params:
+o        limit (integer, optional): default 1000
+o        page (integer, optional): default 0
+o        start_date (string, optional): lọc từ ngày này (ISO 8601)
+o        end_date (string, optional): lọc đến ngày này (ISO 8601)
+•        Response 200 OK: Array of Sub ID objects.
