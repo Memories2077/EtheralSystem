@@ -36,7 +36,7 @@ from config import config as llm_config
 import database
 from shared import create_mcp_server_tool, stream_langgraph_build, extract_create_mcp_tool_call, normalize_request_context
 from metaclaw_client import MetaClawClient
-from mcp_tool_invocation import McpToolInvocationTracker, record_mcp_tool_invocation_event
+from mcp_tool_invocation import McpToolInvocationTracker, record_mcp_tool_invocation_event, record_mcp_tool_outcomes_event
 from mcp_server_filtering import ACTIVE_GENERATED_MCP_STATUSES, filter_active_mcp_server_payload
 from research_metrics import (
     content_hash,
@@ -81,6 +81,29 @@ class ChatRequest(BaseModel):
 
 class McpMetadataRequest(BaseModel):
     url: str
+    traceId: Optional[str] = None
+    experimentId: Optional[str] = None
+    sessionId: Optional[str] = None
+    buildRequestId: Optional[str] = None
+    serverId: Optional[str] = None
+
+class McpToolOutcomeItem(BaseModel):
+    tool_name: str
+    index: int
+    status: str
+    error_code: Optional[str] = None
+    invocation_count: Optional[int] = 0
+    result_count: Optional[int] = 0
+    response_length: Optional[int] = 0
+    response_hash: Optional[str] = None
+    diagnostic: Optional[str] = None
+
+class McpToolOutcomesRequest(BaseModel):
+    mcpUrl: Optional[str] = None
+    outcomes: List[McpToolOutcomeItem]
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    durationMs: Optional[int] = None
     traceId: Optional[str] = None
     experimentId: Optional[str] = None
     sessionId: Optional[str] = None
@@ -473,6 +496,29 @@ async def get_mcp_metadata(request: McpMetadataRequest):
             "errorCode": error_code,
             "detail": error_text,
         }
+
+@app.post("/mcp/tool-outcomes")
+async def record_mcp_tool_outcomes(request: McpToolOutcomesRequest):
+    """Record a validation-run summary for all generated MCP tool outcomes."""
+    if not request.outcomes:
+        raise HTTPException(status_code=400, detail="At least one tool outcome is required.")
+
+    event = await record_mcp_tool_outcomes_event(
+        [item.dict() for item in request.outcomes],
+        request_context={
+            "traceId": request.traceId,
+            "experimentId": request.experimentId,
+            "sessionId": request.sessionId,
+            "buildRequestId": request.buildRequestId,
+            "serverId": request.serverId,
+        },
+        mcp_urls=[request.mcpUrl] if request.mcpUrl else [],
+        provider=request.provider,
+        model=request.model,
+        duration_ms=request.durationMs,
+    )
+    return {"persisted": event is not None, "event": event}
+
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
