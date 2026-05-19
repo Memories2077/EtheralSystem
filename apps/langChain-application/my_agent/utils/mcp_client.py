@@ -45,6 +45,10 @@ class MCPCreateRequest:
     experimentId: Optional[str] = None
     sessionId: Optional[str] = None
     buildRequestId: Optional[str] = None
+    ragEnabled: Optional[str] = None
+    dynamicSkillSelection: Optional[str] = None
+    skillSelectionVariant: Optional[str] = None
+    variantId: Optional[str] = None
 
     def to_payload(self) -> Dict[str, Any]:
         payload = {
@@ -53,7 +57,16 @@ class MCPCreateRequest:
             "email": self.email,
             "rag_context": self.rag_context,
         }
-        for key in ("traceId", "experimentId", "sessionId", "buildRequestId"):
+        for key in (
+            "traceId",
+            "experimentId",
+            "sessionId",
+            "buildRequestId",
+            "ragEnabled",
+            "dynamicSkillSelection",
+            "skillSelectionVariant",
+            "variantId",
+        ):
             value = getattr(self, key)
             if value:
                 payload[key] = value

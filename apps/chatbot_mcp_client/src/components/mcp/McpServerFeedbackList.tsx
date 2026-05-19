@@ -25,6 +25,15 @@ interface ActiveFeedbackComposer {
 
 const MAX_FEEDBACK_COMMENT_LENGTH = 1000;
 
+function flagValue(value: string | boolean | undefined): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === undefined || value === null || value === "") return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
 export function McpServerFeedbackList({ className }: McpServerFeedbackListProps) {
   const [servers, setServers] = useState<McpServerApi[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,6 +285,11 @@ export function McpServerFeedbackList({ className }: McpServerFeedbackListProps)
           const feedbackType = activeFeedback?.type ?? 'like';
           const draft = feedbackDrafts[server.serverId] ?? '';
           const isSubmittingFeedback = feedbackSubmitting.has(server.serverId);
+          const ragEnabled = flagValue(server.ragEnabled);
+          const dynamicSkillSelection = flagValue(server.dynamicSkillSelection);
+          const skillSelectionVariant =
+            server.skillSelectionVariant ||
+            (dynamicSkillSelection === null ? "" : dynamicSkillSelection ? "dynamic" : "static");
           const composerTitle = feedbackType === 'like'
             ? 'What worked well?'
             : 'What went wrong?';
@@ -301,6 +315,19 @@ export function McpServerFeedbackList({ className }: McpServerFeedbackListProps)
 
                   <div className="text-[10px] text-on-surface-variant/70 mb-2">
                     Created: {formatDate(server.createdAt)}
+                  </div>
+
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {(server.variantId || skillSelectionVariant) && (
+                      <span className="rounded-full border border-outline-variant/10 bg-surface-container-lowest/40 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">
+                        {server.variantId || skillSelectionVariant}
+                      </span>
+                    )}
+                    {ragEnabled !== null && (
+                      <span className="rounded-full border border-outline-variant/10 bg-surface-container-lowest/40 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">
+                        RAG {ragEnabled ? 'on' : 'off'}
+                      </span>
+                    )}
                   </div>
 
                   {server.publicUrl && (

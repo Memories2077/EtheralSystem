@@ -37,6 +37,9 @@ export interface BackendHealth {
   configuredFallbacks: string[];
   langgraphApiUrl?: string;
   mcpGenUrl?: string;
+  ragEnabled?: boolean;
+  dynamicSkillSelection?: boolean;
+  skillSelectionVariant?: string;
   detail?: string;
 }
 

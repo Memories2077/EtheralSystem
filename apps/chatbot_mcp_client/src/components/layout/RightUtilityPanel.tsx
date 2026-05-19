@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { McpServerFeedbackList } from '@/components/mcp/McpServerFeedbackList';
+import { RunControls } from "@/components/research/RunControls";
 
 export function RightUtilityPanel() {
   const { isRightPanelOpen, toggleRightPanel, settings, setSettings } = useChatStore();
@@ -159,6 +160,8 @@ export function RightUtilityPanel() {
             </p>
           </div>
         )}
+
+        <RunControls compact />
 
         {/* Provider Selection */}
         <div className="space-y-2">

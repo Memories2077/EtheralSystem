@@ -13,7 +13,7 @@ import type {
   SkillComposition,
   SkillSelectionVariant,
 } from "../skill-intelligence/types.js";
-import { EXPERIMENT_CONFIG, FEATURE_FLAGS } from "../utils/config.ts";
+import { EXPERIMENT_CONFIG } from "../utils/config.ts";
 
 export interface ChatMessage {
   role: "user" | "model" | "assistant" | "system";
@@ -79,16 +79,14 @@ export function detectAuthInSpec(spec: string): boolean {
  * Check if dynamic skill selection is enabled via feature flag.
  */
 function useDynamicSkillSelection(): boolean {
-  return (
-    FEATURE_FLAGS.DYNAMIC_SKILL_SELECTION &&
-    process.env.DYNAMIC_SKILL_SELECTION !== "false"
-  );
+  return process.env.DYNAMIC_SKILL_SELECTION === "true";
 }
 
 function assignSkillSelectionVariant(
   requestKey: string,
 ): SkillSelectionVariant {
-  const configured = EXPERIMENT_CONFIG.skillSelectionVariant;
+  const configured = (process.env.SKILL_SELECTION_VARIANT ||
+    EXPERIMENT_CONFIG.skillSelectionVariant) as SkillSelectionVariant;
   if (["control", "dynamic", "hybrid"].includes(configured)) {
     return configured as SkillSelectionVariant;
   }

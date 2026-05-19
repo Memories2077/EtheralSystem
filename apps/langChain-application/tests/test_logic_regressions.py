@@ -1,7 +1,7 @@
 import json
 import importlib
+import asyncio
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 
@@ -20,8 +20,7 @@ def test_sanitize_api_documentation_preserves_yaml_indentation():
     )
 
 
-@pytest.mark.asyncio
-async def test_create_mcp_server_uses_explicit_rag_context(monkeypatch):
+def test_create_mcp_server_uses_explicit_rag_context(monkeypatch):
     from my_agent.tools import generator_tools
 
     captured = {}
@@ -44,13 +43,27 @@ async def test_create_mcp_server_uses_explicit_rag_context(monkeypatch):
     rag_context = [{"id": "artifact-1", "technical_data": {"base_url": "https://api.example.com"}}]
     monkeypatch.setattr(generator_tools, "create_mcp_server", fake_create_mcp_server)
 
-    result = await generator_tools.create_MCPServer.ainvoke({
+    result = asyncio.run(generator_tools.create_MCPServer.ainvoke({
         "query": ["openapi: 3.0.0\npaths: {}", "user-1", "user@example.com"],
         "rag_context": rag_context,
-    })
+        "research_context": {
+            "trace_id": "trace-123",
+            "experiment_id": "experiment-123",
+            "session_id": "session-123",
+            "build_request_id": "build-123",
+            "rag_enabled": "false",
+            "dynamic_skill_selection": "false",
+            "skill_selection_variant": "static",
+            "variant_id": "static-rag-off",
+        },
+    }))
 
     assert json.loads(result)["serverId"] == "server-123"
     assert captured["payload"].rag_context == rag_context
+    assert captured["payload"].ragEnabled == "false"
+    assert captured["payload"].dynamicSkillSelection == "false"
+    assert captured["payload"].skillSelectionVariant == "static"
+    assert captured["payload"].variantId == "static-rag-off"
 
 
 def test_parse_rag_context_returns_only_lists():
@@ -61,8 +74,70 @@ def test_parse_rag_context_returns_only_lists():
     assert parse_rag_context("not-json") == []
 
 
-@pytest.mark.asyncio
-async def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(monkeypatch):
+def test_examiner_rag_disabled_bypasses_retrieval(monkeypatch):
+    from my_agent.agents.sub_agents import examiner_agent
+
+    async def fail_search(*_args, **_kwargs):
+        raise AssertionError("RAG search should not run when rag_enabled=false")
+
+    monkeypatch.setattr(examiner_agent, "search_mcp_artifacts", fail_search)
+
+    result = asyncio.run(examiner_agent.examiner_agent_node({
+        "messages": [HumanMessage(content="DELEGATE_TO_EXAMINER: API_DOCUMENTATION:\nGET /items")],
+        "next_agent": "examiner",
+        "final_response": "",
+        "history": [],
+        "retry_count": 0,
+        "current_plan": "",
+        "is_complete": False,
+        "raw_api_doc": "openapi: 3.0.0\npaths: {}",
+        "enriched_context": "",
+        "rag_enabled": "false",
+    }))
+
+    assert result["next_agent"] == "generator"
+    assert result["enriched_context"] == "[]"
+    assert "DELEGATE_TO_GENERATOR" in result["messages"][0].content
+
+
+def test_examiner_rag_enabled_preserves_retrieval(monkeypatch):
+    from my_agent.agents.sub_agents import examiner_agent
+    from my_agent.utils import openapi_parser
+
+    captured = {}
+
+    async def fake_search(api_doc, n_results):
+        captured["api_doc"] = api_doc
+        captured["n_results"] = n_results
+        return [{"id": "artifact-1"}]
+
+    async def fake_extract(related_contents, _llm):
+        captured["related_contents"] = related_contents
+        return [{"id": "structured-1"}]
+
+    monkeypatch.setattr(examiner_agent, "search_mcp_artifacts", fake_search)
+    monkeypatch.setattr(openapi_parser, "extract_structured_context", fake_extract)
+
+    result = asyncio.run(examiner_agent.examiner_agent_node({
+        "messages": [HumanMessage(content="DELEGATE_TO_EXAMINER: API_DOCUMENTATION:\nGET /items")],
+        "next_agent": "examiner",
+        "final_response": "",
+        "history": [],
+        "retry_count": 0,
+        "current_plan": "",
+        "is_complete": False,
+        "raw_api_doc": "openapi: 3.0.0\npaths: {}",
+        "enriched_context": "",
+        "rag_enabled": "true",
+    }))
+
+    assert captured["api_doc"] == "openapi: 3.0.0\npaths: {}"
+    assert captured["n_results"] == 3
+    assert captured["related_contents"] == [{"id": "artifact-1"}]
+    assert json.loads(result["enriched_context"]) == [{"id": "structured-1"}]
+
+
+def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(monkeypatch):
     from my_agent.agents.sub_agents import generator_agent
     from my_agent.utils import llm_factory
 
@@ -101,7 +176,7 @@ async def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(mo
     monkeypatch.setattr(generator_agent, "fetch_mcp_files", fake_fetch_mcp_files)
     monkeypatch.setattr(generator_agent, "save_mcp_artifacts", fake_save_mcp_artifacts)
 
-    result = await generator_agent.generator_agent_node({
+    result = asyncio.run(generator_agent.generator_agent_node({
         "messages": [AIMessage(content="DELEGATE_TO_GENERATOR: API_DOCUMENTATION:\nGET /items")],
         "next_agent": "generator",
         "final_response": "",
@@ -111,7 +186,7 @@ async def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(mo
         "is_complete": False,
         "raw_api_doc": "openapi: 3.0.0\npaths: {}",
         "enriched_context": "[]",
-    })
+    }))
 
     output = json.loads(result["final_response"])
     assert output["serverId"] == "real-server-123"
@@ -134,8 +209,7 @@ def test_tool_repair_preserves_structured_generator_payload(monkeypatch):
     assert graph._needs_task_repair("process the provided specification") is True
 
 
-@pytest.mark.asyncio
-async def test_supervisor_final_preserves_successful_generator_json(monkeypatch):
+def test_supervisor_final_preserves_successful_generator_json(monkeypatch):
     graph = import_graph_with_dummy_llm(monkeypatch)
     final_json = json.dumps({
         "status": "running",
@@ -144,7 +218,7 @@ async def test_supervisor_final_preserves_successful_generator_json(monkeypatch)
         "serverCreated": True,
     })
 
-    result = await graph.supervisor_final_node({
+    result = asyncio.run(graph.supervisor_final_node({
         "messages": [AIMessage(content=final_json)],
         "next_agent": "supervisor_final",
         "final_response": final_json,
@@ -154,15 +228,14 @@ async def test_supervisor_final_preserves_successful_generator_json(monkeypatch)
         "is_complete": False,
         "raw_api_doc": "openapi: 3.0.0",
         "enriched_context": "[]",
-    })
+    }))
 
     assert result["next_agent"] == "end"
     assert result["final_response"] == final_json
     assert result["is_complete"] is True
 
 
-@pytest.mark.asyncio
-async def test_supervisor_routes_clear_mcp_creation_request_when_llm_omits_tool_call(monkeypatch):
+def test_supervisor_routes_clear_mcp_creation_request_when_llm_omits_tool_call(monkeypatch):
     graph = import_graph_with_dummy_llm(monkeypatch)
 
     class NoToolCallLLM:
@@ -185,7 +258,7 @@ Query Parameters:
 Response 200 OK: paginated JSON results.
 """
 
-    result = await graph.supervisor_node({
+    result = asyncio.run(graph.supervisor_node({
         "messages": [HumanMessage(content=prompt)],
         "next_agent": "",
         "final_response": "",
@@ -195,14 +268,13 @@ Response 200 OK: paginated JSON results.
         "is_complete": False,
         "raw_api_doc": "",
         "enriched_context": "",
-    })
+    }))
 
     assert result["next_agent"] == "tools"
     assert result["messages"][0].tool_calls[0]["name"] == "delegate_to_examiner_agent"
 
 
-@pytest.mark.asyncio
-async def test_supervisor_routes_metaclaw_api_doc_payload_when_llm_omits_tool_call(monkeypatch):
+def test_supervisor_routes_metaclaw_api_doc_payload_when_llm_omits_tool_call(monkeypatch):
     graph = import_graph_with_dummy_llm(monkeypatch)
 
     class NoToolCallLLM:
@@ -228,7 +300,7 @@ Query Parameters:
 Response 200 OK: Pagination Info object where results is an array of Character objects.
 """
 
-    result = await graph.supervisor_node({
+    result = asyncio.run(graph.supervisor_node({
         "messages": [HumanMessage(content=prompt)],
         "next_agent": "",
         "final_response": "",
@@ -238,7 +310,7 @@ Response 200 OK: Pagination Info object where results is an array of Character o
         "is_complete": False,
         "raw_api_doc": "",
         "enriched_context": "",
-    })
+    }))
 
     assert result["next_agent"] == "tools"
     assert result["messages"][0].tool_calls[0]["name"] == "delegate_to_examiner_agent"

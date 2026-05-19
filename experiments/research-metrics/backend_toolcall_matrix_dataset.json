@@ -1,0 +1,84 @@
+[
+  {
+    "id": "jsonplaceholder-input-doc",
+    "apiType": "public_crud_input_doc",
+    "title": "JSONPlaceholder input API document",
+    "baseUrl": "https://jsonplaceholder.typicode.com",
+    "inputPath": "input/jsonplaceholder.txt",
+    "prompt": "Create an MCP Server from the provided JSONPlaceholder API documentation. Preserve all documented request and response shapes. JSONPlaceholder write operations are fake test operations and do not persist data.",
+    "probes": [
+      {
+        "id": "create-post",
+        "operation": "POST /posts",
+        "match": ["create-post", "create post", "add-post", "add post", "post /posts"],
+        "prompt": "Use the active MCP tool named \"{toolName}\" to create a fake JSONPlaceholder post with title=\"benchmark\", body=\"tool call\", and userId=1. Return the created id or title."
+      },
+      {
+        "id": "list-posts",
+        "operation": "GET /posts",
+        "match": ["get-all-posts", "list-posts", "list posts", "all posts", "get posts"],
+        "prompt": "Use the active MCP tool named \"{toolName}\" to list JSONPlaceholder posts. If arguments are needed, use userId=1 or a limit of 3. Return a compact answer with at least one post id or title."
+      },
+      {
+        "id": "post-comments",
+        "operation": "GET /posts/{id}/comments or GET /comments",
+        "match": ["post-comments", "comments-by-post", "get-comments", "list-comments", "comments"],
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch comments for JSONPlaceholder postId=1 or post id 1. Return a compact answer with at least one email or comment id."
+      },
+      {
+        "id": "get-user",
+        "operation": "GET /users/{id}",
+        "match": ["get-user", "user-by-id", "users"],
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch JSONPlaceholder user id 1. Return the user's name or username."
+      }
+    ],
+    "skipRules": [
+      {
+        "match": ["delete", "remove", "patch", "put"],
+        "errorCode": "unsafe_mutation",
+        "diagnostic": "Mutation outside the safe fake POST subset is skipped."
+      }
+    ]
+  },
+  {
+    "id": "reddit-input-doc",
+    "apiType": "oauth_auth_input_doc",
+    "title": "Reddit input API document with OAuth password flow",
+    "baseUrl": "https://oauth.reddit.com",
+    "inputPath": "input/reddit.txt",
+    "authInfoPath": "input/reddit_auth_information.txt",
+    "prompt": "Create an MCP Server from the provided Reddit API documentation and auth call example. All Reddit credentials and bearer tokens must be user-provided tool arguments. Do not hard-code or load credentials from environment variables.",
+    "probes": [],
+    "skipRules": [
+      {
+        "match": ["reddit", "access-token", "access token", "oauth", "bearer", "credential", "client", "secret", "password", "username", "karma", "prefs", "trophies", "announcement", "me"],
+        "errorCode": "auth_required_credentials_missing",
+        "diagnostic": "Reddit tools require user-provided OAuth credentials or bearer tokens; benchmark input only contains auth format, not live credentials."
+      }
+    ]
+  },
+  {
+    "id": "thedogapi-input-doc",
+    "apiType": "api_key_media_input_doc",
+    "title": "TheDogAPI input API document with API-key sections",
+    "baseUrl": "https://api.thedogapi.com/v1",
+    "inputPath": "input/thedogapi.txt",
+    "authInfoPath": "input/thedogapi_auth_information.txt",
+    "prompt": "Create an MCP Server from the provided TheDogAPI documentation and API-key information. Preserve documented request and response shapes. API keys must be user-provided tool arguments; do not hard-code or load credentials from environment variables.",
+    "probes": [
+      {
+        "id": "search-images",
+        "operation": "GET /images/search",
+        "match": ["images-search", "search-images", "search images", "image search"],
+        "prompt": "Use the active MCP tool named \"{toolName}\" to search TheDogAPI images with limit=1 and include_breeds=true or has_breeds=true if supported. Return the image id or URL."
+      }
+    ],
+    "skipRules": [
+      {
+        "match": ["status", "label", "delete", "public-request", "public request", "breed", "favourite", "favorite", "health", "pet", "ban", "category", "account", "sub-id", "sub id", "quota", "upload", "vote", "api-key", "x-api-key", "bearer", "patch", "post", "put"],
+        "errorCode": "auth_required_or_unsafe",
+        "diagnostic": "TheDogAPI API-key-only, account-specific, mutation, or non-public tools are skipped unless live credentials are provided."
+      }
+    ]
+  }
+]

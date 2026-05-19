@@ -6,6 +6,10 @@ export interface ResearchCorrelationContext {
   sessionId: string;
   buildRequestId: string;
   serverId?: string;
+  ragEnabled?: boolean;
+  dynamicSkillSelection?: boolean;
+  skillSelectionVariant?: "static" | "dynamic";
+  variantId?: string;
 }
 
 export interface MetadataRequestPayload {
@@ -15,6 +19,19 @@ export interface MetadataRequestPayload {
   sessionId?: string;
   buildRequestId?: string;
   serverId?: string;
+  ragEnabled?: boolean;
+  dynamicSkillSelection?: boolean;
+  skillSelectionVariant?: "static" | "dynamic";
+  variantId?: string;
+}
+
+export type SkillSelectionMode = "static" | "dynamic";
+
+export interface DashboardRunVariant {
+  ragEnabled: boolean;
+  dynamicSkillSelection: boolean;
+  skillSelectionVariant: "static" | "dynamic";
+  variantId: string;
 }
 
 export function resolveResearchExperimentId(): string {
@@ -43,6 +60,41 @@ export function buildChatResearchContext({
   };
 }
 
+export function buildDashboardRunVariant({
+  ragEnabled,
+  skillSelectionMode,
+}: {
+  ragEnabled: boolean;
+  skillSelectionMode: SkillSelectionMode;
+}): DashboardRunVariant {
+  const dynamicSkillSelection = skillSelectionMode === "dynamic";
+  const skillSelectionVariant = dynamicSkillSelection ? "dynamic" : "static";
+  return {
+    ragEnabled: Boolean(ragEnabled),
+    dynamicSkillSelection,
+    skillSelectionVariant,
+    variantId: `${skillSelectionVariant}-rag-${ragEnabled ? "on" : "off"}`,
+  };
+}
+
+export function buildChatRunRequestPayload({
+  context,
+  ragEnabled,
+  skillSelectionMode,
+}: {
+  context: ResearchCorrelationContext;
+  ragEnabled: boolean;
+  skillSelectionMode: SkillSelectionMode;
+}) {
+  return {
+    sessionId: context.sessionId,
+    buildRequestId: context.buildRequestId,
+    traceId: context.traceId,
+    experimentId: context.experimentId,
+    ...buildDashboardRunVariant({ ragEnabled, skillSelectionMode }),
+  };
+}
+
 export function buildMcpMetadataRequestPayload({
   url,
   context,
@@ -59,5 +111,9 @@ export function buildMcpMetadataRequestPayload({
     sessionId: context?.sessionId,
     buildRequestId: context?.buildRequestId,
     serverId: serverId || context?.serverId,
+    ragEnabled: context?.ragEnabled,
+    dynamicSkillSelection: context?.dynamicSkillSelection,
+    skillSelectionVariant: context?.skillSelectionVariant,
+    variantId: context?.variantId,
   };
 }

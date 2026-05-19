@@ -59,4 +59,23 @@ paths:
     expect(result.messages[1].content).toContain("NOW GENERATE FOR THESE API ENDPOINTS");
     expect(result.messages[1].content).toContain("NO authentication");
   });
+
+  it("keeps static dashboard variants on the static prompt path", async () => {
+    vi.resetModules();
+    process.env.DYNAMIC_SKILL_SELECTION = "false";
+    process.env.SKILL_SELECTION_VARIANT = "static";
+    SkillSelectionAgent.resetInstance();
+    SkillRegistry.resetInstance();
+
+    const { buildPromptWithExamples } = await import("./prompt.js");
+    const result = await buildPromptWithExamples(
+      "openapi: 3.0.3\ninfo:\n  title: Static API\n  version: 1.0.0\npaths: {}\n",
+      "REF",
+      "IN",
+      "OUT",
+    );
+
+    expect(result.composition).toBeUndefined();
+    expect(result.messages[0].content).toContain("OpenAPI Schema to Zod");
+  });
 });

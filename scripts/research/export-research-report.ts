@@ -13,14 +13,24 @@ type ResearchEvent = JsonRecord & {
   build_request_id?: string;
   server_id?: string;
   experiment_id?: string;
+  provider?: string;
+  model?: string;
+  rag_enabled?: string;
+  dynamic_skill_selection?: string;
+  skill_selection_variant?: string;
+  variant_id?: string;
   metrics?: JsonRecord;
 };
 
 type BenchmarkRun = JsonRecord & {
   type?: string;
+  benchmarkType?: string;
   experimentId?: string;
+  caseId?: string;
   itemId?: string;
   apiType?: string;
+  variantId?: string;
+  skillSelectionMode?: string;
   mode?: string;
   repeatIndex?: number;
   ok?: boolean;
@@ -33,6 +43,14 @@ type BenchmarkRun = JsonRecord & {
   dynamicSkillSelection?: string;
   ragEnabled?: string;
   metaclawEnabled?: string;
+  totalToolCount?: number | string;
+  attemptedToolCount?: number | string;
+  successToolCount?: number | string;
+  failedToolCount?: number | string;
+  skippedToolCount?: number | string;
+  toolCallPassRate?: number | string | null;
+  skippedCoverage?: number | string | null;
+  estimatedUsage?: JsonRecord;
 };
 
 type CsvRow = Record<string, unknown>;
@@ -45,6 +63,11 @@ function arg(name: string, fallback = ""): string {
 
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function resolveRepoPath(raw: string): string {
+  if (raw.startsWith("/repo/")) return path.resolve(raw.slice("/repo/".length));
+  return path.resolve(raw);
 }
 
 function csvEscape(value: unknown): string {
@@ -140,6 +163,124 @@ function rate(part: number, total: number): number | null {
   return Number((part / total).toFixed(4));
 }
 
+function numeric(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && Number.isFinite(Number(value))) return Number(value);
+  return 0;
+}
+
+function nestedNumber(row: JsonRecord | undefined, key: string): number {
+  return numeric(row?.[key]);
+}
+
+function textValue(...values: unknown[]): string {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function eventMetricText(event: ResearchEvent | undefined, key: string): string {
+  if (!event) return "";
+  return textValue(event[key], event.metrics?.[key]);
+}
+
+function summarizeEstimatedUsage(events: ResearchEvent[]): JsonRecord {
+  const metrics = events.map((event) => event.metrics || {});
+  const sum = (keys: string[]) => metrics.reduce((total, item) => {
+    for (const key of keys) {
+      const value = item[key];
+      if (typeof value === "number" && Number.isFinite(value)) return total + value;
+      if (typeof value === "string" && Number.isFinite(Number(value))) return total + Number(value);
+    }
+    return total;
+  }, 0);
+  return {
+    estimatedPromptTokens: sum(["prompt_token_estimate", "prompt_tokens", "estimated_prompt_tokens"]),
+    estimatedCompletionTokens: sum(["completion_token_estimate", "completion_tokens", "estimated_completion_tokens"]),
+    llmCallCount: sum(["llm_calls", "llm_call_count"]),
+    selectedSkillCount: sum(["selected_skill_count", "skills_selected_count"]),
+    selectedSkillTokens: sum(["skill_total_tokens", "selected_skill_tokens", "tokenCost"]),
+    estimatedCostUsd: sum(["estimated_cost_usd", "estimatedCostUsd", "cost_usd"]),
+  };
+}
+
+function outcomeCounts(event: ResearchEvent | undefined): JsonRecord {
+  const metrics = event?.metrics || {};
+  const outcomes = Array.isArray(metrics.mcp_tool_outcomes) ? metrics.mcp_tool_outcomes as JsonRecord[] : [];
+  const total = numeric(metrics.total_tool_count) || numeric(metrics.totalToolCount) || outcomes.length;
+  const success = numeric(metrics.success_tool_count) || numeric(metrics.successToolCount) || outcomes.filter((item) => item.status === "success").length;
+  const failed = numeric(metrics.failed_tool_count) || numeric(metrics.failedToolCount) || outcomes.filter((item) => item.status === "failed").length;
+  const skipped = numeric(metrics.skipped_tool_count) || numeric(metrics.skippedToolCount) || outcomes.filter((item) => item.status === "skipped").length;
+  const attempted = numeric(metrics.attempted_tool_count) || numeric(metrics.attemptedToolCount) || success + failed;
+  return {
+    totalToolCount: total,
+    attemptedToolCount: attempted,
+    successToolCount: success,
+    failedToolCount: failed,
+    skippedToolCount: skipped,
+    toolCallPassRate: rate(success, attempted),
+    skippedCoverage: rate(skipped, total),
+    toolValidationStatus: event ? (attempted > 0 ? "attempted" : skipped > 0 ? "skipped_only" : "not_run") : "unknown",
+  };
+}
+
+function buildDashboardRunRows(events: ResearchEvent[], knownBenchmarkBuildIds: Set<string>): BenchmarkRun[] {
+  const buildEvents = events.filter((event) => {
+    if (event.event_name !== "mcp_create_completed") return false;
+    const buildRequestId = String(event.build_request_id || "").trim();
+    return !buildRequestId || !knownBenchmarkBuildIds.has(buildRequestId);
+  });
+  const eventsByBuild = groupBy(events, (event) => event.build_request_id || event.server_id || "unknown");
+  return buildEvents.map((event): BenchmarkRun => {
+    const buildRequestId = event.build_request_id || event.server_id || "unknown";
+    const group = eventsByBuild.get(buildRequestId) || [event];
+    const metadataEvent = group.find((item) => item.event_name === "mcp_metadata_checked");
+    const outcomeEvent = group.find((item) => item.event_name === "mcp_tool_outcomes_completed");
+    const providerEvent = group.find((item) => item.provider || item.model);
+    const dynamicSkillSelection = eventMetricText(event, "dynamic_skill_selection");
+    const ragEnabled = eventMetricText(event, "rag_enabled") || "true";
+    const selectionVariant =
+      eventMetricText(event, "skill_selection_variant") ||
+      (dynamicSkillSelection === "true" ? "dynamic" : "static");
+    const variantId =
+      eventMetricText(event, "variant_id") ||
+      `${selectionVariant}-rag-${ragEnabled === "false" ? "off" : "on"}`;
+    const metadataToolCount = numeric(metadataEvent?.metrics?.mcp_tool_count);
+    return {
+      type: "benchmark_result",
+      benchmarkType: "dashboard_manual_run",
+      source: "dashboard",
+      mode: "dashboard",
+      itemId: buildRequestId,
+      caseId: "dashboard-manual-run",
+      apiType: "dashboard_manual",
+      variantId,
+      selectionVariant,
+      skillSelectionMode: selectionVariant,
+      dynamicSkillSelection,
+      ragEnabled,
+      provider: textValue(event.provider, providerEvent?.provider),
+      model: textValue(event.model, providerEvent?.model),
+      traceId: event.trace_id || "",
+      experimentId: event.experiment_id || "",
+      sessionId: event.session_id || "",
+      buildRequestId,
+      serverId: event.server_id || "",
+      ok: event.status === "success",
+      buildStatus: event.status || "unknown",
+      durationMs: event.duration_ms || event.metrics?.build_total_latency_ms || "",
+      buildDurationMs: event.duration_ms || event.metrics?.build_total_latency_ms || "",
+      runtimeMetadataChecked: Boolean(metadataEvent),
+      runtimeMetadataOk: metadataEvent?.status === "success",
+      runtimeToolCount: metadataToolCount || "",
+      ...outcomeCounts(outcomeEvent),
+      estimatedUsage: summarizeEstimatedUsage(group),
+    };
+  });
+}
+
 function summarizeBenchmarkGroups(
   runs: BenchmarkRun[],
   groupName: string,
@@ -175,6 +316,51 @@ function summarizeModeComparison(runs: BenchmarkRun[]): CsvRow[] {
     const metaclaw = run.metaclawEnabled === "true" ? "metaclaw" : "standard";
     return `${run.mode || "unknown"}:${selection}:${rag}:${metaclaw}`;
   });
+}
+
+function summarizeToolcallMatrixGroups(
+  runs: BenchmarkRun[],
+  groupName: string,
+  keyFn: (run: BenchmarkRun) => string,
+): CsvRow[] {
+  const rows: CsvRow[] = [];
+  for (const [key, group] of groupBy(runs, keyFn)) {
+    const durations = group.map((run) => Number(run.durationMs)).filter((value) => Number.isFinite(value));
+    const totalTools = group.reduce((sum, run) => sum + numeric(run.totalToolCount), 0);
+    const attemptedTools = group.reduce((sum, run) => sum + numeric(run.attemptedToolCount), 0);
+    const successfulTools = group.reduce((sum, run) => sum + numeric(run.successToolCount), 0);
+    const skippedTools = group.reduce((sum, run) => sum + numeric(run.skippedToolCount), 0);
+    const estimatedPromptTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedPromptTokens"), 0);
+    const estimatedCompletionTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedCompletionTokens"), 0);
+    const llmCallCount = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "llmCallCount"), 0);
+    const selectedSkillTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "selectedSkillTokens"), 0);
+    const estimatedCostUsd = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedCostUsd"), 0);
+    const unknownToolValidation = group.filter((run) => !run.toolValidationStatus || run.toolValidationStatus === "unknown" || run.toolValidationStatus === "not_run").length;
+    const skippedOnlyValidation = group.filter((run) => run.toolValidationStatus === "skipped_only").length;
+    const attemptedValidation = group.filter((run) => numeric(run.attemptedToolCount) > 0).length;
+    rows.push({
+      [groupName]: key,
+      count: group.length,
+      build_success_rate: rate(group.filter((run) => run.ok === true).length, group.length),
+      metadata_readiness_rate: rate(group.filter((run) => run.runtimeMetadataOk === true).length, group.length),
+      tool_call_pass_rate: rate(successfulTools, attemptedTools),
+      skipped_coverage: rate(skippedTools, totalTools),
+      attempted_tool_count: attemptedTools,
+      successful_tool_count: successfulTools,
+      skipped_tool_count: skippedTools,
+      attempted_validation_count: attemptedValidation,
+      skipped_only_validation_count: skippedOnlyValidation,
+      unknown_tool_validation_count: unknownToolValidation,
+      p50_ms: percentile(durations, 50),
+      p95_ms: percentile(durations, 95),
+      estimated_prompt_tokens: estimatedPromptTokens,
+      estimated_completion_tokens: estimatedCompletionTokens,
+      llm_call_count: llmCallCount,
+      selected_skill_tokens: selectedSkillTokens,
+      estimated_cost_usd: estimatedCostUsd,
+    });
+  }
+  return rows.sort((a, b) => String(a[groupName]).localeCompare(String(b[groupName])));
 }
 
 function summarizeRuntimeReliability(events: ResearchEvent[], runs: BenchmarkRun[]): CsvRow[] {
@@ -235,14 +421,25 @@ function markdownTable(rows: CsvRow[], headers: string[]): string {
 
 async function main() {
   const experimentId = arg("experiment-id", "");
-  const eventsPath = path.resolve(arg("events", process.env.RESEARCH_EVENTS_JSONL_PATH || "/tmp/etheral-research-events.jsonl"));
-  const runsPath = path.resolve(arg("runs", "experiments/research-metrics/runs.jsonl"));
+  const eventsPath = resolveRepoPath(arg("events", process.env.RESEARCH_EVENTS_JSONL_PATH || "/tmp/etheral-research-events.jsonl"));
+  const runsPath = resolveRepoPath(arg("runs", "experiments/research-metrics/runs.jsonl"));
+  const matrixRunsPath = resolveRepoPath(arg("matrix-runs", "experiments/research-metrics/backend-toolcall-matrix-runs.jsonl"));
   const outputDir = path.resolve(arg("output-dir", `experiments/research-metrics/reports/${experimentId || "all"}`));
   ensureDir(outputDir);
 
   const allEvents = readJsonl<ResearchEvent>(eventsPath);
   const events = experimentId ? allEvents.filter((event) => event.experiment_id === experimentId) : allEvents;
-  const runs = readJsonl<BenchmarkRun>(runsPath).filter((row) => row.type === "benchmark_result" && (!experimentId || row.experimentId === experimentId));
+  const rawRuns = [
+    ...readJsonl<BenchmarkRun>(runsPath),
+    ...(matrixRunsPath === runsPath ? [] : readJsonl<BenchmarkRun>(matrixRunsPath)),
+  ];
+  const runs = rawRuns.filter((row) => row.type === "benchmark_result" && (!experimentId || row.experimentId === experimentId));
+  const knownBenchmarkBuildIds = new Set(runs.map((row) => String(row.buildRequestId || "").trim()).filter(Boolean));
+  const dashboardRuns = buildDashboardRunRows(events, knownBenchmarkBuildIds);
+  const matrixRuns = [
+    ...runs.filter((row) => row.benchmarkType === "backend_toolcall_matrix"),
+    ...dashboardRuns,
+  ];
 
   const stageRows = summarizeStages(events);
   const buildRows = summarizeBuilds(events);
@@ -251,10 +448,22 @@ async function main() {
   const apiTypeRows = summarizeBenchmarkGroups(runs, "apiType", (run) => run.apiType || "unknown");
   const runtimeRows = summarizeRuntimeReliability(events, runs);
   const feedbackRows = summarizeFeedback(events);
+  const toolcallVariantRows = summarizeToolcallMatrixGroups(matrixRuns, "variantId", (run) => run.variantId || "unknown");
+  const toolcallCaseRows = summarizeToolcallMatrixGroups(matrixRuns, "caseId", (run) => run.caseId || run.itemId || "unknown");
+  const toolcallApiTypeRows = summarizeToolcallMatrixGroups(matrixRuns, "apiType", (run) => run.apiType || "unknown");
+  const toolcallSkillRows = summarizeToolcallMatrixGroups(matrixRuns, "skillSelectionMode", (run) => run.skillSelectionMode || run.selectionVariant || "unknown");
+  const toolcallRagRows = summarizeToolcallMatrixGroups(matrixRuns, "ragEnabled", (run) => run.ragEnabled === "true" ? "rag_on" : "rag_off");
   writeCsv(path.join(outputDir, "events.csv"), events);
   writeCsv(path.join(outputDir, "stage_summary.csv"), stageRows);
   writeCsv(path.join(outputDir, "build_summary.csv"), buildRows);
   writeCsv(path.join(outputDir, "benchmark_runs.csv"), runs);
+  writeCsv(path.join(outputDir, "dashboard_runs.csv"), dashboardRuns);
+  writeCsv(path.join(outputDir, "toolcall_matrix_runs.csv"), matrixRuns);
+  writeCsv(path.join(outputDir, "toolcall_by_variant.csv"), toolcallVariantRows);
+  writeCsv(path.join(outputDir, "toolcall_by_case.csv"), toolcallCaseRows);
+  writeCsv(path.join(outputDir, "toolcall_by_api_type.csv"), toolcallApiTypeRows);
+  writeCsv(path.join(outputDir, "toolcall_by_skill_selection.csv"), toolcallSkillRows);
+  writeCsv(path.join(outputDir, "toolcall_by_rag.csv"), toolcallRagRows);
   writeCsv(path.join(outputDir, "mode_comparison.csv"), modeRows);
   writeCsv(path.join(outputDir, "rag_comparison.csv"), ragRows);
   writeCsv(path.join(outputDir, "runtime_reliability.csv"), runtimeRows);
@@ -267,8 +476,21 @@ async function main() {
     `Experiment: ${experimentId || "all"}`,
     `Generated: ${new Date().toISOString()}`,
     ``,
+    `## Backend Tool-Call Matrix By Variant`,
+    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    `## Backend Tool-Call Matrix By Case`,
+    markdownTable(toolcallCaseRows, ["caseId", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    `## Backend Tool-Call Matrix By API Type`,
+    markdownTable(toolcallApiTypeRows, ["apiType", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    `## Backend Tool-Call Matrix By Skill Selection`,
+    markdownTable(toolcallSkillRows, ["skillSelectionMode", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    `## Backend Tool-Call Matrix By RAG`,
+    markdownTable(toolcallRagRows, ["ragEnabled", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    ``,
     `## Benchmark Runs`,
     markdownTable(runs, ["itemId", "apiType", "mode", "repeatIndex", "ok", "serverId", "durationMs"]),
+    `## Dashboard Runs`,
+    markdownTable(dashboardRuns, ["buildRequestId", "variantId", "ok", "runtimeMetadataOk", "toolValidationStatus", "toolCallPassRate", "durationMs", "serverId"]),
     `## Static vs Dynamic / Mode Comparison`,
     markdownTable(modeRows, ["mode_key", "count", "success_rate", "runtime_success_rate", "p50_ms", "p95_ms", "median_tool_count"]),
     `## RAG Comparison`,

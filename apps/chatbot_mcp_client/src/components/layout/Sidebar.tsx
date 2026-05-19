@@ -8,6 +8,7 @@ import { useChatStore } from "@/lib/hooks/use-chat-store";
 
 const navItems = [
   { label: "Search", href: "#", icon: "search" },
+  { label: "Dashboard", href: "/dashboard", icon: "monitoring" },
   { label: "Chat History", href: "/history", icon: "history" },
   { label: "Projects", href: "#", icon: "folder_open" },
 ];

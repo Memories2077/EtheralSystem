@@ -26,6 +26,10 @@ export interface McpServerApi {
   experimentId?: string;
   sessionId?: string;
   buildRequestId?: string;
+  ragEnabled?: string | boolean;
+  dynamicSkillSelection?: string | boolean;
+  skillSelectionVariant?: string;
+  variantId?: string;
   buildLogs?: string[];
   inputContent?: string;
   action?: string;

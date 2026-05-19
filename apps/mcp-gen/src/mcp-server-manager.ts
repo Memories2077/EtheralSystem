@@ -82,6 +82,60 @@ const feedbackRateLimiter = new SimpleRateLimiter(
   Number(process.env.FEEDBACK_RATE_LIMIT_MAX) || 100,
 );
 
+function normalizeBoolFlag(value: unknown, fallback = ""): string {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return "true";
+  if (["0", "false", "no", "off"].includes(normalized)) return "false";
+  return fallback;
+}
+
+function normalizeSkillSelectionVariant(value: unknown, dynamicSkillSelection: string): string {
+  if (dynamicSkillSelection === "true") return "dynamic";
+  if (dynamicSkillSelection === "false") return "static";
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "dynamic" || normalized === "hybrid") return "dynamic";
+  if (normalized === "static" || normalized === "control") return "static";
+  return dynamicSkillSelection === "true" ? "dynamic" : "static";
+}
+
+function buildVariantId(skillSelectionVariant: string, ragEnabled: string): string {
+  return `${skillSelectionVariant}-rag-${ragEnabled === "true" ? "on" : "off"}`;
+}
+
+async function withTemporaryGenerationFlags<T>(
+  flags: {
+    dynamicSkillSelection?: string;
+    skillSelectionVariant?: string;
+  },
+  callback: () => Promise<T>,
+): Promise<T> {
+  const previousDynamic = process.env.DYNAMIC_SKILL_SELECTION;
+  const previousVariant = process.env.SKILL_SELECTION_VARIANT;
+  if (flags.dynamicSkillSelection) {
+    process.env.DYNAMIC_SKILL_SELECTION = flags.dynamicSkillSelection;
+  }
+  if (flags.skillSelectionVariant) {
+    process.env.SKILL_SELECTION_VARIANT = flags.skillSelectionVariant;
+  }
+
+  try {
+    return await callback();
+  } finally {
+    if (previousDynamic === undefined) {
+      delete process.env.DYNAMIC_SKILL_SELECTION;
+    } else {
+      process.env.DYNAMIC_SKILL_SELECTION = previousDynamic;
+    }
+    if (previousVariant === undefined) {
+      delete process.env.SKILL_SELECTION_VARIANT;
+    } else {
+      process.env.SKILL_SELECTION_VARIANT = previousVariant;
+    }
+  }
+}
+
 import {
   MessageQueueService,
   BuildMessage,
@@ -121,6 +175,10 @@ interface ServerLogEntry {
   experimentId?: string;
   workspaceId?: string;
   memoryScope?: string;
+  ragEnabled?: string;
+  dynamicSkillSelection?: string;
+  skillSelectionVariant?: string;
+  variantId?: string;
   // Feedback fields
   likeCount: number;
   dislikeCount: number;
@@ -924,6 +982,13 @@ export class MCPServerManager {
       claudeConfig: this.generateClaudeConfig(server.serverId, server),
       status: server.status,
       buildRequestId: server.buildRequestId,
+      traceId: server.traceId,
+      experimentId: server.experimentId,
+      sessionId: server.sessionId,
+      ragEnabled: server.ragEnabled,
+      dynamicSkillSelection: server.dynamicSkillSelection,
+      skillSelectionVariant: server.skillSelectionVariant,
+      variantId: server.variantId,
       message:
         message ||
         (server.status === "running"
@@ -1076,6 +1141,10 @@ export class MCPServerManager {
           sessionId,
           workspaceId,
           memoryScope,
+          ragEnabled,
+          dynamicSkillSelection,
+          skillSelectionVariant,
+          variantId,
         } =
           req.body;
 
@@ -1163,6 +1232,21 @@ export class MCPServerManager {
 
         // Resolve the public proxy URL for generated MCP clients.
         const baseUrl = process.env.PUBLIC_URL || "http://localhost:8081";
+        const effectiveRagEnabled = normalizeBoolFlag(
+          ragEnabled,
+          normalizeBoolFlag(process.env.RAG_ENABLED, "true"),
+        );
+        const effectiveDynamicSkillSelection = normalizeBoolFlag(
+          dynamicSkillSelection,
+          normalizeBoolFlag(process.env.DYNAMIC_SKILL_SELECTION, "false"),
+        );
+        const effectiveSkillSelectionVariant = normalizeSkillSelectionVariant(
+          skillSelectionVariant || process.env.SKILL_SELECTION_VARIANT,
+          effectiveDynamicSkillSelection,
+        );
+        const effectiveVariantId =
+          String(variantId || "").trim() ||
+          buildVariantId(effectiveSkillSelectionVariant, effectiveRagEnabled);
 
         const serverConfig: ServerLogEntry = {
           serverId: serverId,
@@ -1186,6 +1270,10 @@ export class MCPServerManager {
           sessionId: sessionId ? String(sessionId) : undefined,
           workspaceId: workspaceId ? String(workspaceId) : undefined,
           memoryScope: memoryScope ? String(memoryScope) : undefined,
+          ragEnabled: effectiveRagEnabled,
+          dynamicSkillSelection: effectiveDynamicSkillSelection,
+          skillSelectionVariant: effectiveSkillSelectionVariant,
+          variantId: effectiveVariantId,
           likeCount: 0,
           dislikeCount: 0,
           feedbacks: [],
@@ -1236,6 +1324,10 @@ export class MCPServerManager {
             input_length: String(request).length,
             input_hash: contentHash(String(request)),
             host_port: hostPort,
+            rag_enabled: serverConfig.ragEnabled,
+            dynamic_skill_selection: serverConfig.dynamicSkillSelection,
+            skill_selection_variant: serverConfig.skillSelectionVariant,
+            variant_id: serverConfig.variantId,
           },
         });
 
@@ -1322,23 +1414,34 @@ export class MCPServerManager {
               console.log(
                 `🔄 Generation attempt ${retryCount + 1} of ${maxRetries}...`,
               );
-              await generateOpenAPISpec(
-                outputPath,
-                serverId,
-                retryCount,
-                lastError,
-                rag_context,
-                idempotencyKey || serverId,
-                undefined,
-                undefined,
-                undefined,
+              await withTemporaryGenerationFlags(
                 {
-                  traceId: serverConfig.traceId,
-                  experimentId: serverConfig.experimentId,
-                  sessionId: serverConfig.sessionId,
-                  buildRequestId: serverConfig.buildRequestId,
-                  serverId,
+                  dynamicSkillSelection: serverConfig.dynamicSkillSelection,
+                  skillSelectionVariant: serverConfig.skillSelectionVariant,
                 },
+                () =>
+                  generateOpenAPISpec(
+                    outputPath,
+                    serverId,
+                    retryCount,
+                    lastError,
+                    rag_context,
+                    idempotencyKey || serverId,
+                    undefined,
+                    undefined,
+                    undefined,
+                    {
+                      traceId: serverConfig.traceId,
+                      experimentId: serverConfig.experimentId,
+                      sessionId: serverConfig.sessionId,
+                      buildRequestId: serverConfig.buildRequestId,
+                      serverId,
+                      ragEnabled: serverConfig.ragEnabled,
+                      dynamicSkillSelection: serverConfig.dynamicSkillSelection,
+                      skillSelectionVariant: serverConfig.skillSelectionVariant,
+                      variantId: serverConfig.variantId,
+                    },
+                  ),
               );
 
               // Validate the generated spec
@@ -1457,6 +1560,10 @@ export class MCPServerManager {
                 host_port: updatedServer.hostPort,
                 container_port: updatedServer.containerPort,
                 docker_status: updatedServer.status,
+                rag_enabled: updatedServer.ragEnabled,
+                dynamic_skill_selection: updatedServer.dynamicSkillSelection,
+                skill_selection_variant: updatedServer.skillSelectionVariant,
+                variant_id: updatedServer.variantId,
               },
             });
             res.json(
@@ -1481,7 +1588,13 @@ export class MCPServerManager {
                 buildRequestId: serverConfig.buildRequestId,
                 serverId,
               },
-              metrics: { build_total_latency_ms: Date.now() - routeStart },
+              metrics: {
+                build_total_latency_ms: Date.now() - routeStart,
+                rag_enabled: serverConfig.ragEnabled,
+                dynamic_skill_selection: serverConfig.dynamicSkillSelection,
+                skill_selection_variant: serverConfig.skillSelectionVariant,
+                variant_id: serverConfig.variantId,
+              },
             });
             res.status(500).json({
               error: "Server encountered an error during startup",
@@ -1513,7 +1626,13 @@ export class MCPServerManager {
               buildRequestId: updatedServer.buildRequestId,
               serverId,
             },
-            metrics: { build_total_latency_ms: Date.now() - routeStart },
+            metrics: {
+              build_total_latency_ms: Date.now() - routeStart,
+              rag_enabled: updatedServer.ragEnabled,
+              dynamic_skill_selection: updatedServer.dynamicSkillSelection,
+              skill_selection_variant: updatedServer.skillSelectionVariant,
+              variant_id: updatedServer.variantId,
+            },
           });
           res
             .status(202)
@@ -2197,8 +2316,10 @@ export class MCPServerManager {
           `LLM_TIMEOUT_MS=${process.env.LLM_TIMEOUT_MS || ""}`,
           `MONGO_URI=${process.env.MONGO_URI || ""}`,
           `SKILL_FEEDBACK_ENABLED=${process.env.SKILL_FEEDBACK_ENABLED || ""}`,
-          `DYNAMIC_SKILL_SELECTION=${process.env.DYNAMIC_SKILL_SELECTION || ""}`,
-          `SKILL_SELECTION_VARIANT=${process.env.SKILL_SELECTION_VARIANT || ""}`,
+          `RAG_ENABLED=${config.ragEnabled || process.env.RAG_ENABLED || ""}`,
+          `DYNAMIC_SKILL_SELECTION=${config.dynamicSkillSelection || process.env.DYNAMIC_SKILL_SELECTION || ""}`,
+          `SKILL_SELECTION_VARIANT=${config.skillSelectionVariant || process.env.SKILL_SELECTION_VARIANT || ""}`,
+          `VARIANT_ID=${config.variantId || ""}`,
           `SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD=${process.env.SKILL_SELECTION_HYBRID_CONFIDENCE_THRESHOLD || ""}`,
         ],
         NetworkingConfig: {
@@ -2347,6 +2468,10 @@ export class MCPServerManager {
           docker_build_success: true,
           image: config.dockerImage,
           build_log_count: config.buildLogs?.length || 0,
+          rag_enabled: config.ragEnabled,
+          dynamic_skill_selection: config.dynamicSkillSelection,
+          skill_selection_variant: config.skillSelectionVariant,
+          variant_id: config.variantId,
         },
       });
     } catch (error) {
@@ -2371,6 +2496,10 @@ export class MCPServerManager {
           docker_build_success: false,
           image: config.dockerImage,
           build_log_count: config.buildLogs?.length || 0,
+          rag_enabled: config.ragEnabled,
+          dynamic_skill_selection: config.dynamicSkillSelection,
+          skill_selection_variant: config.skillSelectionVariant,
+          variant_id: config.variantId,
         },
       });
       throw error;

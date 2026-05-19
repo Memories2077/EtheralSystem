@@ -106,6 +106,10 @@ def normalize_research_context(context: Optional[Dict[str, Any]] = None) -> Dict
         "session_id": clean("sessionId", "session_id"),
         "build_request_id": clean("buildRequestId", "build_request_id"),
         "server_id": clean("serverId", "server_id"),
+        "rag_enabled": clean("ragEnabled", "rag_enabled"),
+        "dynamic_skill_selection": clean("dynamicSkillSelection", "dynamic_skill_selection"),
+        "skill_selection_variant": clean("skillSelectionVariant", "skill_selection_variant"),
+        "variant_id": clean("variantId", "variant_id"),
     }
 
 
@@ -117,6 +121,10 @@ def state_research_context(state: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "session_id": raw.get("session_id"),
         "build_request_id": raw.get("build_request_id"),
         "server_id": raw.get("server_id"),
+        "rag_enabled": raw.get("rag_enabled"),
+        "dynamic_skill_selection": raw.get("dynamic_skill_selection"),
+        "skill_selection_variant": raw.get("skill_selection_variant"),
+        "variant_id": raw.get("variant_id"),
     })
 
 
@@ -174,7 +182,7 @@ def _persist_sync(event: Dict[str, Any]) -> None:
                 _mongo_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=1000)
             db_name = os.getenv("RESEARCH_EVENTS_DB") or os.getenv("MONGO_DB_NAME") or os.getenv("MONGODB_DB") or "mcp_agent_db"
             collection_name = os.getenv("RESEARCH_EVENTS_COLLECTION", "research_events")
-            _mongo_client[db_name][collection_name].insert_one(event)
+            _mongo_client[db_name][collection_name].insert_one(deepcopy(event))
             persisted = True
         except Exception:
             persisted = False

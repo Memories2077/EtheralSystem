@@ -15,6 +15,10 @@ class InputState(TypedDict):
     workspace_id: NotRequired[str]
     email: NotRequired[str]
     memory_scope: NotRequired[str]
+    rag_enabled: NotRequired[str]
+    dynamic_skill_selection: NotRequired[str]
+    skill_selection_variant: NotRequired[str]
+    variant_id: NotRequired[str]
 
 class AgentState(TypedDict):
     """Internal overall state for the multi-agent system.
@@ -41,6 +45,10 @@ class AgentState(TypedDict):
     session_id: NotRequired[str]          # Chat/session id
     build_request_id: NotRequired[str]    # MCP build request id
     server_id: NotRequired[str]           # Generated server id when available
+    rag_enabled: NotRequired[str]         # Per-run RAG flag propagated from UI/backend
+    dynamic_skill_selection: NotRequired[str] # Per-run skill selection flag
+    skill_selection_variant: NotRequired[str] # static/dynamic dashboard variant
+    variant_id: NotRequired[str]              # static-rag-off / dynamic-rag-on style id
 
 def is_human_message(msg) -> bool:
     """Helper to robustly identify human messages in various representations."""
