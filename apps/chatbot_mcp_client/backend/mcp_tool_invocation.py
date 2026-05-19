@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set
 from urllib.parse import urlparse
@@ -14,6 +15,16 @@ def _safe_text(value: Any, limit: int = 120) -> str:
     if len(text) <= limit:
         return text
     return text[:limit]
+
+
+def _safe_diagnostic(value: Any, limit: int = 240) -> str:
+    text = _safe_text(value, limit * 2)
+    if not text:
+        return ""
+    text = re.sub(r"(?i)(token|secret|password|api[_-]?key|authorization|cookie)=([^&\s]+)", r"\1=[REDACTED]", text)
+    text = re.sub(r"(?i)(bearer|basic)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", text)
+    text = re.sub(r"eyJ[A-Za-z0-9._-]+", "[REDACTED_JWT]", text)
+    return _safe_text(text, limit)
 
 
 def _normalize_tool_names(names: Iterable[Any]) -> Set[str]:
@@ -106,6 +117,69 @@ def _tool_message_data(message: Any) -> Dict[str, str]:
 
 def _matches_known_tool(name: str, known_tool_names: Set[str]) -> bool:
     return bool(name) and (not known_tool_names or name in known_tool_names)
+
+
+@dataclass
+class McpToolOutcome:
+    tool_name: str
+    index: int
+    status: str
+    error_code: str = ""
+    invocation_count: int = 0
+    result_count: int = 0
+    response_length: int = 0
+    response_hash: str = ""
+    diagnostic: str = ""
+
+    def to_metrics_item(self) -> Dict[str, Any]:
+        status = self.status if self.status in {"success", "failed", "skipped"} else "failed"
+        return {
+            "tool_name": _safe_text(self.tool_name),
+            "index": self.index,
+            "status": status,
+            "error_code": _safe_text(self.error_code),
+            "invocation_count": max(0, int(self.invocation_count or 0)),
+            "result_count": max(0, int(self.result_count or 0)),
+            "response_length": max(0, int(self.response_length or 0)),
+            "response_hash": _safe_text(self.response_hash, 32),
+            "diagnostic": _safe_diagnostic(self.diagnostic),
+        }
+
+
+def normalize_mcp_tool_outcome(raw: Any, index: int = 0) -> Dict[str, Any]:
+    if isinstance(raw, McpToolOutcome):
+        return raw.to_metrics_item()
+    data = raw if isinstance(raw, dict) else {}
+    return McpToolOutcome(
+        tool_name=data.get("tool_name") or data.get("toolName") or data.get("name") or "",
+        index=int(data.get("index", index) or 0),
+        status=data.get("status") or "failed",
+        error_code=data.get("error_code") or data.get("errorCode") or "",
+        invocation_count=int(data.get("invocation_count", data.get("invocationCount", 0)) or 0),
+        result_count=int(data.get("result_count", data.get("resultCount", 0)) or 0),
+        response_length=int(data.get("response_length", data.get("responseLength", 0)) or 0),
+        response_hash=data.get("response_hash") or data.get("responseHash") or "",
+        diagnostic=data.get("diagnostic") or "",
+    ).to_metrics_item()
+
+
+def mcp_tool_outcome_metrics(outcomes: Iterable[Any]) -> Dict[str, Any]:
+    items = [normalize_mcp_tool_outcome(item, index) for index, item in enumerate(outcomes)]
+    success_items = [item for item in items if item["status"] == "success"]
+    failed_items = [item for item in items if item["status"] == "failed"]
+    skipped_items = [item for item in items if item["status"] == "skipped"]
+
+    return {
+        "mcp_tool_total_count": len(items),
+        "mcp_tool_attempted_count": len(success_items) + len(failed_items),
+        "mcp_tool_success_count": len(success_items),
+        "mcp_tool_failure_count": len(failed_items),
+        "mcp_tool_skipped_count": len(skipped_items),
+        "mcp_tool_outcomes": items,
+        "mcp_tool_success_names": [item["tool_name"] for item in success_items][:50],
+        "mcp_tool_failed_names": [item["tool_name"] for item in failed_items][:50],
+        "mcp_tool_skipped_names": [item["tool_name"] for item in skipped_items][:50],
+    }
 
 
 @dataclass
@@ -249,6 +323,41 @@ async def record_mcp_tool_invocation_event(
             available_tool_count=available_tool_count,
             response_text=response_text,
         ),
+        tags={
+            "mcp_url_hashes": [content_hash(url) for url in urls],
+        },
+    )
+
+
+async def record_mcp_tool_outcomes_event(
+    outcomes: Iterable[Any],
+    *,
+    request_context: Optional[Dict[str, Any]],
+    mcp_urls: Iterable[str],
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    urls = [str(url) for url in mcp_urls if url]
+    metrics = mcp_tool_outcome_metrics(outcomes)
+
+    context = dict(request_context or {})
+    context.setdefault("serverId", extract_server_id_from_mcp_urls(urls))
+
+    status = "failure" if metrics["mcp_tool_failure_count"] > 0 else "success"
+    error_code = "mcp_tool_outcome_failures" if metrics["mcp_tool_failure_count"] > 0 else None
+
+    return await record_research_event(
+        service="chatbot-backend",
+        stage="runtime",
+        event_name="mcp_tool_outcomes_completed",
+        status=status,
+        duration_ms=duration_ms,
+        error_code=error_code,
+        provider=provider,
+        model=model,
+        context=context,
+        metrics=metrics,
         tags={
             "mcp_url_hashes": [content_hash(url) for url in urls],
         },

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import fs from "fs";
 import path from "path";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { MongoClient } from "mongodb";
 
 type JsonRecord = Record<string, unknown>;
@@ -35,8 +35,24 @@ type ResearchEvent = JsonRecord & {
   build_request_id?: string;
   trace_id?: string;
   experiment_id?: string;
+  session_id?: string;
   server_id?: string;
+  error_code?: string;
   metrics?: JsonRecord;
+};
+
+type ToolOutcomeStatus = "success" | "failed" | "skipped";
+
+type ToolOutcome = {
+  tool_name: string;
+  index: number;
+  status: ToolOutcomeStatus;
+  error_code: string;
+  invocation_count: number;
+  result_count: number;
+  response_length: number;
+  response_hash: string;
+  diagnostic: string;
 };
 
 const root = process.cwd();
@@ -63,6 +79,23 @@ function redactUrl(raw: string): string {
   } catch {
     return raw.replace(/\?.*$/, "");
   }
+}
+
+function safeText(value: unknown, limit = 240): string {
+  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  return text.length > limit ? text.slice(0, limit) : text;
+}
+
+function redactDiagnostic(value: unknown, limit = 240): string {
+  return safeText(value, limit * 2)
+    .replace(/(token|secret|password|api[_-]?key|authorization|cookie)=([^&\s]+)/gi, "$1=[REDACTED]")
+    .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
+    .replace(/eyJ[A-Za-z0-9._-]+/g, "[REDACTED_JWT]")
+    .slice(0, limit);
+}
+
+function contentHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function fixturePath(): string {
@@ -289,30 +322,245 @@ async function readResearchEvents(buildRequestId: string): Promise<ResearchEvent
   return readJsonlEvents(buildRequestId);
 }
 
-async function waitForInvocationEvent(buildRequestId: string): Promise<ResearchEvent> {
+async function waitForInvocationEvent(buildRequestId: string, sessionId: string): Promise<ResearchEvent> {
   const event = await poll(
     "mcp_tool_invocation_completed research event",
     async () => {
       const events = await readResearchEvents(buildRequestId);
-      return events.find((item) => item.event_name === "mcp_tool_invocation_completed") || null;
+      return [...events]
+        .reverse()
+        .find((item) => item.event_name === "mcp_tool_invocation_completed" && item.session_id === sessionId) || null;
     },
     (item) => item.event_name === "mcp_tool_invocation_completed",
     Number(env("HEADLESS_MCP_EVENT_TIMEOUT_MS", "120000")),
   );
-  if (event.status !== "success" || event.metrics?.mcp_tool_success !== true) {
-    throw new Error(`Generated MCP tool was not invoked successfully: ${JSON.stringify(event)}`);
-  }
   return event;
 }
 
-function usefulJsonPlaceholderAnswer(content: string): boolean {
-  const normalized = content.toLowerCase();
-  return (
-    normalized.includes("jsonplaceholder") ||
-    normalized.includes("post") ||
-    normalized.includes("user") ||
-    /(^|\D)1(\D|$)/.test(normalized)
+async function waitForOutcomeEvent(buildRequestId: string, sessionId: string): Promise<ResearchEvent> {
+  return poll(
+    "mcp_tool_outcomes_completed research event",
+    async () => {
+      const events = await readResearchEvents(buildRequestId);
+      return [...events]
+        .reverse()
+        .find((item) => item.event_name === "mcp_tool_outcomes_completed" && item.session_id === sessionId) || null;
+    },
+    (item) => item.event_name === "mcp_tool_outcomes_completed",
+    Number(env("HEADLESS_MCP_EVENT_TIMEOUT_MS", "120000")),
   );
+}
+
+function countOutcomes(outcomes: ToolOutcome[]): {
+  total: number;
+  attempted: number;
+  success: number;
+  failed: number;
+  skipped: number;
+  failedToolNames: string[];
+  skippedToolNames: string[];
+} {
+  const failedToolNames = outcomes.filter((item) => item.status === "failed").map((item) => item.tool_name);
+  const skippedToolNames = outcomes.filter((item) => item.status === "skipped").map((item) => item.tool_name);
+  const success = outcomes.filter((item) => item.status === "success").length;
+  const failed = failedToolNames.length;
+  const skipped = skippedToolNames.length;
+  return {
+    total: outcomes.length,
+    attempted: success + failed,
+    success,
+    failed,
+    skipped,
+    failedToolNames,
+    skippedToolNames,
+  };
+}
+
+function numericMetric(metrics: JsonRecord | undefined, key: string): number {
+  const value = metrics?.[key];
+  return typeof value === "number" ? value : Number(value || 0);
+}
+
+function stringArrayMetric(metrics: JsonRecord | undefined, key: string): string[] {
+  const value = metrics?.[key];
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function toolValidationPrompt(toolName: string, description: string): string {
+  return [
+    `Use exactly the active MCP tool named "${toolName}".`,
+    description ? `Tool description: ${description}` : "",
+    "Call this tool with safe JSONPlaceholder test arguments inferred from its name and description.",
+    "Use id=1, userId=1, postId=1, albumId=1, photoId=1, commentId=1, or todoId=1 when an id-like argument is required.",
+    "For JSONPlaceholder write operations, use harmless fake test data because the service does not persist changes.",
+    "Do not answer from memory. Return a compact answer after the tool call.",
+  ].filter(Boolean).join(" ");
+}
+
+function skippedOutcome(tool: MetadataTool, index: number, errorCode: string, diagnostic: string): ToolOutcome {
+  return {
+    tool_name: safeText(tool.name || `tool-${index + 1}`, 120),
+    index,
+    status: "skipped",
+    error_code: errorCode,
+    invocation_count: 0,
+    result_count: 0,
+    response_length: 0,
+    response_hash: "",
+    diagnostic: redactDiagnostic(diagnostic),
+  };
+}
+
+async function validateTool({
+  backendUrl,
+  mcpUrl,
+  tool,
+  index,
+  buildRequestId,
+  traceId,
+  experimentId,
+  baseSessionId,
+}: {
+  backendUrl: string;
+  mcpUrl: string;
+  tool: MetadataTool;
+  index: number;
+  buildRequestId: string;
+  traceId: string;
+  experimentId: string;
+  baseSessionId: string;
+}): Promise<ToolOutcome> {
+  const toolName = safeText(tool.name, 120);
+  const description = safeText(tool.description, 300);
+  if (!toolName || toolName === "unknown") {
+    return skippedOutcome(tool, index, "missing_tool_name", "Metadata tool did not include a usable name.");
+  }
+
+  const toolSessionId = `${baseSessionId}-tool-${index + 1}`;
+  try {
+    const followUp = await postChat({
+      backendUrl,
+      messages: [{ role: "user", content: toolValidationPrompt(toolName, description) }],
+      mcpServers: [mcpUrl],
+      sessionId: toolSessionId,
+      buildRequestId,
+      traceId,
+      experimentId,
+    });
+
+    if (!followUp.response.ok) {
+      return {
+        tool_name: toolName,
+        index,
+        status: "failed",
+        error_code: "chat_http_error",
+        invocation_count: 0,
+        result_count: 0,
+        response_length: followUp.content.length,
+        response_hash: followUp.content ? contentHash(followUp.content) : "",
+        diagnostic: redactDiagnostic(`HTTP ${followUp.response.status}`),
+      };
+    }
+
+    if (followUp.errors.length > 0) {
+      return {
+        tool_name: toolName,
+        index,
+        status: "failed",
+        error_code: "chat_sse_error",
+        invocation_count: 0,
+        result_count: 0,
+        response_length: followUp.content.length,
+        response_hash: followUp.content ? contentHash(followUp.content) : "",
+        diagnostic: redactDiagnostic(JSON.stringify(followUp.errors.slice(0, 2))),
+      };
+    }
+
+    const invocationEvent = await waitForInvocationEvent(buildRequestId, toolSessionId);
+    const metrics = invocationEvent.metrics || {};
+    const invocationCount = numericMetric(metrics, "mcp_tool_invocation_count");
+    const resultCount = numericMetric(metrics, "mcp_tool_result_count");
+    const invokedToolNames = stringArrayMetric(metrics, "invoked_tool_names");
+    const resultToolNames = stringArrayMetric(metrics, "result_tool_names");
+    const expectedInvoked = invokedToolNames.includes(toolName) || resultToolNames.includes(toolName);
+    const eventSucceeded = invocationEvent.status === "success" && metrics.mcp_tool_success === true;
+    const status: ToolOutcomeStatus = eventSucceeded && expectedInvoked ? "success" : "failed";
+    const errorCode = status === "success"
+      ? ""
+      : (!expectedInvoked ? "expected_tool_not_invoked" : String(invocationEvent.error_code || "mcp_tool_invocation_failed"));
+
+    return {
+      tool_name: toolName,
+      index,
+      status,
+      error_code: errorCode,
+      invocation_count: invocationCount,
+      result_count: resultCount,
+      response_length: followUp.content.length,
+      response_hash: followUp.content ? contentHash(followUp.content) : "",
+      diagnostic: status === "success"
+        ? ""
+        : redactDiagnostic(`invoked=${invokedToolNames.join(",") || "none"} result=${resultToolNames.join(",") || "none"}`),
+    };
+  } catch (error) {
+    return {
+      tool_name: toolName,
+      index,
+      status: "failed",
+      error_code: "tool_validation_error",
+      invocation_count: 0,
+      result_count: 0,
+      response_length: 0,
+      response_hash: "",
+      diagnostic: redactDiagnostic(error instanceof Error ? error.message : String(error)),
+    };
+  }
+}
+
+async function recordToolOutcomes({
+  backendUrl,
+  mcpUrl,
+  outcomes,
+  traceId,
+  experimentId,
+  sessionId,
+  buildRequestId,
+  serverId,
+  durationMs,
+}: {
+  backendUrl: string;
+  mcpUrl: string;
+  outcomes: ToolOutcome[];
+  traceId: string;
+  experimentId: string;
+  sessionId: string;
+  buildRequestId: string;
+  serverId: string;
+  durationMs: number;
+}): Promise<void> {
+  const response = await fetchJson(
+    `${baseUrl(backendUrl)}/mcp/tool-outcomes`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mcpUrl,
+        outcomes,
+        provider: arg("provider", env("HEADLESS_MCP_PROVIDER", "gemini")),
+        model: arg("model", env("HEADLESS_MCP_MODEL", "gemini-2.5-flash")),
+        durationMs,
+        traceId,
+        experimentId,
+        sessionId,
+        buildRequestId,
+        serverId,
+      }),
+    },
+    "mcp tool outcomes",
+  );
+  if (response.persisted === false) {
+    throw new Error("mcp_tool_outcomes_completed was not persisted. Check RESEARCH_METRICS_ENABLED.");
+  }
 }
 
 async function main(): Promise<void> {
@@ -360,32 +608,34 @@ async function main(): Promise<void> {
     serverId: serverId || String(managerStatus.serverId || ""),
   });
   const tools = Array.isArray(metadata.tools) ? metadata.tools : [];
-  const selectedTool = String(tools[0]?.name || "");
-  if (!selectedTool) throw new Error(`Metadata returned tools without a tool name: ${JSON.stringify(metadata)}`);
+  const outcomeStartMs = Date.now();
+  const outcomes: ToolOutcome[] = [];
+  for (const [index, tool] of tools.entries()) {
+    outcomes.push(await validateTool({
+      backendUrl,
+      mcpUrl,
+      tool,
+      index,
+      buildRequestId,
+      traceId,
+      experimentId,
+      baseSessionId: sessionId,
+    }));
+  }
 
-  const followUpPrompt = [
-    `Use the active MCP tool named "${selectedTool}" to fetch JSONPlaceholder data.`,
-    "Fetch posts for userId=1 or the closest matching JSONPlaceholder posts operation exposed by that tool.",
-    "Return a compact answer with at least one post id and title. Do not answer from memory.",
-  ].join(" ");
-
-  const followUp = await postChat({
+  await recordToolOutcomes({
     backendUrl,
-    messages: [{ role: "user", content: followUpPrompt }],
-    mcpServers: [mcpUrl],
-    sessionId,
-    buildRequestId,
+    mcpUrl,
+    outcomes,
     traceId,
     experimentId,
+    sessionId,
+    buildRequestId,
+    serverId: serverId || String(managerStatus.serverId || ""),
+    durationMs: Date.now() - outcomeStartMs,
   });
-  if (!followUp.response.ok || followUp.errors.length > 0) {
-    throw new Error(`Follow-up chat failed: HTTP ${followUp.response.status}; errors=${JSON.stringify(followUp.errors)}`);
-  }
-  if (!usefulJsonPlaceholderAnswer(followUp.content)) {
-    throw new Error(`Follow-up answer did not look useful for JSONPlaceholder data: ${followUp.content.slice(0, 500)}`);
-  }
-
-  const invocationEvent = await waitForInvocationEvent(buildRequestId);
+  const outcomeEvent = await waitForOutcomeEvent(buildRequestId, sessionId);
+  const counts = countOutcomes(outcomes);
   const summary = {
     buildRequestId,
     traceId,
@@ -394,13 +644,22 @@ async function main(): Promise<void> {
     serverId: serverId || String(managerStatus.serverId || ""),
     mcpUrl: redactUrl(mcpUrl),
     metadataToolCount: tools.length,
-    selectedTool,
-    invocationStatus: invocationEvent.status,
-    invocationCount: invocationEvent.metrics?.mcp_tool_invocation_count,
-    toolResultCount: invocationEvent.metrics?.mcp_tool_result_count,
-    followUpPreview: followUp.content.replace(/\s+/g, " ").trim().slice(0, 300),
+    outcomeStatus: outcomeEvent.status,
+    totalToolCount: counts.total,
+    attemptedToolCount: counts.attempted,
+    successToolCount: counts.success,
+    failedToolCount: counts.failed,
+    skippedToolCount: counts.skipped,
+    failedToolNames: counts.failedToolNames,
+    skippedToolNames: counts.skippedToolNames,
   };
   console.info("[headless-mcp-tool-validation-summary]", JSON.stringify(summary));
+  if (counts.attempted === 0) {
+    throw new Error(`No generated MCP tools were attempted. Summary=${JSON.stringify(summary)}`);
+  }
+  if (counts.failed > 0) {
+    throw new Error(`Generated MCP tool validation failed for ${counts.failed} tool(s): ${counts.failedToolNames.join(", ")}`);
+  }
 }
 
 main().catch((error) => {
