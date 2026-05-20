@@ -1,93 +1,146 @@
-Create a MCP Server from this API doc:
-JSONPlaceholder API Usage Guide
-Base URL: https://jsonplaceholder.typicode.com
-Authentication: Tất cả các endpoint đều Public (Không yêu cầu API Key). Lưu ý: đây là fake REST API dùng cho testing — mọi thao tác POST/PUT/PATCH/DELETE đều trả về response giả lập và không thực sự thay đổi dữ liệu.
+# Research API Input Document
+Format-Version: 1
+API-ID: jsonplaceholder-input-doc
+Title: JSONPlaceholder CRUD API
+Base-URL: https://jsonplaceholder.typicode.com
+Authentication: none
+Declared-Endpoint-Count: 8
+Safe-Probe-Policy: Public fake REST API. POST, PUT, PATCH, and DELETE return simulated responses and do not persist data. Safe benchmark probes may call GET endpoints and fake POST /posts.
 
-1. Posts Endpoints
-Data Model: Post Schema
-{
-  "id": "integer",
-  "userId": "integer",
-  "title": "string",
-  "body": "string"
-}
-A. Get All Posts
-•        Method: GET /posts
-•        Query Params: 
-o        userId (integer, optional): lọc theo user ID
-•        Response 200 OK: Array of Post objects.
-json
+## Endpoint 1: List posts
+Method: GET
+Path: /posts
+Description: Return a list of post resources. Optional query parameter userId filters posts by user.
+Request Example:
+```http
+GET /posts?userId=1 HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Accept: application/json
+```
+Response Example:
+```json
 [
-  { "id": "integer", "userId": "integer", "title": "string", "body": "string" }
+  { "userId": 1, "id": 1, "title": "sample title", "body": "sample body" }
 ]
-B. Get a Single Post
-•        Method: GET /posts/{id}
-•        Response 200 OK: Một Post object.
-C. Create a Post
-•        Method: POST /posts
-•        Request Body:
-{ "title": "string", "body": "string", "userId": "integer" }
-•        Response 201 Created: Post object với id: 101 (giả lập).
-D. Update a Post
-•        Method: PUT /posts/{id}
-•        Description: Thay thế toàn bộ object.
-•        Request Body:
-{ "id": "integer", "title": "string", "body": "string", "userId": "integer" }
-•        Response 200 OK: Post object đã được cập nhật.
-E. Patch a Post
-•        Method: PATCH /posts/{id}
-•        Description: Cập nhật một phần object, chỉ gửi các field cần thay đổi.
-•        Request Body:
-{ "title": "string" }
-•        Response 200 OK: Post object đã được cập nhật.
-F. Delete a Post
-•        Method: DELETE /posts/{id}
-•        Response 200 OK.
-G. Get Comments of a Post
-•        Method: GET /posts/{id}/comments
-•        Description: Tương đương với GET /comments?postId={id}.
-•        Response 200 OK: Array of Comment objects thuộc post đó.
-json
-[
-  { "id": "integer", "postId": "integer", "name": "string", "email": "string", "body": "string" }
-]
+```
+Safe Probe: yes, use for list-posts with userId=1 or no arguments.
 
-2. Comments Endpoints
-Data Model: Comment Schema
-{
-  "id": "integer",
-  "postId": "integer",
-  "name": "string",
-  "email": "string",
-  "body": "string"
-}
-A. Get All Comments
-•        Method: GET /comments
-•        Query Params: 
-o        postId (integer, optional): lọc theo post ID
-•        Response 200 OK: Array of Comment objects.
-json
+## Endpoint 2: Get post by id
+Method: GET
+Path: /posts/{id}
+Description: Return one post resource by numeric id.
+Request Example:
+```http
+GET /posts/1 HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Accept: application/json
+```
+Response Example:
+```json
+{ "userId": 1, "id": 1, "title": "sample title", "body": "sample body" }
+```
+Safe Probe: yes, use id=1.
+
+## Endpoint 3: Create post
+Method: POST
+Path: /posts
+Description: Create a fake post. The service returns a simulated id and does not persist the post.
+Request Example:
+```http
+POST /posts HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Content-Type: application/json
+
+{ "title": "benchmark", "body": "tool call", "userId": 1 }
+```
+Response Example:
+```json
+{ "title": "benchmark", "body": "tool call", "userId": 1, "id": 101 }
+```
+Safe Probe: yes, use for create-post.
+
+## Endpoint 4: Replace post
+Method: PUT
+Path: /posts/{id}
+Description: Replace an entire fake post resource. The service returns a simulated updated object.
+Request Example:
+```http
+PUT /posts/1 HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Content-Type: application/json
+
+{ "id": 1, "title": "updated", "body": "updated body", "userId": 1 }
+```
+Response Example:
+```json
+{ "id": 1, "title": "updated", "body": "updated body", "userId": 1 }
+```
+Safe Probe: skip by default because mutation probes are not needed for success-rate calculation.
+
+## Endpoint 5: Patch post
+Method: PATCH
+Path: /posts/{id}
+Description: Partially update a fake post resource.
+Request Example:
+```http
+PATCH /posts/1 HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Content-Type: application/json
+
+{ "title": "patched title" }
+```
+Response Example:
+```json
+{ "userId": 1, "id": 1, "title": "patched title", "body": "sample body" }
+```
+Safe Probe: skip by default because mutation probes are not needed for success-rate calculation.
+
+## Endpoint 6: Delete post
+Method: DELETE
+Path: /posts/{id}
+Description: Delete a fake post resource. The service returns an empty object.
+Request Example:
+```http
+DELETE /posts/1 HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Accept: application/json
+```
+Response Example:
+```json
+{}
+```
+Safe Probe: skip by default because delete probes are not needed for success-rate calculation.
+
+## Endpoint 7: List comments for a post
+Method: GET
+Path: /posts/{id}/comments
+Description: Return comments for a post id. Equivalent to GET /comments?postId={id}.
+Request Example:
+```http
+GET /posts/1/comments HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Accept: application/json
+```
+Response Example:
+```json
 [
-  { "id": "integer", "postId": "integer", "name": "string", "email": "string", "body": "string" }
+  { "postId": 1, "id": 1, "name": "sample name", "email": "user@example.com", "body": "sample comment" }
 ]
-B. Get a Single Comment
-•        Method: GET /comments/{id}
-•        Response 200 OK: Một Comment object.
-C. Create a Comment
-•        Method: POST /comments
-•        Request Body:
-{ "postId": "integer", "name": "string", "email": "string", "body": "string" }
-•        Response 201 Created: Comment object vừa tạo (giả lập).
-D. Update a Comment
-•        Method: PUT /comments/{id}
-•        Description: Thay thế toàn bộ object.
-•        Request Body:
-{ "id": "integer", "postId": "integer", "name": "string", "email": "string", "body": "string" }
-•        Response 200 OK: Comment object đã được cập nhật.
-E. Patch a Comment
-•        Method: PATCH /comments/{id}
-•        Description: Cập nhật một phần object, chỉ gửi các field cần thay đổi.
-•        Response 200 OK: Comment object đã được cập nhật.
-F. Delete a Comment
-•        Method: DELETE /comments/{id}
-•        Response 200 OK.
+```
+Safe Probe: yes, use for post-comments with postId=1 or id=1.
+
+## Endpoint 8: Get user by id
+Method: GET
+Path: /users/{id}
+Description: Return one user profile by numeric id.
+Request Example:
+```http
+GET /users/1 HTTP/1.1
+Host: jsonplaceholder.typicode.com
+Accept: application/json
+```
+Response Example:
+```json
+{ "id": 1, "name": "Leanne Graham", "username": "Bret", "email": "Sincere@april.biz" }
+```
+Safe Probe: yes, use id=1.

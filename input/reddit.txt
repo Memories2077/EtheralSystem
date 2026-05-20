@@ -1,59 +1,118 @@
-Reddit:
-Reddit API Usage Guide
-Step 1: Get Access Token
-curl -X POST \
-  -H "User-Agent: script:your_app_name:v1.0 (by /u/your_username)" \
-  -d 'grant_type=password&username=your_username&password=your_password' \
-  --user 'your_client_id:your_client_secret' \
-  https://www.reddit.com/api/v1/access_token
-Response:
-{
-  "access_token": "your_access_token_here",
-  "token_type": "bearer",
-  "expires_in": 3600,
-  "scope": "*"
-}
+# Research API Input Document
+Format-Version: 1
+API-ID: reddit-input-doc
+Title: Reddit OAuth API
+Base-URL: https://oauth.reddit.com
+Authentication: OAuth password flow plus bearer token. Credentials must be supplied by the user at tool-call time.
+Declared-Endpoint-Count: 6
+Safe-Probe-Policy: No live probes run by default because all endpoints require real Reddit credentials or a bearer token.
 
-The required parameters for step 1 are (MUST HAVE AND WILL BE PROVIDED MANUALLY BY THE USER):
-- grant_type: Always "password" for this flow
-- username: Your Reddit username
-- password: Your Reddit password
-- client_id: Your Reddit app's client ID
-- client_secret: Your Reddit app's client secret
+## Endpoint 1: Get access token
+Method: POST
+Path: https://www.reddit.com/api/v1/access_token
+Description: Exchange username, password, client id, and client secret for a bearer token using grant_type=password.
+Request Example:
+```http
+POST /api/v1/access_token HTTP/1.1
+Host: www.reddit.com
+Authorization: Basic base64(client_id:client_secret)
+User-Agent: script:your_app_name:v1.0 (by /u/your_username)
+Content-Type: application/x-www-form-urlencoded
 
-Step 2: Use Access Token for API Calls
-curl -H "Authorization: bearer your_access_token" \
-     -A "your_app_name/1.0 by your_username" \
-     https://oauth.reddit.com/api/v1/me
+grant_type=password&username=your_username&password=your_password
+```
+Response Example:
+```json
+{ "access_token": "your_access_token_here", "token_type": "bearer", "expires_in": 3600, "scope": "*" }
+```
+Safe Probe: skip because credentials are required.
 
-Response:
-{
-    "comment_karma": 0,
-    "created": 1389649907.0,
-    "created_utc": 1389649907.0,
-    "has_mail": false,
-    "has_mod_mail": false,
-    "has_verified_email": null,
-    "id": "1",
-    "is_gold": false,
-    "is_mod": true,
-    "link_karma": 1,
-    "name": "reddit_bot",
-    "over_18": true
-}
+## Endpoint 2: Get current user
+Method: GET
+Path: /api/v1/me
+Description: Return the authenticated Reddit account profile.
+Request Example:
+```http
+GET /api/v1/me HTTP/1.1
+Host: oauth.reddit.com
+Authorization: bearer your_access_token
+User-Agent: your_app_name/1.0 by your_username
+Accept: application/json
+```
+Response Example:
+```json
+{ "id": "1", "name": "reddit_bot", "comment_karma": 0, "link_karma": 1, "is_mod": true }
+```
+Safe Probe: skip because bearer token is required.
 
-The required parameters for step 2 are:
-- Authorization: Bearer token obtained from step 1
-- User-Agent: A unique identifier for your application, e.g., "your_app_name/1.0 by your_username"
+## Endpoint 3: Get user karma
+Method: GET
+Path: /api/v1/me/karma
+Description: Return subreddit-specific karma for the authenticated account.
+Request Example:
+```http
+GET /api/v1/me/karma HTTP/1.1
+Host: oauth.reddit.com
+Authorization: bearer your_access_token
+User-Agent: your_app_name/1.0 by your_username
+Accept: application/json
+```
+Response Example:
+```json
+{ "kind": "KarmaList", "data": [ { "sr": "test", "comment_karma": 1, "link_karma": 2 } ] }
+```
+Safe Probe: skip because bearer token is required.
 
-NOTE: adhere to required parameters and format for Reddit API request and response. If not followed, the API will return an error.
-Other endpoints:
-Get (same format as https://oauth.reddit.com/api/v1/me)
-- /api/v1/me
-- /api/v1/me/karma
-- /api/v1/me/prefs
-- /api/v1/me/trophies
-- /api/announcements/v1
+## Endpoint 4: Get user preferences
+Method: GET
+Path: /api/v1/me/prefs
+Description: Return preferences for the authenticated account.
+Request Example:
+```http
+GET /api/v1/me/prefs HTTP/1.1
+Host: oauth.reddit.com
+Authorization: bearer your_access_token
+User-Agent: your_app_name/1.0 by your_username
+Accept: application/json
+```
+Response Example:
+```json
+{ "over_18": false, "video_autoplay": true, "theme_selector": "default" }
+```
+Safe Probe: skip because bearer token is required.
 
-Post (same format as https://oauth.reddit.com/api/v1/me):
-- /api/announcements/v1/read_all
+## Endpoint 5: Get trophies
+Method: GET
+Path: /api/v1/me/trophies
+Description: Return trophies for the authenticated account.
+Request Example:
+```http
+GET /api/v1/me/trophies HTTP/1.1
+Host: oauth.reddit.com
+Authorization: bearer your_access_token
+User-Agent: your_app_name/1.0 by your_username
+Accept: application/json
+```
+Response Example:
+```json
+{ "kind": "TrophyList", "data": { "trophies": [] } }
+```
+Safe Probe: skip because bearer token is required.
+
+## Endpoint 6: Mark announcements read
+Method: POST
+Path: /api/announcements/v1/read_all
+Description: Mark announcements as read for the authenticated account.
+Request Example:
+```http
+POST /api/announcements/v1/read_all HTTP/1.1
+Host: oauth.reddit.com
+Authorization: bearer your_access_token
+User-Agent: your_app_name/1.0 by your_username
+Accept: application/json
+```
+Response Example:
+```json
+{ "success": true }
+```
+Safe Probe: skip because bearer token is required and the call mutates account state.

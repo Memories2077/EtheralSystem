@@ -8,6 +8,7 @@ function createManagerWithServer(status: string = "running") {
     serverId: "server-123",
     dockerImage: "mcp-gen",
     containerPort: 3000,
+    containerId: "container-123",
     hostPort: 4001,
     status,
     publicUrl: "http://localhost:8081/mcp/server-123",
@@ -62,6 +63,8 @@ describe("MCPServerManager status endpoint", () => {
     expect(response.status).toBe(200);
     expect(response.body.serverId).toBe("server-123");
     expect(response.body.status).toBe("running");
+    expect(response.body.containerId).toBe("container-123");
+    expect(response.body.hostPort).toBe(4001);
     expect(response.body.buildRequestId).toBe("build-123");
     expect(response.body.traceId).toBe("trace-123");
     expect(response.body.experimentId).toBe("experiment-123");
