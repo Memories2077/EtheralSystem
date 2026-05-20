@@ -183,9 +183,12 @@ function materializeCase(item: MatrixCase): MatrixCase {
   const apiDoc = readOptionalText(item.inputPath);
   const authInfo = readOptionalText(item.authInfoPath);
   const promptParts = [
-    item.prompt || "Create an MCP Server from the following API documentation. Treat credentials as user-provided tool arguments; do not load secrets from environment variables.",
+    item.prompt ||
+      "Create an MCP Server from the following API documentation. Treat credentials as user-provided tool arguments; do not load secrets from environment variables.",
     apiDoc ? `API documentation source: ${item.inputPath}\n\n${apiDoc}` : "",
-    authInfo ? `Additional auth/test-call information source: ${item.authInfoPath}\n\n${authInfo}` : "",
+    authInfo
+      ? `Additional auth/test-call information source: ${item.authInfoPath}\n\n${authInfo}`
+      : "",
   ].filter(Boolean);
   return {
     ...item,
@@ -206,7 +209,10 @@ function appendJsonl(filePath: string, value: JsonRecord): void {
 
 function gitCommit(): string {
   try {
-    return execSync("git rev-parse HEAD", { cwd: root, encoding: "utf8" }).trim();
+    return execSync("git rev-parse HEAD", {
+      cwd: root,
+      encoding: "utf8",
+    }).trim();
   } catch {
     return "unknown";
   }
@@ -217,13 +223,18 @@ function contentHash(content: string): string {
 }
 
 function safeText(value: unknown, maxLength: number): string {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
 }
 
 function redactDiagnostic(value: string): string {
   return safeText(value, 500)
-    .replace(/(token|secret|password|api[_-]?key|authorization|cookie)=([^&\s]+)/gi, "$1=[REDACTED]")
+    .replace(
+      /(token|secret|password|api[_-]?key|authorization|cookie)=([^&\s]+)/gi,
+      "$1=[REDACTED]",
+    )
     .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
     .replace(/eyJ[A-Za-z0-9._-]+/g, "[REDACTED_JWT]");
 }
@@ -232,7 +243,8 @@ function redactUrl(raw: string): string {
   try {
     const url = new URL(raw);
     for (const key of [...url.searchParams.keys()]) {
-      if (/token|secret|key|auth|password/i.test(key)) url.searchParams.set(key, "[REDACTED]");
+      if (/token|secret|key|auth|password/i.test(key))
+        url.searchParams.set(key, "[REDACTED]");
     }
     return url.toString();
   } catch {
@@ -240,7 +252,9 @@ function redactUrl(raw: string): string {
   }
 }
 
-async function readSse(response: Response): Promise<{ events: SseEvent[]; content: string; errors: SseEvent[] }> {
+async function readSse(
+  response: Response,
+): Promise<{ events: SseEvent[]; content: string; errors: SseEvent[] }> {
   const text = await response.text();
   const events: SseEvent[] = [];
   const contentParts: string[] = [];
@@ -252,7 +266,8 @@ async function readSse(response: Response): Promise<{ events: SseEvent[]; conten
     try {
       const event = JSON.parse(raw) as SseEvent;
       events.push(event);
-      if (event.type === "content" && typeof event.content === "string") contentParts.push(event.content);
+      if (event.type === "content" && typeof event.content === "string")
+        contentParts.push(event.content);
       if (event.type === "error") errors.push(event);
     } catch {
       events.push({ type: "content", content: raw });
@@ -262,17 +277,28 @@ async function readSse(response: Response): Promise<{ events: SseEvent[]; conten
   return { events, content: contentParts.join(""), errors };
 }
 
-async function fetchJson(url: string, init: RequestInit | undefined, label: string): Promise<JsonRecord> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(Number(env("BACKEND_TOOLCALL_HTTP_TIMEOUT_MS", "30000"))) });
+async function fetchJson(
+  url: string,
+  init: RequestInit | undefined,
+  label: string,
+): Promise<JsonRecord> {
+  const response = await fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(
+      Number(env("BACKEND_TOOLCALL_HTTP_TIMEOUT_MS", "30000")),
+    ),
+  });
   const text = await response.text();
   let payload: JsonRecord = {};
   try {
-    payload = text ? JSON.parse(text) as JsonRecord : {};
+    payload = text ? (JSON.parse(text) as JsonRecord) : {};
   } catch {
     payload = { raw: text };
   }
   if (!response.ok) {
-    throw new Error(`${label} failed: HTTP ${response.status}; body=${redactDiagnostic(JSON.stringify(payload).slice(0, 500))}`);
+    throw new Error(
+      `${label} failed: HTTP ${response.status}; body=${redactDiagnostic(JSON.stringify(payload).slice(0, 500))}`,
+    );
   }
   return payload;
 }
@@ -295,7 +321,9 @@ async function poll<T>(
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  throw new Error(`${label} timed out after ${timeoutMs}ms. Last value=${JSON.stringify(lastValue)} Last error=${lastError instanceof Error ? lastError.message : String(lastError || "")}`);
+  throw new Error(
+    `${label} timed out after ${timeoutMs}ms. Last value=${JSON.stringify(lastValue)} Last error=${lastError instanceof Error ? lastError.message : String(lastError || "")}`,
+  );
 }
 
 async function postChat({
@@ -306,6 +334,10 @@ async function postChat({
   buildRequestId,
   traceId,
   experimentId,
+  ragEnabled,
+  dynamicSkillSelection,
+  skillSelectionVariant,
+  variantId,
   provider,
   model,
   memoryScope,
@@ -317,10 +349,19 @@ async function postChat({
   buildRequestId: string;
   traceId: string;
   experimentId: string;
+  ragEnabled?: boolean;
+  dynamicSkillSelection?: boolean;
+  skillSelectionVariant?: string;
+  variantId?: string;
   provider: string;
   model: string;
   memoryScope: string;
-}): Promise<{ response: Response; events: SseEvent[]; content: string; errors: SseEvent[] }> {
+}): Promise<{
+  response: Response;
+  events: SseEvent[];
+  content: string;
+  errors: SseEvent[];
+}> {
   const response = await fetch(`${baseUrl(backendUrl)}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -334,6 +375,10 @@ async function postChat({
       buildRequestId,
       traceId,
       experimentId,
+      ragEnabled,
+      dynamicSkillSelection,
+      skillSelectionVariant,
+      variantId,
       userId: "backend_toolcall_matrix",
       workspaceId: "backend_toolcall_matrix",
       email: "backend-toolcall-matrix@local",
@@ -349,24 +394,40 @@ function extractBuildComplete(events: SseEvent[]): SseEvent {
 }
 
 function extractMcpServerUrl(payload: SseEvent = {}): string {
-  if (typeof payload.mcpServerUrl === "string" && payload.mcpServerUrl) return payload.mcpServerUrl;
-  if (typeof payload.publicUrl === "string" && payload.publicUrl) return payload.publicUrl;
+  if (typeof payload.mcpServerUrl === "string" && payload.mcpServerUrl)
+    return payload.mcpServerUrl;
+  if (typeof payload.publicUrl === "string" && payload.publicUrl)
+    return payload.publicUrl;
   const config = payload.config || payload.claudeConfig || {};
   const servers = config.mcpServers || {};
   for (const serverConfig of Object.values(servers)) {
     const args = Array.isArray(serverConfig.args) ? serverConfig.args : [];
-    const url = args.find((value) => typeof value === "string" && /^https?:\/\//.test(value));
+    const url = args.find(
+      (value) => typeof value === "string" && /^https?:\/\//.test(value),
+    );
     if (url) return String(url);
   }
   return "";
 }
 
-async function waitForManagerStatus(managerUrl: string, serverId: string, buildRequestId: string): Promise<JsonRecord> {
+async function waitForManagerStatus(
+  managerUrl: string,
+  serverId: string,
+  buildRequestId: string,
+): Promise<JsonRecord> {
   const key = serverId || buildRequestId;
-  if (!key) throw new Error("Cannot poll manager status without serverId or buildRequestId.");
+  if (!key)
+    throw new Error(
+      "Cannot poll manager status without serverId or buildRequestId.",
+    );
   return poll(
     "mcp manager running status",
-    async () => fetchJson(`${baseUrl(managerUrl)}/api/mcp/${key}/status`, undefined, "mcp manager status"),
+    async () =>
+      fetchJson(
+        `${baseUrl(managerUrl)}/api/mcp/${key}/status`,
+        undefined,
+        "mcp manager status",
+      ),
     (payload) => payload.status === "running",
     Number(env("BACKEND_TOOLCALL_MANAGER_TIMEOUT_MS", "120000")),
   );
@@ -394,7 +455,14 @@ async function checkMetadata({
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: mcpUrl, traceId, experimentId, sessionId, buildRequestId, serverId }),
+      body: JSON.stringify({
+        url: mcpUrl,
+        traceId,
+        experimentId,
+        sessionId,
+        buildRequestId,
+        serverId,
+      }),
     },
     "mcp metadata",
   );
@@ -402,11 +470,15 @@ async function checkMetadata({
 }
 
 function localEventsPath(eventsPath: string): string {
-  if (eventsPath.startsWith("/repo/")) return path.resolve(root, eventsPath.slice("/repo/".length));
+  if (eventsPath.startsWith("/repo/"))
+    return path.resolve(root, eventsPath.slice("/repo/".length));
   return path.resolve(root, eventsPath);
 }
 
-function readJsonlEvents(filePath: string, buildRequestId: string): ResearchEvent[] {
+function readJsonlEvents(
+  filePath: string,
+  buildRequestId: string,
+): ResearchEvent[] {
   if (!fs.existsSync(filePath)) return [];
   return fs
     .readFileSync(filePath, "utf8")
@@ -419,23 +491,38 @@ function readJsonlEvents(filePath: string, buildRequestId: string): ResearchEven
         return null;
       }
     })
-    .filter((event): event is ResearchEvent => Boolean(event) && event.build_request_id === buildRequestId);
+    .filter(
+      (event): event is ResearchEvent =>
+        Boolean(event) && event.build_request_id === buildRequestId,
+    );
 }
 
-async function readMongoEvents(buildRequestId: string): Promise<ResearchEvent[]> {
-  const mongoUri = env("BACKEND_TOOLCALL_MONGO_URI", env("E2E_MONGO_URI", env("MONGO_URI", "mongodb://localhost:27017")));
+async function readMongoEvents(
+  buildRequestId: string,
+): Promise<ResearchEvent[]> {
+  const mongoUri = env(
+    "BACKEND_TOOLCALL_MONGO_URI",
+    env("E2E_MONGO_URI", env("MONGO_URI", "mongodb://localhost:27017")),
+  );
   const dbName = env("RESEARCH_EVENTS_DB", env("MONGO_DB_NAME", "docker"));
   const collectionName = env("RESEARCH_EVENTS_COLLECTION", "research_events");
   const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 2000 });
   try {
     await client.connect();
-    return await client.db(dbName).collection<ResearchEvent>(collectionName).find({ build_request_id: buildRequestId }).toArray();
+    return await client
+      .db(dbName)
+      .collection<ResearchEvent>(collectionName)
+      .find({ build_request_id: buildRequestId })
+      .toArray();
   } finally {
     await client.close().catch(() => undefined);
   }
 }
 
-async function readResearchEvents(buildRequestId: string, eventsPath: string): Promise<ResearchEvent[]> {
+async function readResearchEvents(
+  buildRequestId: string,
+  eventsPath: string,
+): Promise<ResearchEvent[]> {
   try {
     const mongoEvents = await readMongoEvents(buildRequestId);
     if (mongoEvents.length > 0) return mongoEvents;
@@ -445,19 +532,28 @@ async function readResearchEvents(buildRequestId: string, eventsPath: string): P
   return readJsonlEvents(localEventsPath(eventsPath), buildRequestId);
 }
 
-async function waitForInvocationEvent(buildRequestId: string, sessionId: string, eventsPath: string): Promise<ResearchEvent> {
+async function waitForInvocationEvent(
+  buildRequestId: string,
+  sessionId: string,
+  eventsPath: string,
+): Promise<ResearchEvent> {
   const event = await poll(
     "mcp_tool_invocation_completed research event",
     async () => {
       const events = await readResearchEvents(buildRequestId, eventsPath);
       return [...events]
         .reverse()
-        .find((item) => item.event_name === "mcp_tool_invocation_completed" && item.session_id === sessionId);
+        .find(
+          (item) =>
+            item.event_name === "mcp_tool_invocation_completed" &&
+            item.session_id === sessionId,
+        );
     },
     (item) => Boolean(item),
     Number(env("BACKEND_TOOLCALL_EVENT_TIMEOUT_MS", "120000")),
   );
-  if (!event) throw new Error("mcp_tool_invocation_completed was not persisted.");
+  if (!event)
+    throw new Error("mcp_tool_invocation_completed was not persisted.");
   return event;
 }
 
@@ -466,7 +562,10 @@ function numericMetric(metrics: JsonRecord | undefined, key: string): number {
   return typeof value === "number" ? value : Number(value || 0);
 }
 
-function stringArrayMetric(metrics: JsonRecord | undefined, key: string): string[] {
+function stringArrayMetric(
+  metrics: JsonRecord | undefined,
+  key: string,
+): string[] {
   const value = metrics?.[key];
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
@@ -475,17 +574,32 @@ function toolText(tool: MetadataTool): string {
   return `${tool.name || ""} ${tool.description || ""}`.toLowerCase();
 }
 
-function matchedSkipRule(item: MatrixCase, tool: MetadataTool): SkipRule | undefined {
+function matchedSkipRule(
+  item: MatrixCase,
+  tool: MetadataTool,
+): SkipRule | undefined {
   const text = toolText(tool);
-  return (item.skipRules || []).find((rule) => rule.match.some((term) => text.includes(term.toLowerCase())));
+  return (item.skipRules || []).find((rule) =>
+    rule.match.some((term) => text.includes(term.toLowerCase())),
+  );
 }
 
-function matchedProbe(item: MatrixCase, tool: MetadataTool): ProbeDefinition | undefined {
+function matchedProbe(
+  item: MatrixCase,
+  tool: MetadataTool,
+): ProbeDefinition | undefined {
   const text = toolText(tool);
-  return item.probes.find((probe) => probe.match.some((term) => text.includes(term.toLowerCase())));
+  return item.probes.find((probe) =>
+    probe.match.some((term) => text.includes(term.toLowerCase())),
+  );
 }
 
-function skippedOutcome(tool: MetadataTool, index: number, errorCode: string, diagnostic: string): ToolOutcome {
+function skippedOutcome(
+  tool: MetadataTool,
+  index: number,
+  errorCode: string,
+  diagnostic: string,
+): ToolOutcome {
   return {
     tool_name: safeText(tool.name || `tool-${index + 1}`, 120),
     index,
@@ -508,6 +622,7 @@ async function validateTool({
   buildRequestId,
   traceId,
   experimentId,
+  variant,
   baseSessionId,
   provider,
   model,
@@ -521,6 +636,7 @@ async function validateTool({
   buildRequestId: string;
   traceId: string;
   experimentId: string;
+  variant: Variant;
   baseSessionId: string;
   provider: string;
   model: string;
@@ -528,7 +644,12 @@ async function validateTool({
 }): Promise<ToolOutcome> {
   const toolName = safeText(tool.name, 120);
   if (!toolName || toolName === "unknown") {
-    return skippedOutcome(tool, index, "missing_tool_name", "Metadata tool did not include a usable name.");
+    return skippedOutcome(
+      tool,
+      index,
+      "missing_tool_name",
+      "Metadata tool did not include a usable name.",
+    );
   }
 
   const skip = matchedSkipRule(item, tool);
@@ -538,7 +659,12 @@ async function validateTool({
 
   const probe = matchedProbe(item, tool);
   if (!probe) {
-    return skippedOutcome(tool, index, "no_safe_probe_match", "No safe live probe matched this generated tool.");
+    return skippedOutcome(
+      tool,
+      index,
+      "no_safe_probe_match",
+      "No safe live probe matched this generated tool.",
+    );
   }
 
   const toolSessionId = `${baseSessionId}-tool-${index + 1}`;
@@ -552,6 +678,10 @@ async function validateTool({
       buildRequestId,
       traceId,
       experimentId,
+      ragEnabled: variant.ragEnabled === "true",
+      dynamicSkillSelection: variant.dynamicSkillSelection === "true",
+      skillSelectionVariant: variant.skillSelectionVariant,
+      variantId: variant.id,
       provider,
       model,
       memoryScope: `experiment:${experimentId}|case:${item.id}|tool:${toolName}`,
@@ -585,19 +715,28 @@ async function validateTool({
         result_count: 0,
         response_length: followUp.content.length,
         response_hash: followUp.content ? contentHash(followUp.content) : "",
-        diagnostic: redactDiagnostic(JSON.stringify(followUp.errors.slice(0, 2))),
+        diagnostic: redactDiagnostic(
+          JSON.stringify(followUp.errors.slice(0, 2)),
+        ),
       };
     }
 
-    const invocationEvent = await waitForInvocationEvent(buildRequestId, toolSessionId, eventsPath);
+    const invocationEvent = await waitForInvocationEvent(
+      buildRequestId,
+      toolSessionId,
+      eventsPath,
+    );
     const metrics = invocationEvent.metrics || {};
     const invocationCount = numericMetric(metrics, "mcp_tool_invocation_count");
     const resultCount = numericMetric(metrics, "mcp_tool_result_count");
     const invokedToolNames = stringArrayMetric(metrics, "invoked_tool_names");
     const resultToolNames = stringArrayMetric(metrics, "result_tool_names");
-    const expectedInvoked = invokedToolNames.includes(toolName) || resultToolNames.includes(toolName);
-    const eventSucceeded = invocationEvent.status === "success" && metrics.mcp_tool_success === true;
-    const status: ToolOutcomeStatus = eventSucceeded && expectedInvoked ? "success" : "failed";
+    const expectedInvoked =
+      invokedToolNames.includes(toolName) || resultToolNames.includes(toolName);
+    const eventSucceeded =
+      invocationEvent.status === "success" && metrics.mcp_tool_success === true;
+    const status: ToolOutcomeStatus =
+      eventSucceeded && expectedInvoked ? "success" : "failed";
 
     return {
       tool_name: toolName,
@@ -605,14 +744,24 @@ async function validateTool({
       probe_id: probe.id,
       operation: probe.operation,
       status,
-      error_code: status === "success" ? "" : (!expectedInvoked ? "expected_tool_not_invoked" : String(invocationEvent.error_code || "mcp_tool_invocation_failed")),
+      error_code:
+        status === "success"
+          ? ""
+          : !expectedInvoked
+            ? "expected_tool_not_invoked"
+            : String(
+                invocationEvent.error_code || "mcp_tool_invocation_failed",
+              ),
       invocation_count: invocationCount,
       result_count: resultCount,
       response_length: followUp.content.length,
       response_hash: followUp.content ? contentHash(followUp.content) : "",
-      diagnostic: status === "success"
-        ? ""
-        : redactDiagnostic(`invoked=${invokedToolNames.join(",") || "none"} result=${resultToolNames.join(",") || "none"}`),
+      diagnostic:
+        status === "success"
+          ? ""
+          : redactDiagnostic(
+              `invoked=${invokedToolNames.join(",") || "none"} result=${resultToolNames.join(",") || "none"}`,
+            ),
     };
   } catch (error) {
     return {
@@ -626,7 +775,9 @@ async function validateTool({
       result_count: 0,
       response_length: 0,
       response_hash: "",
-      diagnostic: redactDiagnostic(error instanceof Error ? error.message : String(error)),
+      diagnostic: redactDiagnostic(
+        error instanceof Error ? error.message : String(error),
+      ),
     };
   }
 }
@@ -640,6 +791,7 @@ async function recordToolOutcomes({
   sessionId,
   buildRequestId,
   serverId,
+  variant,
   provider,
   model,
   durationMs,
@@ -652,6 +804,7 @@ async function recordToolOutcomes({
   sessionId: string;
   buildRequestId: string;
   serverId: string;
+  variant: Variant;
   provider: string;
   model: string;
   durationMs: number;
@@ -672,18 +825,28 @@ async function recordToolOutcomes({
         sessionId,
         buildRequestId,
         serverId,
+        ragEnabled: variant.ragEnabled === "true",
+        dynamicSkillSelection: variant.dynamicSkillSelection === "true",
+        skillSelectionVariant: variant.skillSelectionVariant,
+        variantId: variant.id,
       }),
     },
     "mcp tool outcomes",
   );
   if (response.persisted === false) {
-    throw new Error("mcp_tool_outcomes_completed was not persisted. Check RESEARCH_METRICS_ENABLED.");
+    throw new Error(
+      "mcp_tool_outcomes_completed was not persisted. Check RESEARCH_METRICS_ENABLED.",
+    );
   }
 }
 
 function countOutcomes(outcomes: ToolOutcome[]): JsonRecord {
-  const failedToolNames = outcomes.filter((item) => item.status === "failed").map((item) => item.tool_name);
-  const skippedToolNames = outcomes.filter((item) => item.status === "skipped").map((item) => item.tool_name);
+  const failedToolNames = outcomes
+    .filter((item) => item.status === "failed")
+    .map((item) => item.tool_name);
+  const skippedToolNames = outcomes
+    .filter((item) => item.status === "skipped")
+    .map((item) => item.tool_name);
   const success = outcomes.filter((item) => item.status === "success").length;
   const failed = failedToolNames.length;
   const skipped = skippedToolNames.length;
@@ -695,7 +858,9 @@ function countOutcomes(outcomes: ToolOutcome[]): JsonRecord {
     successToolCount: success,
     failedToolCount: failed,
     skippedToolCount: skipped,
-    toolCallPassRate: attempted ? Number((success / attempted).toFixed(4)) : null,
+    toolCallPassRate: attempted
+      ? Number((success / attempted).toFixed(4))
+      : null,
     skippedCoverage: total ? Number((skipped / total).toFixed(4)) : null,
     failedToolNames,
     skippedToolNames,
@@ -704,20 +869,30 @@ function countOutcomes(outcomes: ToolOutcome[]): JsonRecord {
 
 function summarizeEstimatedUsage(events: ResearchEvent[]): JsonRecord {
   const metrics = events.map((event) => event.metrics || {});
-  const sum = (keys: string[]) => metrics.reduce((total, item) => {
-    for (const key of keys) {
-      const value = item[key];
-      if (typeof value === "number" && Number.isFinite(value)) return total + value;
-      if (typeof value === "string" && Number.isFinite(Number(value))) return total + Number(value);
-    }
-    return total;
-  }, 0);
+  const sum = (keys: string[]) =>
+    metrics.reduce((total, item) => {
+      for (const key of keys) {
+        const value = item[key];
+        if (typeof value === "number" && Number.isFinite(value))
+          return total + value;
+        if (typeof value === "string" && Number.isFinite(Number(value)))
+          return total + Number(value);
+      }
+      return total;
+    }, 0);
   return {
     estimatedPromptTokens: sum(["prompt_token_estimate", "prompt_tokens"]),
-    estimatedCompletionTokens: sum(["completion_token_estimate", "completion_tokens"]),
+    estimatedCompletionTokens: sum([
+      "completion_token_estimate",
+      "completion_tokens",
+    ]),
     llmCallCount: sum(["llm_calls", "llm_call_count"]),
     selectedSkillCount: sum(["selected_skill_count", "skills_selected_count"]),
-    selectedSkillTokens: sum(["skill_total_tokens", "selected_skill_tokens", "tokenCost"]),
+    selectedSkillTokens: sum([
+      "skill_total_tokens",
+      "selected_skill_tokens",
+      "tokenCost",
+    ]),
   };
 }
 
@@ -730,8 +905,12 @@ function variantEnv(variant: Variant, options: Options): NodeJS.ProcessEnv {
     RESEARCH_METRICS_ENABLED: "true",
     RESEARCH_EXPERIMENT_ID: options.experimentId,
     NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID: options.experimentId,
+    VARIANT_ID: variant.id,
     RESEARCH_EVENTS_DB: env("RESEARCH_EVENTS_DB", "docker"),
-    RESEARCH_EVENTS_COLLECTION: env("RESEARCH_EVENTS_COLLECTION", "research_events"),
+    RESEARCH_EVENTS_COLLECTION: env(
+      "RESEARCH_EVENTS_COLLECTION",
+      "research_events",
+    ),
     RESEARCH_EVENTS_JSONL_PATH: options.eventsPath,
     RESEARCH_EVENTS_JSONL_MIRROR: "true",
   };
@@ -740,28 +919,55 @@ function variantEnv(variant: Variant, options: Options): NodeJS.ProcessEnv {
 async function waitForStack(options: Options): Promise<void> {
   await poll(
     "chatbot backend health",
-    async () => fetchJson(`${baseUrl(options.backendUrl)}/health`, undefined, "backend health"),
+    async () =>
+      fetchJson(
+        `${baseUrl(options.backendUrl)}/health`,
+        undefined,
+        "backend health",
+      ),
     () => true,
     Number(env("BACKEND_TOOLCALL_STACK_TIMEOUT_MS", "120000")),
   );
   await poll(
     "mcp manager stats",
-    async () => fetchJson(`${baseUrl(options.managerUrl)}/api/mcp/stats`, undefined, "mcp manager stats"),
+    async () =>
+      fetchJson(
+        `${baseUrl(options.managerUrl)}/api/mcp/stats`,
+        undefined,
+        "mcp manager stats",
+      ),
     () => true,
     Number(env("BACKEND_TOOLCALL_STACK_TIMEOUT_MS", "120000")),
   );
 }
 
-async function applyVariantEnvironment(variant: Variant, options: Options): Promise<void> {
+async function applyVariantEnvironment(
+  variant: Variant,
+  options: Options,
+): Promise<void> {
   const effectiveEnv = variantEnv(variant, options);
   for (const [key, value] of Object.entries(effectiveEnv)) {
-    if (["DYNAMIC_SKILL_SELECTION", "SKILL_SELECTION_VARIANT", "RAG_ENABLED", "RESEARCH_METRICS_ENABLED", "RESEARCH_EXPERIMENT_ID", "NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID", "RESEARCH_EVENTS_JSONL_PATH", "RESEARCH_EVENTS_JSONL_MIRROR"].includes(key)) {
+    if (
+      [
+        "DYNAMIC_SKILL_SELECTION",
+        "SKILL_SELECTION_VARIANT",
+        "RAG_ENABLED",
+        "VARIANT_ID",
+        "RESEARCH_METRICS_ENABLED",
+        "RESEARCH_EXPERIMENT_ID",
+        "NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID",
+        "RESEARCH_EVENTS_JSONL_PATH",
+        "RESEARCH_EVENTS_JSONL_MIRROR",
+      ].includes(key)
+    ) {
       process.env[key] = value || "";
     }
   }
   ensureDir(path.dirname(localEventsPath(options.eventsPath)));
   if (!options.restartStack) return;
-  console.info(`[backend-toolcall-matrix] restarting compose stack for variant=${variant.id}`);
+  console.info(
+    `[backend-toolcall-matrix] restarting compose stack for variant=${variant.id}`,
+  );
   execSync("docker compose up -d --build", {
     cwd: root,
     stdio: "inherit",
@@ -770,7 +976,12 @@ async function applyVariantEnvironment(variant: Variant, options: Options): Prom
   await waitForStack(options);
 }
 
-async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, options: Options): Promise<JsonRecord> {
+async function runOne(
+  item: MatrixCase,
+  variant: Variant,
+  repeatIndex: number,
+  options: Options,
+): Promise<JsonRecord> {
   const traceId = randomUUID();
   const buildRequestId = `${options.experimentId}-${variant.id}-${item.id}-r${repeatIndex}-${traceId.slice(0, 8)}`;
   const sessionId = `session-${options.experimentId}-${variant.id}-${item.id}-r${repeatIndex}`;
@@ -815,6 +1026,10 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       buildRequestId,
       traceId,
       experimentId: options.experimentId,
+      ragEnabled: variant.ragEnabled === "true",
+      dynamicSkillSelection: variant.dynamicSkillSelection === "true",
+      skillSelectionVariant: variant.skillSelectionVariant,
+      variantId: variant.id,
       provider: options.provider,
       model: options.model,
       memoryScope: `experiment:${options.experimentId}|case:${item.id}|variant:${variant.id}`,
@@ -825,14 +1040,25 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     const buildStatus = String(buildComplete.status || "");
 
     if (!build.response.ok || build.errors.length > 0) {
-      throw new Error(`Build chat failed: HTTP ${build.response.status}; errors=${JSON.stringify(build.errors)}`);
+      throw new Error(
+        `Build chat failed: HTTP ${build.response.status}; errors=${JSON.stringify(build.errors)}`,
+      );
     }
 
-    const managerStatus = await waitForManagerStatus(options.managerUrl, serverId, buildRequestId);
+    const managerStatus = await waitForManagerStatus(
+      options.managerUrl,
+      serverId,
+      buildRequestId,
+    );
     if (!mcpUrl) {
-      mcpUrl = extractMcpServerUrl(managerStatus as SseEvent) || String(managerStatus.publicUrl || "");
+      mcpUrl =
+        extractMcpServerUrl(managerStatus as SseEvent) ||
+        String(managerStatus.publicUrl || "");
     }
-    if (!mcpUrl) throw new Error(`Could not extract generated MCP URL. Build event=${JSON.stringify(buildComplete)} Manager status=${JSON.stringify(managerStatus)}`);
+    if (!mcpUrl)
+      throw new Error(
+        `Could not extract generated MCP URL. Build event=${JSON.stringify(buildComplete)} Manager status=${JSON.stringify(managerStatus)}`,
+      );
 
     const metadataStartedAt = Date.now();
     const metadata = await checkMetadata({
@@ -842,32 +1068,38 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       experimentId: options.experimentId,
       sessionId,
       buildRequestId,
-      serverId: serverId || String(managerStatus.serverId || ""),
+      serverId,
     });
     const tools = Array.isArray(metadata.tools) ? metadata.tools : [];
-    const runtimeMetadataOk = metadata.status === "connected" && tools.length > 0;
+    const runtimeMetadataOk =
+      metadata.status === "connected" && tools.length > 0;
     const metadataDurationMs = Date.now() - metadataStartedAt;
     if (!runtimeMetadataOk) {
-      throw new Error(`MCP metadata did not connect with tools: ${JSON.stringify(metadata)}`);
+      throw new Error(
+        `MCP metadata did not connect with tools: ${JSON.stringify(metadata)}`,
+      );
     }
 
     const outcomeStartedAt = Date.now();
     const outcomes: ToolOutcome[] = [];
     for (const [index, tool] of tools.entries()) {
-      outcomes.push(await validateTool({
-        item,
-        backendUrl: options.backendUrl,
-        mcpUrl,
-        tool,
-        index,
-        buildRequestId,
-        traceId,
-        experimentId: options.experimentId,
-        baseSessionId: sessionId,
-        provider: options.provider,
-        model: options.model,
-        eventsPath: options.eventsPath,
-      }));
+      outcomes.push(
+        await validateTool({
+          item,
+          backendUrl: options.backendUrl,
+          mcpUrl,
+          tool,
+          index,
+          buildRequestId,
+          traceId,
+          experimentId: options.experimentId,
+          variant,
+          baseSessionId: sessionId,
+          provider: options.provider,
+          model: options.model,
+          eventsPath: options.eventsPath,
+        }),
+      );
     }
     await recordToolOutcomes({
       backendUrl: options.backendUrl,
@@ -877,7 +1109,8 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       experimentId: options.experimentId,
       sessionId,
       buildRequestId,
-      serverId: serverId || String(managerStatus.serverId || ""),
+      serverId,
+      variant,
       provider: options.provider,
       model: options.model,
       durationMs: Date.now() - outcomeStartedAt,
@@ -889,7 +1122,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       ...baseResult,
       statusCode: build.response.status,
       ok: true,
-      serverId: serverId || String(managerStatus.serverId || ""),
+      serverId,
       mcpUrl: redactUrl(mcpUrl),
       buildStatus,
       durationMs: Date.now() - startedAt,
@@ -918,18 +1151,41 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       failedToolCount: 0,
       skippedToolCount: 0,
       errorCode: "benchmark_run_error",
-      diagnostic: redactDiagnostic(error instanceof Error ? error.message : String(error)),
+      diagnostic: redactDiagnostic(
+        error instanceof Error ? error.message : String(error),
+      ),
     };
   }
 }
 
 function parseOptions(): Options {
-  const experimentId = arg("experiment-id", `backend-toolcall-matrix-${new Date().toISOString().slice(0, 10)}`);
-  const eventsPath = arg("events", env("RESEARCH_EVENTS_JSONL_PATH", "/repo/reports/backend-toolcall-matrix/research-events.jsonl"));
+  const experimentId = arg(
+    "experiment-id",
+    `backend-toolcall-matrix-${new Date().toISOString().slice(0, 10)}`,
+  );
+  const eventsPath = arg(
+    "events",
+    env(
+      "RESEARCH_EVENTS_JSONL_PATH",
+      "/repo/reports/backend-toolcall-matrix/research-events.jsonl",
+    ),
+  );
   const dryRun = flag("dry-run", false) || flag("validate-only", false);
   return {
-    datasetPath: path.resolve(root, arg("dataset", "experiments/research-metrics/backend_toolcall_matrix_dataset.json")),
-    outputPath: path.resolve(root, arg("output", "experiments/research-metrics/backend-toolcall-matrix-runs.jsonl")),
+    datasetPath: path.resolve(
+      root,
+      arg(
+        "dataset",
+        "experiments/research-metrics/backend_toolcall_matrix_dataset.json",
+      ),
+    ),
+    outputPath: path.resolve(
+      root,
+      arg(
+        "output",
+        "experiments/research-metrics/backend-toolcall-matrix-runs.jsonl",
+      ),
+    ),
     eventsPath,
     experimentId,
     variants: csvArg("variants"),
@@ -938,37 +1194,83 @@ function parseOptions(): Options {
     repeats: Number(arg("repeats", "1")),
     provider: arg("provider", env("BACKEND_TOOLCALL_PROVIDER", "gemini")),
     model: arg("model", env("BACKEND_TOOLCALL_MODEL", "gemini-2.5-flash")),
-    backendUrl: arg("backend-url", env("E2E_BACKEND_URL", "http://localhost:8000")),
-    managerUrl: arg("manager-url", env("E2E_MCP_MANAGER_URL", "http://localhost:8080")),
+    backendUrl: arg(
+      "backend-url",
+      env("E2E_BACKEND_URL", "http://localhost:8000"),
+    ),
+    managerUrl: arg(
+      "manager-url",
+      env("E2E_MCP_MANAGER_URL", "http://localhost:8080"),
+    ),
     dryRun,
     restartStack: flag("restart-stack", !dryRun),
   };
 }
 
 function selectCases(dataset: MatrixCase[], options: Options): MatrixCase[] {
-  let selected = options.cases.length > 0 ? dataset.filter((item) => options.cases.includes(item.id)) : dataset;
+  let selected =
+    options.cases.length > 0
+      ? dataset.filter((item) => options.cases.includes(item.id))
+      : dataset;
   if (options.limit > 0) selected = selected.slice(0, options.limit);
   return selected;
 }
 
 function selectVariants(options: Options): Variant[] {
-  return options.variants.length > 0 ? variants.filter((item) => options.variants.includes(item.id)) : variants;
+  return options.variants.length > 0
+    ? variants.filter((item) => options.variants.includes(item.id))
+    : variants;
 }
 
 function validateDataset(dataset: MatrixCase[]): void {
-  if (!Array.isArray(dataset) || dataset.length === 0) throw new Error("Dataset must contain at least one case.");
+  if (!Array.isArray(dataset) || dataset.length === 0)
+    throw new Error("Dataset must contain at least one case.");
   for (const item of dataset) {
-    if (!item.id || !item.apiType || !item.baseUrl || (!item.prompt && !item.inputPath)) throw new Error(`Dataset case is missing required fields: ${JSON.stringify(item)}`);
-    if (!/^https?:\/\//.test(item.baseUrl)) throw new Error(`Dataset case ${item.id} has invalid baseUrl: ${item.baseUrl}`);
-    if (item.inputPath && !fs.existsSync(path.resolve(root, item.inputPath))) throw new Error(`Dataset case ${item.id} inputPath does not exist: ${item.inputPath}`);
-    if (item.authInfoPath && !fs.existsSync(path.resolve(root, item.authInfoPath))) throw new Error(`Dataset case ${item.id} authInfoPath does not exist: ${item.authInfoPath}`);
-    if (!Array.isArray(item.probes)) throw new Error(`Dataset case ${item.id} probes must be an array.`);
-    if (item.probes.length === 0 && (!Array.isArray(item.skipRules) || item.skipRules.length === 0)) {
-      throw new Error(`Dataset case ${item.id} must define at least one safe probe or explicit skip rule.`);
+    if (
+      !item.id ||
+      !item.apiType ||
+      !item.baseUrl ||
+      (!item.prompt && !item.inputPath)
+    )
+      throw new Error(
+        `Dataset case is missing required fields: ${JSON.stringify(item)}`,
+      );
+    if (!/^https?:\/\//.test(item.baseUrl))
+      throw new Error(
+        `Dataset case ${item.id} has invalid baseUrl: ${item.baseUrl}`,
+      );
+    if (item.inputPath && !fs.existsSync(path.resolve(root, item.inputPath)))
+      throw new Error(
+        `Dataset case ${item.id} inputPath does not exist: ${item.inputPath}`,
+      );
+    if (
+      item.authInfoPath &&
+      !fs.existsSync(path.resolve(root, item.authInfoPath))
+    )
+      throw new Error(
+        `Dataset case ${item.id} authInfoPath does not exist: ${item.authInfoPath}`,
+      );
+    if (!Array.isArray(item.probes))
+      throw new Error(`Dataset case ${item.id} probes must be an array.`);
+    if (
+      item.probes.length === 0 &&
+      (!Array.isArray(item.skipRules) || item.skipRules.length === 0)
+    ) {
+      throw new Error(
+        `Dataset case ${item.id} must define at least one safe probe or explicit skip rule.`,
+      );
     }
     for (const probe of item.probes) {
-      if (!probe.id || !probe.operation || !Array.isArray(probe.match) || probe.match.length === 0 || !probe.prompt.includes("{toolName}")) {
-        throw new Error(`Dataset case ${item.id} has invalid probe: ${JSON.stringify(probe)}`);
+      if (
+        !probe.id ||
+        !probe.operation ||
+        !Array.isArray(probe.match) ||
+        probe.match.length === 0 ||
+        !probe.prompt.includes("{toolName}")
+      ) {
+        throw new Error(
+          `Dataset case ${item.id} has invalid probe: ${JSON.stringify(probe)}`,
+        );
       }
     }
   }
@@ -976,12 +1278,16 @@ function validateDataset(dataset: MatrixCase[]): void {
 
 async function main(): Promise<void> {
   const options = parseOptions();
-  const dataset = materializeDataset(readJson<MatrixCase[]>(options.datasetPath));
+  const dataset = materializeDataset(
+    readJson<MatrixCase[]>(options.datasetPath),
+  );
   validateDataset(dataset);
   const selectedCases = selectCases(dataset, options);
   const selectedVariants = selectVariants(options);
-  if (selectedCases.length === 0) throw new Error("No benchmark cases selected.");
-  if (selectedVariants.length === 0) throw new Error("No benchmark variants selected.");
+  if (selectedCases.length === 0)
+    throw new Error("No benchmark cases selected.");
+  if (selectedVariants.length === 0)
+    throw new Error("No benchmark variants selected.");
 
   const plan = {
     type: "backend_toolcall_matrix_plan",
@@ -1027,6 +1333,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error("[backend-toolcall-matrix-error]", error instanceof Error ? error.message : String(error));
+  console.error(
+    "[backend-toolcall-matrix-error]",
+    error instanceof Error ? error.message : String(error),
+  );
   process.exit(1);
 });

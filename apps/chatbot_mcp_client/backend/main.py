@@ -117,6 +117,10 @@ class McpToolOutcomesRequest(BaseModel):
     sessionId: Optional[str] = None
     buildRequestId: Optional[str] = None
     serverId: Optional[str] = None
+    ragEnabled: Optional[bool] = None
+    dynamicSkillSelection: Optional[bool] = None
+    skillSelectionVariant: Optional[str] = None
+    variantId: Optional[str] = None
 
 class AgentState:
     def __init__(self):
