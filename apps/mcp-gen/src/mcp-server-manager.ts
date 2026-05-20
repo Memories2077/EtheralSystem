@@ -981,6 +981,8 @@ export class MCPServerManager {
       publicUrl: server.publicUrl,
       claudeConfig: this.generateClaudeConfig(server.serverId, server),
       status: server.status,
+      containerId: server.containerId,
+      hostPort: server.hostPort,
       buildRequestId: server.buildRequestId,
       traceId: server.traceId,
       experimentId: server.experimentId,

@@ -112,4 +112,110 @@ describe("research report export dashboard run rows", () => {
     expect(byVariant).toContain("static-rag-off");
     expect(byVariant).toContain("dynamic-rag-on");
   });
+
+  it("writes API-doc batch reports with Inspector and cleanup columns", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "etheral-report-export-batch-"));
+    const eventsPath = path.join(dir, "events.jsonl");
+    const runsPath = path.join(dir, "runs.jsonl");
+    const matrixPath = path.join(dir, "matrix.jsonl");
+    const outputDir = path.join(dir, "report");
+
+    writeJsonl(eventsPath, [
+      {
+        event_name: "mcp_create_completed",
+        service: "mcp-gen",
+        status: "success",
+        duration_ms: 100,
+        experiment_id: "batch-test",
+        build_request_id: "build-jsonplaceholder",
+        server_id: "server-jsonplaceholder",
+      },
+      {
+        event_name: "mcp_create_completed",
+        service: "mcp-gen",
+        status: "success",
+        duration_ms: 100,
+        experiment_id: "batch-test",
+        build_request_id: "build-reddit",
+        server_id: "server-reddit",
+      },
+    ]);
+    writeJsonl(runsPath, []);
+    writeJsonl(matrixPath, [
+      {
+        type: "benchmark_result",
+        benchmarkType: "backend_toolcall_matrix",
+        experimentId: "batch-test",
+        apiDocId: "jsonplaceholder-input-doc",
+        caseId: "jsonplaceholder-input-doc",
+        itemId: "jsonplaceholder-input-doc",
+        apiType: "public_crud_input_doc",
+        variantId: "static-rag-off",
+        skillSelectionMode: "static",
+        ragEnabled: "false",
+        repeatIndex: 1,
+        buildRequestId: "build-jsonplaceholder",
+        ok: true,
+        runtimeMetadataOk: true,
+        durationMs: 100,
+        totalToolCount: 2,
+        attemptedToolCount: 1,
+        successToolCount: 1,
+        skippedToolCount: 1,
+        inspectorAttemptedToolCount: 1,
+        inspectorSuccessToolCount: 1,
+        inspectorSkippedToolCount: 1,
+        cleanupAttempted: true,
+        cleanupStatus: "removed",
+        containerRemovedCount: 1,
+      },
+      {
+        type: "benchmark_result",
+        benchmarkType: "backend_toolcall_matrix",
+        experimentId: "batch-test",
+        apiDocId: "reddit-input-doc",
+        caseId: "reddit-input-doc",
+        itemId: "reddit-input-doc",
+        apiType: "oauth_auth_input_doc",
+        variantId: "static-rag-off",
+        skillSelectionMode: "static",
+        ragEnabled: "false",
+        repeatIndex: 1,
+        buildRequestId: "build-reddit",
+        ok: true,
+        runtimeMetadataOk: true,
+        durationMs: 100,
+        totalToolCount: 1,
+        attemptedToolCount: 0,
+        successToolCount: 0,
+        skippedToolCount: 1,
+        inspectorAttemptedToolCount: 0,
+        inspectorSuccessToolCount: 0,
+        inspectorSkippedToolCount: 1,
+        cleanupAttempted: true,
+        cleanupStatus: "failed",
+        containerFailedCount: 1,
+      },
+    ]);
+
+    const result = spawnSync("bun", [
+      "scripts/research/export-research-report.ts",
+      `--events=${eventsPath}`,
+      `--runs=${runsPath}`,
+      `--matrix-runs=${matrixPath}`,
+      "--experiment-id=batch-test",
+      "--api-doc-id=jsonplaceholder-input-doc",
+      `--output-dir=${outputDir}`,
+    ], { cwd: path.resolve(import.meta.dir, "../.."), encoding: "utf8" });
+
+    expect(result.status).toBe(0);
+    const byApiDoc = readFileSync(path.join(outputDir, "toolcall_by_api_doc.csv"), "utf8");
+    expect(byApiDoc).toContain("inspector_pass_rate");
+    expect(byApiDoc).toContain("cleanup_success_rate");
+    expect(byApiDoc).toContain("jsonplaceholder-input-doc");
+    expect(byApiDoc).not.toContain("reddit-input-doc");
+
+    const summary = readFileSync(path.join(outputDir, "summary.md"), "utf8");
+    expect(summary).toContain("API Doc Batch: jsonplaceholder-input-doc");
+  });
 });

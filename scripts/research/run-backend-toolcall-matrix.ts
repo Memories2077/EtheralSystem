@@ -2,8 +2,19 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID, createHash } from "crypto";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { MongoClient } from "mongodb";
+import { validateInputDocFixture } from "./input-doc-format";
+import { buildMatrixPlan, ensureExpectedBuildCount } from "./matrix-plan";
+import {
+  inspectorCallTool,
+  inspectorListTools,
+  skippedInspectorOutcome,
+  summarizeInspectorOutcomes,
+  type InspectorCallOutcome,
+} from "./inspector-cli";
+import { cleanupGeneratedContainer, type CleanupResult } from "./container-cleanup";
+import { buildResearchVariantEnv } from "./rag-env";
 
 const root = process.cwd();
 
@@ -14,6 +25,7 @@ type ProbeDefinition = {
   operation: string;
   match: string[];
   prompt: string;
+  toolArgs?: Record<string, unknown>;
 };
 
 type SkipRule = {
@@ -32,6 +44,9 @@ type MatrixCase = {
   authInfoPath?: string;
   inputDocHash?: string;
   authInfoHash?: string;
+  apiDocId?: string;
+  fixtureFormatVersion?: string;
+  declaredEndpointCount?: number;
   probes: ProbeDefinition[];
   skipRules?: SkipRule[];
 };
@@ -51,6 +66,7 @@ type SseEvent = JsonRecord & {
   status?: string;
   mcpServerUrl?: string;
   publicUrl?: string;
+  containerId?: string;
   config?: { mcpServers?: Record<string, { args?: unknown[] }> };
   claudeConfig?: { mcpServers?: Record<string, { args?: unknown[] }> };
 };
@@ -104,6 +120,10 @@ type Options = {
   managerUrl: string;
   dryRun: boolean;
   restartStack: boolean;
+  cleanupContainers: boolean;
+  verifyRagEnv: boolean;
+  expectedBuildCount?: number;
+  requireAllVariants: boolean;
 };
 
 const variants: Variant[] = [
@@ -182,6 +202,7 @@ function readOptionalText(filePath?: string): string {
 function materializeCase(item: MatrixCase): MatrixCase {
   const apiDoc = readOptionalText(item.inputPath);
   const authInfo = readOptionalText(item.authInfoPath);
+  const fixture = item.inputPath ? validateInputDocFixture(path.resolve(root, item.inputPath)) : undefined;
   const promptParts = [
     item.prompt || "Create an MCP Server from the following API documentation. Treat credentials as user-provided tool arguments; do not load secrets from environment variables.",
     apiDoc ? `API documentation source: ${item.inputPath}\n\n${apiDoc}` : "",
@@ -192,6 +213,9 @@ function materializeCase(item: MatrixCase): MatrixCase {
     prompt: promptParts.join("\n\n---\n\n"),
     inputDocHash: apiDoc ? contentHash(apiDoc) : undefined,
     authInfoHash: authInfo ? contentHash(authInfo) : undefined,
+    apiDocId: fixture?.apiId || item.id,
+    fixtureFormatVersion: fixture?.formatVersion,
+    declaredEndpointCount: fixture?.declaredEndpointCount,
   };
 }
 
@@ -309,6 +333,7 @@ async function postChat({
   provider,
   model,
   memoryScope,
+  variant,
 }: {
   backendUrl: string;
   messages: Array<{ role: string; content: string }>;
@@ -320,6 +345,7 @@ async function postChat({
   provider: string;
   model: string;
   memoryScope: string;
+  variant?: Variant;
 }): Promise<{ response: Response; events: SseEvent[]; content: string; errors: SseEvent[] }> {
   const response = await fetch(`${baseUrl(backendUrl)}/chat`, {
     method: "POST",
@@ -338,6 +364,14 @@ async function postChat({
       workspaceId: "backend_toolcall_matrix",
       email: "backend-toolcall-matrix@local",
       memoryScope,
+      ...(variant
+        ? {
+            ragEnabled: variant.ragEnabled === "true",
+            dynamicSkillSelection: variant.dynamicSkillSelection === "true",
+            skillSelectionVariant: variant.skillSelectionVariant,
+            variantId: variant.id,
+          }
+        : {}),
     }),
   });
   const parsed = await readSse(response);
@@ -631,6 +665,159 @@ async function validateTool({
   }
 }
 
+function failedDirectOutcome(
+  toolName: string,
+  index: number,
+  probe: ProbeDefinition | undefined,
+  errorCode: string,
+  diagnostic: string,
+): ToolOutcome {
+  return {
+    tool_name: toolName,
+    index,
+    probe_id: probe?.id,
+    operation: probe?.operation,
+    status: "failed",
+    error_code: errorCode,
+    invocation_count: 0,
+    result_count: 0,
+    response_length: 0,
+    response_hash: "",
+    diagnostic: redactDiagnostic(diagnostic),
+  };
+}
+
+function normalizeDirectOutcome(raw: unknown, fallback: ToolOutcome): ToolOutcome {
+  const data = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const rawStatus = String(data.status || "");
+  const status: ToolOutcomeStatus = rawStatus === "success" || rawStatus === "skipped" || rawStatus === "failed"
+    ? rawStatus
+    : fallback.status;
+  return {
+    tool_name: safeText(data.tool_name || data.toolName || data.name || fallback.tool_name, 120),
+    index: Number(data.index ?? fallback.index),
+    probe_id: typeof data.probe_id === "string" ? data.probe_id : fallback.probe_id,
+    operation: typeof data.operation === "string" ? data.operation : fallback.operation,
+    status,
+    error_code: safeText(data.error_code || data.errorCode || fallback.error_code, 120),
+    invocation_count: Number(data.invocation_count ?? data.invocationCount ?? fallback.invocation_count ?? 0),
+    result_count: Number(data.result_count ?? data.resultCount ?? fallback.result_count ?? 0),
+    response_length: Number(data.response_length ?? data.responseLength ?? fallback.response_length ?? 0),
+    response_hash: safeText(data.response_hash || data.responseHash || fallback.response_hash, 32),
+    diagnostic: redactDiagnostic(String(data.diagnostic || fallback.diagnostic || "")),
+  };
+}
+
+async function validateDirectTools({
+  item,
+  backendUrl,
+  mcpUrl,
+  tools,
+  buildRequestId,
+  traceId,
+  experimentId,
+  sessionId,
+  serverId,
+  variant,
+}: {
+  item: MatrixCase;
+  backendUrl: string;
+  mcpUrl: string;
+  tools: MetadataTool[];
+  buildRequestId: string;
+  traceId: string;
+  experimentId: string;
+  sessionId: string;
+  serverId: string;
+  variant: Variant;
+}): Promise<ToolOutcome[]> {
+  const outcomes: ToolOutcome[] = [];
+  const directProbes: Array<{
+    toolName: string;
+    index: number;
+    probeId?: string;
+    operation?: string;
+    toolArgs?: Record<string, unknown>;
+  }> = [];
+  const fallbacks = new Map<number, ToolOutcome>();
+
+  for (const [index, tool] of tools.entries()) {
+    const toolName = safeText(tool.name || `tool-${index + 1}`, 120);
+    if (!toolName || toolName === "unknown") {
+      outcomes.push(skippedOutcome(tool, index, "missing_tool_name", "Metadata tool did not include a usable name."));
+      continue;
+    }
+
+    const skip = matchedSkipRule(item, tool);
+    if (skip) {
+      outcomes.push(skippedOutcome(tool, index, skip.errorCode, skip.diagnostic));
+      continue;
+    }
+
+    const probe = matchedProbe(item, tool);
+    if (!probe) {
+      outcomes.push(skippedOutcome(tool, index, "no_safe_probe_match", "No safe direct MCP probe matched this generated tool."));
+      continue;
+    }
+
+    const fallback = failedDirectOutcome(toolName, index, probe, "direct_mcp_tool_probe_missing", "Backend did not return a direct MCP tool outcome.");
+    outcomes.push(fallback);
+    fallbacks.set(index, fallback);
+    directProbes.push({
+      toolName,
+      index,
+      probeId: probe.id,
+      operation: probe.operation,
+      toolArgs: probe.toolArgs || {},
+    });
+  }
+
+  if (directProbes.length === 0) return outcomes;
+
+  try {
+    const response = await fetchJson(
+      `${baseUrl(backendUrl)}/mcp/tool-probes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: mcpUrl,
+          probes: directProbes,
+          traceId,
+          experimentId,
+          sessionId,
+          buildRequestId,
+          serverId,
+          ragEnabled: variant.ragEnabled === "true",
+          dynamicSkillSelection: variant.dynamicSkillSelection === "true",
+          skillSelectionVariant: variant.skillSelectionVariant,
+          variantId: variant.id,
+        }),
+      },
+      "mcp direct tool probes",
+    );
+    const rawOutcomes = Array.isArray(response.outcomes) ? response.outcomes : [];
+    for (const raw of rawOutcomes) {
+      const index = Number((raw as Record<string, unknown>)?.index);
+      const fallback = fallbacks.get(index);
+      if (!fallback) continue;
+      outcomes[index] = normalizeDirectOutcome(raw, fallback);
+    }
+    return outcomes;
+  } catch (error) {
+    for (const probe of directProbes) {
+      const fallback = fallbacks.get(probe.index);
+      if (!fallback) continue;
+      outcomes[probe.index] = {
+        ...fallback,
+        error_code: "direct_mcp_tool_probe_error",
+        diagnostic: redactDiagnostic(error instanceof Error ? error.message : String(error)),
+      };
+    }
+    return outcomes;
+  }
+}
+
 async function recordToolOutcomes({
   backendUrl,
   mcpUrl,
@@ -643,6 +830,7 @@ async function recordToolOutcomes({
   provider,
   model,
   durationMs,
+  variant,
 }: {
   backendUrl: string;
   mcpUrl: string;
@@ -655,6 +843,7 @@ async function recordToolOutcomes({
   provider: string;
   model: string;
   durationMs: number;
+  variant: Variant;
 }): Promise<void> {
   const response = await fetchJson(
     `${baseUrl(backendUrl)}/mcp/tool-outcomes`,
@@ -672,6 +861,10 @@ async function recordToolOutcomes({
         sessionId,
         buildRequestId,
         serverId,
+        ragEnabled: variant.ragEnabled === "true",
+        dynamicSkillSelection: variant.dynamicSkillSelection === "true",
+        skillSelectionVariant: variant.skillSelectionVariant,
+        variantId: variant.id,
       }),
     },
     "mcp tool outcomes",
@@ -702,6 +895,56 @@ function countOutcomes(outcomes: ToolOutcome[]): JsonRecord {
   };
 }
 
+function skippedCleanupResult(reason: string): CleanupResult {
+  return {
+    cleanupAttempted: false,
+    cleanupStatus: "skipped",
+    cleanupMethod: "none",
+    cleanupDurationMs: 0,
+    cleanupError: reason,
+    containerRemovedCount: 0,
+    containerSkippedCount: 1,
+    containerFailedCount: 0,
+  };
+}
+
+function validateInspectorTools(item: MatrixCase, mcpUrl: string, tools: MetadataTool[]): JsonRecord {
+  const list = inspectorListTools(mcpUrl);
+  const outcomes: InspectorCallOutcome[] = [];
+
+  for (const [index, tool] of tools.entries()) {
+    const toolName = safeText(tool.name || `tool-${index + 1}`, 120);
+    const skip = matchedSkipRule(item, tool);
+    if (skip) {
+      outcomes.push(skippedInspectorOutcome(toolName, index, skip.errorCode, skip.diagnostic));
+      continue;
+    }
+
+    const probe = matchedProbe(item, tool);
+    if (!probe) {
+      outcomes.push(skippedInspectorOutcome(toolName, index, "no_safe_probe_match", "No safe Inspector probe matched this generated tool."));
+      continue;
+    }
+
+    outcomes.push(inspectorCallTool({
+      mcpUrl,
+      toolName,
+      index,
+      probeId: probe.id,
+      operation: probe.operation,
+      toolArgs: probe.toolArgs || {},
+    }));
+  }
+
+  return {
+    inspectorConnected: list.connected,
+    inspectorToolCount: list.toolCount,
+    inspectorDiagnostic: redactDiagnostic(list.diagnostic),
+    inspectorOutcomes: outcomes,
+    ...summarizeInspectorOutcomes(outcomes),
+  };
+}
+
 function summarizeEstimatedUsage(events: ResearchEvent[]): JsonRecord {
   const metrics = events.map((event) => event.metrics || {});
   const sum = (keys: string[]) => metrics.reduce((total, item) => {
@@ -722,19 +965,14 @@ function summarizeEstimatedUsage(events: ResearchEvent[]): JsonRecord {
 }
 
 function variantEnv(variant: Variant, options: Options): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    DYNAMIC_SKILL_SELECTION: variant.dynamicSkillSelection,
-    SKILL_SELECTION_VARIANT: variant.skillSelectionVariant,
-    RAG_ENABLED: variant.ragEnabled,
-    RESEARCH_METRICS_ENABLED: "true",
-    RESEARCH_EXPERIMENT_ID: options.experimentId,
-    NEXT_PUBLIC_RESEARCH_EXPERIMENT_ID: options.experimentId,
-    RESEARCH_EVENTS_DB: env("RESEARCH_EVENTS_DB", "docker"),
-    RESEARCH_EVENTS_COLLECTION: env("RESEARCH_EVENTS_COLLECTION", "research_events"),
-    RESEARCH_EVENTS_JSONL_PATH: options.eventsPath,
-    RESEARCH_EVENTS_JSONL_MIRROR: "true",
-  };
+  return buildResearchVariantEnv({
+    variant,
+    experimentId: options.experimentId,
+    eventsPath: options.eventsPath,
+    baseEnv: process.env,
+    researchEventsDb: env("RESEARCH_EVENTS_DB", "docker"),
+    researchEventsCollection: env("RESEARCH_EVENTS_COLLECTION", "research_events"),
+  });
 }
 
 async function waitForStack(options: Options): Promise<void> {
@@ -752,6 +990,44 @@ async function waitForStack(options: Options): Promise<void> {
   );
 }
 
+function readContainerEnv(containerName: string): Record<string, string> {
+  const output = execFileSync("docker", ["exec", containerName, "env"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  return Object.fromEntries(
+    output
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        const idx = line.indexOf("=");
+        return idx === -1 ? [line, ""] : [line.slice(0, idx), line.slice(idx + 1)];
+      }),
+  );
+}
+
+function verifyRagEnvironment(variant: Variant): void {
+  const expected = variant.ragEnabled;
+  const containers = env("BACKEND_TOOLCALL_RAG_ENV_CONTAINERS", "agent-service,chatbot-backend")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const mismatches: string[] = [];
+  for (const container of containers) {
+    try {
+      const containerEnv = readContainerEnv(container);
+      if (containerEnv.RAG_ENABLED !== expected) {
+        mismatches.push(`${container}: RAG_ENABLED=${containerEnv.RAG_ENABLED || "(unset)"}`);
+      }
+    } catch (error) {
+      mismatches.push(`${container}: unable to inspect env (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+  if (mismatches.length > 0) {
+    throw new Error(`Variant ${variant.id} expected RAG_ENABLED=${expected}; ${mismatches.join("; ")}`);
+  }
+}
+
 async function applyVariantEnvironment(variant: Variant, options: Options): Promise<void> {
   const effectiveEnv = variantEnv(variant, options);
   for (const [key, value] of Object.entries(effectiveEnv)) {
@@ -760,7 +1036,10 @@ async function applyVariantEnvironment(variant: Variant, options: Options): Prom
     }
   }
   ensureDir(path.dirname(localEventsPath(options.eventsPath)));
-  if (!options.restartStack) return;
+  if (!options.restartStack) {
+    if (options.verifyRagEnv) verifyRagEnvironment(variant);
+    return;
+  }
   console.info(`[backend-toolcall-matrix] restarting compose stack for variant=${variant.id}`);
   execSync("docker compose up -d --build", {
     cwd: root,
@@ -768,6 +1047,7 @@ async function applyVariantEnvironment(variant: Variant, options: Options): Prom
     env: effectiveEnv,
   });
   await waitForStack(options);
+  if (options.verifyRagEnv) verifyRagEnvironment(variant);
 }
 
 async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, options: Options): Promise<JsonRecord> {
@@ -775,6 +1055,9 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
   const buildRequestId = `${options.experimentId}-${variant.id}-${item.id}-r${repeatIndex}-${traceId.slice(0, 8)}`;
   const sessionId = `session-${options.experimentId}-${variant.id}-${item.id}-r${repeatIndex}`;
   const startedAt = Date.now();
+  let serverId = "";
+  let mcpUrl = "";
+  let containerId = "";
   const baseResult: JsonRecord = {
     type: "benchmark_result",
     benchmarkType: "backend_toolcall_matrix",
@@ -782,6 +1065,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     experimentId: options.experimentId,
     caseId: item.id,
     itemId: item.id,
+    apiDocId: item.apiDocId || item.id,
     apiType: item.apiType,
     caseTitle: item.title,
     baseUrl: item.baseUrl,
@@ -789,6 +1073,9 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     authInfoPath: item.authInfoPath || "",
     inputDocHash: item.inputDocHash || "",
     authInfoHash: item.authInfoHash || "",
+    fixtureFormatVersion: item.fixtureFormatVersion || "",
+    declaredEndpointCount: item.declaredEndpointCount || 0,
+    expectedBuildCount: options.expectedBuildCount || 0,
     variantId: variant.id,
     mode: "backend-api-toolcall",
     skillSelectionMode: variant.skillSelectionMode,
@@ -806,6 +1093,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     ok: false,
   };
 
+  let result: JsonRecord;
   try {
     const build = await postChat({
       backendUrl: options.backendUrl,
@@ -818,10 +1106,12 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       provider: options.provider,
       model: options.model,
       memoryScope: `experiment:${options.experimentId}|case:${item.id}|variant:${variant.id}`,
+      variant,
     });
     const buildComplete = extractBuildComplete(build.events);
-    const serverId = String(buildComplete.serverId || "");
-    let mcpUrl = extractMcpServerUrl(buildComplete);
+    serverId = String(buildComplete.serverId || "");
+    mcpUrl = extractMcpServerUrl(buildComplete);
+    containerId = String(buildComplete.containerId || "");
     const buildStatus = String(buildComplete.status || "");
 
     if (!build.response.ok || build.errors.length > 0) {
@@ -829,10 +1119,16 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     }
 
     const managerStatus = await waitForManagerStatus(options.managerUrl, serverId, buildRequestId);
+    serverId = serverId || String(managerStatus.serverId || "");
+    containerId = containerId || String(managerStatus.containerId || "");
     if (!mcpUrl) {
       mcpUrl = extractMcpServerUrl(managerStatus as SseEvent) || String(managerStatus.publicUrl || "");
     }
     if (!mcpUrl) throw new Error(`Could not extract generated MCP URL. Build event=${JSON.stringify(buildComplete)} Manager status=${JSON.stringify(managerStatus)}`);
+    const hostPort = Number(managerStatus.hostPort || 0);
+    const inspectorMcpUrl = Number.isInteger(hostPort) && hostPort > 0
+      ? `http://localhost:${hostPort}/mcp`
+      : mcpUrl;
 
     const metadataStartedAt = Date.now();
     const metadata = await checkMetadata({
@@ -851,24 +1147,23 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       throw new Error(`MCP metadata did not connect with tools: ${JSON.stringify(metadata)}`);
     }
 
+    const inspectorStartedAt = Date.now();
+    const inspector = validateInspectorTools(item, inspectorMcpUrl, tools);
+    const inspectorDurationMs = Date.now() - inspectorStartedAt;
+
     const outcomeStartedAt = Date.now();
-    const outcomes: ToolOutcome[] = [];
-    for (const [index, tool] of tools.entries()) {
-      outcomes.push(await validateTool({
-        item,
-        backendUrl: options.backendUrl,
-        mcpUrl,
-        tool,
-        index,
-        buildRequestId,
-        traceId,
-        experimentId: options.experimentId,
-        baseSessionId: sessionId,
-        provider: options.provider,
-        model: options.model,
-        eventsPath: options.eventsPath,
-      }));
-    }
+    const outcomes = await validateDirectTools({
+      item,
+      backendUrl: options.backendUrl,
+      mcpUrl,
+      tools,
+      buildRequestId,
+      traceId,
+      experimentId: options.experimentId,
+      sessionId,
+      serverId: serverId || String(managerStatus.serverId || ""),
+      variant,
+    });
     await recordToolOutcomes({
       backendUrl: options.backendUrl,
       mcpUrl,
@@ -881,15 +1176,18 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       provider: options.provider,
       model: options.model,
       durationMs: Date.now() - outcomeStartedAt,
+      variant,
     });
 
     const events = await readResearchEvents(buildRequestId, options.eventsPath);
     const counts = countOutcomes(outcomes);
-    return {
+    result = {
       ...baseResult,
       statusCode: build.response.status,
       ok: true,
-      serverId: serverId || String(managerStatus.serverId || ""),
+      serverId,
+      containerId,
+      generatedContainerId: containerId,
       mcpUrl: redactUrl(mcpUrl),
       buildStatus,
       durationMs: Date.now() - startedAt,
@@ -899,6 +1197,9 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       runtimeStatusCode: "connected",
       runtimeMetadataDurationMs: metadataDurationMs,
       runtimeToolCount: tools.length,
+      inspectorDurationMs,
+      ...inspector,
+      toolValidationMethod: "backend-direct-mcp",
       outcomeDurationMs: Date.now() - outcomeStartedAt,
       ...counts,
       estimatedUsage: summarizeEstimatedUsage(events),
@@ -906,12 +1207,23 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       outcomes,
     };
   } catch (error) {
-    return {
+    result = {
       ...baseResult,
       durationMs: Date.now() - startedAt,
+      serverId,
+      containerId,
+      generatedContainerId: containerId,
+      mcpUrl: mcpUrl ? redactUrl(mcpUrl) : "",
       runtimeMetadataChecked: false,
       runtimeMetadataOk: false,
       runtimeToolCount: 0,
+      inspectorConnected: false,
+      inspectorToolCount: 0,
+      inspectorAttemptedToolCount: 0,
+      inspectorSuccessToolCount: 0,
+      inspectorFailedToolCount: 0,
+      inspectorSkippedToolCount: 0,
+      inspectorPassRate: null,
       totalToolCount: 0,
       attemptedToolCount: 0,
       successToolCount: 0,
@@ -921,12 +1233,34 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       diagnostic: redactDiagnostic(error instanceof Error ? error.message : String(error)),
     };
   }
+
+  const cleanup = result.ok
+    ? (serverId || containerId)
+      ? await cleanupGeneratedContainer({
+          managerUrl: options.managerUrl,
+          serverId,
+          mcpUrl,
+          containerId,
+          enabled: options.cleanupContainers,
+        })
+      : skippedCleanupResult("missing generated server identity")
+    : skippedCleanupResult("validation failed; generated container retained for inspection");
+
+  return {
+    ...result,
+    serverId: result.serverId || serverId,
+    containerId: result.containerId || containerId,
+    generatedContainerId: result.generatedContainerId || containerId,
+    ...cleanup,
+  };
 }
 
 function parseOptions(): Options {
   const experimentId = arg("experiment-id", `backend-toolcall-matrix-${new Date().toISOString().slice(0, 10)}`);
   const eventsPath = arg("events", env("RESEARCH_EVENTS_JSONL_PATH", "/repo/reports/backend-toolcall-matrix/research-events.jsonl"));
   const dryRun = flag("dry-run", false) || flag("validate-only", false);
+  const restartStack = flag("restart-stack", !dryRun);
+  const expectedBuildCountRaw = arg("expected-build-count", "");
   return {
     datasetPath: path.resolve(root, arg("dataset", "experiments/research-metrics/backend_toolcall_matrix_dataset.json")),
     outputPath: path.resolve(root, arg("output", "experiments/research-metrics/backend-toolcall-matrix-runs.jsonl")),
@@ -941,18 +1275,27 @@ function parseOptions(): Options {
     backendUrl: arg("backend-url", env("E2E_BACKEND_URL", "http://localhost:8000")),
     managerUrl: arg("manager-url", env("E2E_MCP_MANAGER_URL", "http://localhost:8080")),
     dryRun,
-    restartStack: flag("restart-stack", !dryRun),
+    restartStack,
+    cleanupContainers: flag("cleanup-containers", true),
+    verifyRagEnv: flag("verify-rag-env", restartStack),
+    expectedBuildCount: expectedBuildCountRaw ? Number(expectedBuildCountRaw) : undefined,
+    requireAllVariants: !flag("allow-partial-variants", false),
   };
 }
 
 function selectCases(dataset: MatrixCase[], options: Options): MatrixCase[] {
   let selected = options.cases.length > 0 ? dataset.filter((item) => options.cases.includes(item.id)) : dataset;
   if (options.limit > 0) selected = selected.slice(0, options.limit);
+  const missing = options.cases.filter((caseId) => !dataset.some((item) => item.id === caseId));
+  if (missing.length > 0) throw new Error(`Unknown benchmark cases selected: ${missing.join(", ")}`);
   return selected;
 }
 
 function selectVariants(options: Options): Variant[] {
-  return options.variants.length > 0 ? variants.filter((item) => options.variants.includes(item.id)) : variants;
+  const selected = options.variants.length > 0 ? variants.filter((item) => options.variants.includes(item.id)) : variants;
+  const missing = options.variants.filter((variantId) => !variants.some((item) => item.id === variantId));
+  if (missing.length > 0) throw new Error(`Unknown benchmark variants selected: ${missing.join(", ")}`);
+  return selected;
 }
 
 function validateDataset(dataset: MatrixCase[]): void {
@@ -982,6 +1325,14 @@ async function main(): Promise<void> {
   const selectedVariants = selectVariants(options);
   if (selectedCases.length === 0) throw new Error("No benchmark cases selected.");
   if (selectedVariants.length === 0) throw new Error("No benchmark variants selected.");
+  const matrixPlan = buildMatrixPlan({
+    caseIds: selectedCases.map((item) => item.id),
+    variantIds: selectedVariants.map((item) => item.id),
+    repeats: options.repeats,
+    requireAllVariants: options.requireAllVariants,
+  });
+  ensureExpectedBuildCount(matrixPlan, options.expectedBuildCount);
+  options.expectedBuildCount = matrixPlan.expectedBuildCount;
 
   const plan = {
     type: "backend_toolcall_matrix_plan",
@@ -1004,7 +1355,10 @@ async function main(): Promise<void> {
       authInfoHash: item.authInfoHash || "",
     })),
     variantIds: selectedVariants.map((item) => item.id),
-    totalRuns: selectedCases.length * selectedVariants.length * options.repeats,
+    totalRuns: matrixPlan.expectedBuildCount,
+    expectedBuildCount: matrixPlan.expectedBuildCount,
+    cleanupContainers: options.cleanupContainers,
+    verifyRagEnv: options.verifyRagEnv,
   };
   console.info("[backend-toolcall-matrix-plan]", JSON.stringify(plan));
   if (options.dryRun) return;

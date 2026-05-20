@@ -40,3 +40,9 @@ data/
 
 # Local screenshots
 /*.png
+
+# Generated research reports
+experiments/research-metrics/reports/
+
+# OS
+Thumbs.db

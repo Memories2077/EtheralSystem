@@ -28,7 +28,10 @@ type BenchmarkRun = JsonRecord & {
   experimentId?: string;
   caseId?: string;
   itemId?: string;
+  apiDocId?: string;
   apiType?: string;
+  declaredEndpointCount?: number | string;
+  expectedBuildCount?: number | string;
   variantId?: string;
   skillSelectionMode?: string;
   mode?: string;
@@ -50,6 +53,20 @@ type BenchmarkRun = JsonRecord & {
   skippedToolCount?: number | string;
   toolCallPassRate?: number | string | null;
   skippedCoverage?: number | string | null;
+  inspectorConnected?: boolean;
+  inspectorToolCount?: number | string;
+  inspectorAttemptedToolCount?: number | string;
+  inspectorSuccessToolCount?: number | string;
+  inspectorFailedToolCount?: number | string;
+  inspectorSkippedToolCount?: number | string;
+  inspectorPassRate?: number | string | null;
+  cleanupAttempted?: boolean;
+  cleanupStatus?: string;
+  cleanupMethod?: string;
+  cleanupDurationMs?: number | string;
+  containerRemovedCount?: number | string;
+  containerSkippedCount?: number | string;
+  containerFailedCount?: number | string;
   estimatedUsage?: JsonRecord;
 };
 
@@ -330,6 +347,13 @@ function summarizeToolcallMatrixGroups(
     const attemptedTools = group.reduce((sum, run) => sum + numeric(run.attemptedToolCount), 0);
     const successfulTools = group.reduce((sum, run) => sum + numeric(run.successToolCount), 0);
     const skippedTools = group.reduce((sum, run) => sum + numeric(run.skippedToolCount), 0);
+    const inspectorAttemptedTools = group.reduce((sum, run) => sum + numeric(run.inspectorAttemptedToolCount), 0);
+    const inspectorSuccessfulTools = group.reduce((sum, run) => sum + numeric(run.inspectorSuccessToolCount), 0);
+    const inspectorSkippedTools = group.reduce((sum, run) => sum + numeric(run.inspectorSkippedToolCount), 0);
+    const cleanupAttempted = group.filter((run) => run.cleanupAttempted === true).length;
+    const cleanupRemoved = group.reduce((sum, run) => sum + (numeric(run.containerRemovedCount) || (run.cleanupStatus === "removed" ? 1 : 0)), 0);
+    const cleanupFailed = group.reduce((sum, run) => sum + (numeric(run.containerFailedCount) || (run.cleanupStatus === "failed" ? 1 : 0)), 0);
+    const cleanupSkipped = group.reduce((sum, run) => sum + (numeric(run.containerSkippedCount) || (run.cleanupStatus === "skipped" ? 1 : 0)), 0);
     const estimatedPromptTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedPromptTokens"), 0);
     const estimatedCompletionTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedCompletionTokens"), 0);
     const llmCallCount = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "llmCallCount"), 0);
@@ -344,10 +368,19 @@ function summarizeToolcallMatrixGroups(
       build_success_rate: rate(group.filter((run) => run.ok === true).length, group.length),
       metadata_readiness_rate: rate(group.filter((run) => run.runtimeMetadataOk === true).length, group.length),
       tool_call_pass_rate: rate(successfulTools, attemptedTools),
+      inspector_pass_rate: rate(inspectorSuccessfulTools, inspectorAttemptedTools),
       skipped_coverage: rate(skippedTools, totalTools),
       attempted_tool_count: attemptedTools,
       successful_tool_count: successfulTools,
       skipped_tool_count: skippedTools,
+      inspector_attempted_tool_count: inspectorAttemptedTools,
+      inspector_successful_tool_count: inspectorSuccessfulTools,
+      inspector_skipped_tool_count: inspectorSkippedTools,
+      cleanup_success_rate: rate(cleanupRemoved, cleanupAttempted),
+      cleanup_attempted_count: cleanupAttempted,
+      cleanup_removed_count: cleanupRemoved,
+      cleanup_failed_count: cleanupFailed,
+      cleanup_skipped_count: cleanupSkipped,
       attempted_validation_count: attemptedValidation,
       skipped_only_validation_count: skippedOnlyValidation,
       unknown_tool_validation_count: unknownToolValidation,
@@ -421,6 +454,7 @@ function markdownTable(rows: CsvRow[], headers: string[]): string {
 
 async function main() {
   const experimentId = arg("experiment-id", "");
+  const apiDocId = arg("api-doc-id", arg("case-id", ""));
   const eventsPath = resolveRepoPath(arg("events", process.env.RESEARCH_EVENTS_JSONL_PATH || "/tmp/etheral-research-events.jsonl"));
   const runsPath = resolveRepoPath(arg("runs", "experiments/research-metrics/runs.jsonl"));
   const matrixRunsPath = resolveRepoPath(arg("matrix-runs", "experiments/research-metrics/backend-toolcall-matrix-runs.jsonl"));
@@ -428,14 +462,21 @@ async function main() {
   ensureDir(outputDir);
 
   const allEvents = readJsonl<ResearchEvent>(eventsPath);
-  const events = experimentId ? allEvents.filter((event) => event.experiment_id === experimentId) : allEvents;
   const rawRuns = [
     ...readJsonl<BenchmarkRun>(runsPath),
     ...(matrixRunsPath === runsPath ? [] : readJsonl<BenchmarkRun>(matrixRunsPath)),
   ];
-  const runs = rawRuns.filter((row) => row.type === "benchmark_result" && (!experimentId || row.experimentId === experimentId));
+  const runs = rawRuns.filter((row) =>
+    row.type === "benchmark_result" &&
+    (!experimentId || row.experimentId === experimentId) &&
+    (!apiDocId || row.apiDocId === apiDocId || row.caseId === apiDocId || row.itemId === apiDocId)
+  );
   const knownBenchmarkBuildIds = new Set(runs.map((row) => String(row.buildRequestId || "").trim()).filter(Boolean));
-  const dashboardRuns = buildDashboardRunRows(events, knownBenchmarkBuildIds);
+  const eventsByExperiment = experimentId ? allEvents.filter((event) => event.experiment_id === experimentId) : allEvents;
+  const events = apiDocId && knownBenchmarkBuildIds.size > 0
+    ? eventsByExperiment.filter((event) => knownBenchmarkBuildIds.has(String(event.build_request_id || "").trim()))
+    : eventsByExperiment;
+  const dashboardRuns = apiDocId ? [] : buildDashboardRunRows(events, knownBenchmarkBuildIds);
   const matrixRuns = [
     ...runs.filter((row) => row.benchmarkType === "backend_toolcall_matrix"),
     ...dashboardRuns,
@@ -453,6 +494,7 @@ async function main() {
   const toolcallApiTypeRows = summarizeToolcallMatrixGroups(matrixRuns, "apiType", (run) => run.apiType || "unknown");
   const toolcallSkillRows = summarizeToolcallMatrixGroups(matrixRuns, "skillSelectionMode", (run) => run.skillSelectionMode || run.selectionVariant || "unknown");
   const toolcallRagRows = summarizeToolcallMatrixGroups(matrixRuns, "ragEnabled", (run) => run.ragEnabled === "true" ? "rag_on" : "rag_off");
+  const toolcallApiDocRows = summarizeToolcallMatrixGroups(matrixRuns, "apiDocId", (run) => run.apiDocId || run.caseId || run.itemId || "unknown");
   writeCsv(path.join(outputDir, "events.csv"), events);
   writeCsv(path.join(outputDir, "stage_summary.csv"), stageRows);
   writeCsv(path.join(outputDir, "build_summary.csv"), buildRows);
@@ -464,6 +506,7 @@ async function main() {
   writeCsv(path.join(outputDir, "toolcall_by_api_type.csv"), toolcallApiTypeRows);
   writeCsv(path.join(outputDir, "toolcall_by_skill_selection.csv"), toolcallSkillRows);
   writeCsv(path.join(outputDir, "toolcall_by_rag.csv"), toolcallRagRows);
+  writeCsv(path.join(outputDir, "toolcall_by_api_doc.csv"), toolcallApiDocRows);
   writeCsv(path.join(outputDir, "mode_comparison.csv"), modeRows);
   writeCsv(path.join(outputDir, "rag_comparison.csv"), ragRows);
   writeCsv(path.join(outputDir, "runtime_reliability.csv"), runtimeRows);
@@ -474,21 +517,24 @@ async function main() {
     `# Research Metrics Report`,
     ``,
     `Experiment: ${experimentId || "all"}`,
+    apiDocId ? `API Doc Batch: ${apiDocId}` : `API Doc Batch: all`,
     `Generated: ${new Date().toISOString()}`,
     ``,
+    `## Backend Tool-Call Matrix By API Doc`,
+    markdownTable(toolcallApiDocRows, ["apiDocId", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "cleanup_removed_count", "cleanup_failed_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     `## Backend Tool-Call Matrix By Variant`,
-    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     `## Backend Tool-Call Matrix By Case`,
-    markdownTable(toolcallCaseRows, ["caseId", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    markdownTable(toolcallCaseRows, ["caseId", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     `## Backend Tool-Call Matrix By API Type`,
-    markdownTable(toolcallApiTypeRows, ["apiType", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    markdownTable(toolcallApiTypeRows, ["apiType", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     `## Backend Tool-Call Matrix By Skill Selection`,
-    markdownTable(toolcallSkillRows, ["skillSelectionMode", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    markdownTable(toolcallSkillRows, ["skillSelectionMode", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     `## Backend Tool-Call Matrix By RAG`,
-    markdownTable(toolcallRagRows, ["ragEnabled", "count", "build_success_rate", "metadata_readiness_rate", "tool_call_pass_rate", "skipped_coverage", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    markdownTable(toolcallRagRows, ["ragEnabled", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     ``,
     `## Benchmark Runs`,
-    markdownTable(runs, ["itemId", "apiType", "mode", "repeatIndex", "ok", "serverId", "durationMs"]),
+    markdownTable(runs, ["itemId", "apiDocId", "apiType", "mode", "repeatIndex", "ok", "inspectorPassRate", "cleanupStatus", "serverId", "durationMs"]),
     `## Dashboard Runs`,
     markdownTable(dashboardRuns, ["buildRequestId", "variantId", "ok", "runtimeMetadataOk", "toolValidationStatus", "toolCallPassRate", "durationMs", "serverId"]),
     `## Static vs Dynamic / Mode Comparison`,

@@ -3,6 +3,7 @@ import os
 import json
 import re
 import logging
+import inspect
 from collections import Counter
 from contextlib import AsyncExitStack
 from typing import Optional, List, Dict, Any, AsyncGenerator, Union, cast
@@ -117,6 +118,30 @@ class McpToolOutcomesRequest(BaseModel):
     sessionId: Optional[str] = None
     buildRequestId: Optional[str] = None
     serverId: Optional[str] = None
+    ragEnabled: Optional[bool] = None
+    dynamicSkillSelection: Optional[bool] = None
+    skillSelectionVariant: Optional[str] = None
+    variantId: Optional[str] = None
+
+class McpDirectToolProbeItem(BaseModel):
+    toolName: str
+    index: int
+    probeId: Optional[str] = None
+    operation: Optional[str] = None
+    toolArgs: Optional[Dict[str, Any]] = None
+
+class McpDirectToolProbesRequest(BaseModel):
+    url: str
+    probes: List[McpDirectToolProbeItem]
+    traceId: Optional[str] = None
+    experimentId: Optional[str] = None
+    sessionId: Optional[str] = None
+    buildRequestId: Optional[str] = None
+    serverId: Optional[str] = None
+    ragEnabled: Optional[bool] = None
+    dynamicSkillSelection: Optional[bool] = None
+    skillSelectionVariant: Optional[str] = None
+    variantId: Optional[str] = None
 
 class AgentState:
     def __init__(self):
@@ -213,6 +238,37 @@ def active_mcp_tool_names(agent_state: AgentState, mcp_urls: Optional[List[str]]
             if name:
                 names.append(name)
     return names
+
+def _safe_tool_result_text(value: Any, limit: int = 2000) -> str:
+    try:
+        text = json.dumps(value, cls=CustomEncoder, default=str, ensure_ascii=False)
+    except Exception:
+        text = str(value)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+def _redact_runtime_diagnostic(value: Any, limit: int = 500) -> str:
+    text = str(value or "")
+    text = re.sub(r"(?i)(token|secret|password|api[_-]?key|authorization|cookie)=([^&\s]+)", r"\1=[REDACTED]", text)
+    text = re.sub(r"(?i)(bearer|basic)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", text)
+    text = re.sub(r"eyJ[A-Za-z0-9._-]+", "[REDACTED_JWT]", text)
+    return re.sub(r"\s+", " ", text).strip()[:limit]
+
+async def _invoke_langchain_mcp_tool(tool_item: Any, tool_args: Dict[str, Any]) -> Any:
+    if hasattr(tool_item, "ainvoke"):
+        return await tool_item.ainvoke(tool_args)
+    if hasattr(tool_item, "invoke"):
+        return await asyncio.to_thread(tool_item.invoke, tool_args)
+    if hasattr(tool_item, "arun"):
+        return await tool_item.arun(tool_args)
+    if hasattr(tool_item, "run"):
+        return await asyncio.to_thread(tool_item.run, tool_args)
+    if callable(tool_item):
+        result = tool_item(tool_args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+    raise RuntimeError("MCP tool object is not invokable")
 
 # ------------------------------------------------------------------ #
 # Agent Factory (Keep-Alive Implementation)                            #
@@ -512,6 +568,125 @@ async def get_mcp_metadata(request: McpMetadataRequest):
             "errorCode": error_code,
             "detail": error_text,
         }
+
+@app.post("/mcp/tool-probes")
+async def run_mcp_tool_probes(request: McpDirectToolProbesRequest):
+    """Invoke selected MCP tools directly through the backend connection, without an LLM."""
+    if not request.url.strip():
+        raise HTTPException(status_code=400, detail="URL is required")
+    if not request.probes:
+        raise HTTPException(status_code=400, detail="At least one tool probe is required.")
+
+    original_url = request.url.strip()
+    url = resolve_docker_url(original_url)
+    event_context = normalize_request_context({
+        "traceId": request.traceId,
+        "experimentId": request.experimentId,
+        "sessionId": request.sessionId,
+        "buildRequestId": request.buildRequestId,
+        "serverId": request.serverId,
+        "ragEnabled": request.ragEnabled,
+        "dynamicSkillSelection": request.dynamicSkillSelection,
+        "skillSelectionVariant": request.skillSelectionVariant,
+        "variantId": request.variantId,
+    })
+    event_context["serverId"] = request.serverId or ""
+
+    if url not in state.mcp_connections:
+        metadata = await get_mcp_metadata(McpMetadataRequest(
+            url=original_url,
+            traceId=request.traceId,
+            experimentId=request.experimentId,
+            sessionId=request.sessionId,
+            buildRequestId=request.buildRequestId,
+            serverId=request.serverId,
+            ragEnabled=request.ragEnabled,
+            dynamicSkillSelection=request.dynamicSkillSelection,
+            skillSelectionVariant=request.skillSelectionVariant,
+            variantId=request.variantId,
+        ))
+        if not isinstance(metadata, dict) or metadata.get("status") != "connected":
+            raise HTTPException(status_code=502, detail=f"MCP metadata connection failed: {metadata}")
+
+    conn = state.mcp_connections.get(url)
+    if not conn:
+        raise HTTPException(status_code=502, detail="MCP connection was not cached after metadata check.")
+
+    tools_by_name = {
+        str(getattr(tool_item, "name", "") or "").strip(): tool_item
+        for tool_item in conn.get("tools", [])
+        if str(getattr(tool_item, "name", "") or "").strip()
+    }
+    outcomes: List[Dict[str, Any]] = []
+    started_at = monotonic_ms()
+
+    for probe in request.probes:
+        tool_name = probe.toolName.strip()
+        tool_item = tools_by_name.get(tool_name)
+        if not tool_item:
+            outcomes.append({
+                "tool_name": tool_name,
+                "index": probe.index,
+                "probe_id": probe.probeId,
+                "operation": probe.operation,
+                "status": "failed",
+                "error_code": "tool_not_found",
+                "invocation_count": 0,
+                "result_count": 0,
+                "response_length": 0,
+                "response_hash": "",
+                "diagnostic": "Tool was not found in the active MCP connection.",
+            })
+            continue
+
+        try:
+            tool_result = await _invoke_langchain_mcp_tool(tool_item, probe.toolArgs or {})
+            response_text = _safe_tool_result_text(tool_result)
+            outcomes.append({
+                "tool_name": tool_name,
+                "index": probe.index,
+                "probe_id": probe.probeId,
+                "operation": probe.operation,
+                "status": "success",
+                "error_code": "",
+                "invocation_count": 1,
+                "result_count": 1,
+                "response_length": len(response_text),
+                "response_hash": content_hash(response_text) if response_text else "",
+                "diagnostic": "",
+            })
+        except Exception as e:
+            outcomes.append({
+                "tool_name": tool_name,
+                "index": probe.index,
+                "probe_id": probe.probeId,
+                "operation": probe.operation,
+                "status": "failed",
+                "error_code": "direct_mcp_tool_call_failed",
+                "invocation_count": 1,
+                "result_count": 0,
+                "response_length": 0,
+                "response_hash": "",
+                "diagnostic": _redact_runtime_diagnostic(e),
+            })
+
+    await record_research_event(
+        service="chatbot-backend",
+        stage="runtime",
+        event_name="mcp_direct_tool_probes_completed",
+        status="failure" if any(item["status"] == "failed" for item in outcomes) else "success",
+        duration_ms=duration_since_ms(started_at),
+        error_code="mcp_direct_tool_probe_failures" if any(item["status"] == "failed" for item in outcomes) else None,
+        context=event_context,
+        metrics={
+            "mcp_direct_tool_probe_count": len(outcomes),
+            "mcp_direct_tool_probe_success_count": sum(1 for item in outcomes if item["status"] == "success"),
+            "mcp_direct_tool_probe_failure_count": sum(1 for item in outcomes if item["status"] == "failed"),
+            "mcp_direct_tool_probe_outcomes": outcomes,
+        },
+        tags={"url_hash": content_hash(original_url)},
+    )
+    return {"status": "completed", "outcomes": outcomes}
 
 @app.post("/mcp/tool-outcomes")
 async def record_mcp_tool_outcomes(request: McpToolOutcomesRequest):

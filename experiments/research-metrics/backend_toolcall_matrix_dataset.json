@@ -11,24 +11,28 @@
         "id": "create-post",
         "operation": "POST /posts",
         "match": ["create-post", "create post", "add-post", "add post", "post /posts"],
+        "toolArgs": { "title": "benchmark", "body": "tool call", "userId": 1 },
         "prompt": "Use the active MCP tool named \"{toolName}\" to create a fake JSONPlaceholder post with title=\"benchmark\", body=\"tool call\", and userId=1. Return the created id or title."
       },
       {
         "id": "list-posts",
         "operation": "GET /posts",
         "match": ["get-all-posts", "list-posts", "list posts", "all posts", "get posts"],
+        "toolArgs": { "userId": 1 },
         "prompt": "Use the active MCP tool named \"{toolName}\" to list JSONPlaceholder posts. If arguments are needed, use userId=1 or a limit of 3. Return a compact answer with at least one post id or title."
       },
       {
         "id": "post-comments",
         "operation": "GET /posts/{id}/comments or GET /comments",
         "match": ["post-comments", "comments-by-post", "get-comments", "list-comments", "comments"],
+        "toolArgs": { "id": 1, "postId": 1 },
         "prompt": "Use the active MCP tool named \"{toolName}\" to fetch comments for JSONPlaceholder postId=1 or post id 1. Return a compact answer with at least one email or comment id."
       },
       {
         "id": "get-user",
         "operation": "GET /users/{id}",
         "match": ["get-user", "user-by-id", "users"],
+        "toolArgs": { "id": 1 },
         "prompt": "Use the active MCP tool named \"{toolName}\" to fetch JSONPlaceholder user id 1. Return the user's name or username."
       }
     ],
@@ -70,12 +74,13 @@
         "id": "search-images",
         "operation": "GET /images/search",
         "match": ["images-search", "search-images", "search images", "image search"],
+        "toolArgs": { "limit": 1, "include_breeds": true, "has_breeds": true },
         "prompt": "Use the active MCP tool named \"{toolName}\" to search TheDogAPI images with limit=1 and include_breeds=true or has_breeds=true if supported. Return the image id or URL."
       }
     ],
     "skipRules": [
       {
-        "match": ["status", "label", "delete", "public-request", "public request", "breed", "favourite", "favorite", "health", "pet", "ban", "category", "account", "sub-id", "sub id", "quota", "upload", "vote", "api-key", "x-api-key", "bearer", "patch", "post", "put"],
+        "match": ["status", "label", "delete", "public-request", "public request", "favourite", "favorite", "health", "pet", "ban", "category", "account", "sub-id", "sub id", "quota", "upload", "vote", "api-key", "x-api-key", "bearer", "patch", "post", "put"],
         "errorCode": "auth_required_or_unsafe",
         "diagnostic": "TheDogAPI API-key-only, account-specific, mutation, or non-public tools are skipped unless live credentials are provided."
       }
