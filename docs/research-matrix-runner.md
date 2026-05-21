@@ -42,7 +42,7 @@ bun run research -- --all-api-docs
 
 Full shape:
 
-- API docs: `jsonplaceholder-input-doc`, `reddit-input-doc`, `thedogapi-input-doc`
+- API docs: `jsonplaceholder-input-doc`, `dummyjson-input-doc`, `pokeapi-input-doc`
 - Variants: all 4 required variants
 - Repeats: `3`
 - Expected builds: `3 * 4 * 3 = 36`

@@ -1,0 +1,210 @@
+# Research API Input Document
+Format-Version: 1
+API-ID: pokeapi-input-doc
+Title: PokeAPI Read-Only Resource API
+Base-URL: https://pokeapi.co/api/v2
+Authentication: none
+Declared-Endpoint-Count: 8
+Safe-Probe-Policy: Public read-only API. All documented endpoints are GET requests and safe for low-volume live probes. Use small list limits and stable ids or names.
+
+## Endpoint 1: List Pokemon
+Method: GET
+Path: /pokemon
+Description: Return a paginated list of Pokemon resources. Optional query parameters include limit and offset.
+Request Example:
+```http
+GET /pokemon?limit=5&offset=0 HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "count": 1328,
+  "next": "https://pokeapi.co/api/v2/pokemon?offset=5&limit=5",
+  "previous": null,
+  "results": [
+    { "name": "bulbasaur", "url": "https://pokeapi.co/api/v2/pokemon/1/" }
+  ]
+}
+```
+Safe Probe: yes, use limit=5 and offset=0.
+
+## Endpoint 2: Get Pokemon by id or name
+Method: GET
+Path: /pokemon/{id_or_name}
+Description: Return one Pokemon resource by numeric id or resource name.
+Request Example:
+```http
+GET /pokemon/pikachu HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 25,
+  "name": "pikachu",
+  "base_experience": 112,
+  "height": 4,
+  "weight": 60,
+  "abilities": [
+    { "ability": { "name": "static", "url": "https://pokeapi.co/api/v2/ability/9/" }, "is_hidden": false, "slot": 1 }
+  ],
+  "types": [
+    { "slot": 1, "type": { "name": "electric", "url": "https://pokeapi.co/api/v2/type/13/" } }
+  ]
+}
+```
+Safe Probe: yes, use id_or_name=pikachu.
+
+## Endpoint 3: Get ability by id or name
+Method: GET
+Path: /ability/{id_or_name}
+Description: Return one ability resource by numeric id or resource name.
+Request Example:
+```http
+GET /ability/stench HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "name": "stench",
+  "is_main_series": true,
+  "generation": { "name": "generation-iii", "url": "https://pokeapi.co/api/v2/generation/3/" },
+  "effect_entries": [
+    { "short_effect": "Has a chance of making the target flinch.", "language": { "name": "en" } }
+  ]
+}
+```
+Safe Probe: yes, use id_or_name=stench or id=1.
+
+## Endpoint 4: Get type by id or name
+Method: GET
+Path: /type/{id_or_name}
+Description: Return one Pokemon or move type resource by numeric id or resource name.
+Request Example:
+```http
+GET /type/fire HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 10,
+  "name": "fire",
+  "damage_relations": {
+    "double_damage_to": [
+      { "name": "grass", "url": "https://pokeapi.co/api/v2/type/12/" }
+    ],
+    "double_damage_from": [
+      { "name": "water", "url": "https://pokeapi.co/api/v2/type/11/" }
+    ]
+  }
+}
+```
+Safe Probe: yes, use id_or_name=fire.
+
+## Endpoint 5: Get move by id or name
+Method: GET
+Path: /move/{id_or_name}
+Description: Return one move resource by numeric id or resource name.
+Request Example:
+```http
+GET /move/pound HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "name": "pound",
+  "accuracy": 100,
+  "pp": 35,
+  "power": 40,
+  "type": { "name": "normal", "url": "https://pokeapi.co/api/v2/type/1/" },
+  "effect_entries": [
+    { "short_effect": "Inflicts regular damage with no additional effect.", "language": { "name": "en" } }
+  ]
+}
+```
+Safe Probe: yes, use id_or_name=pound.
+
+## Endpoint 6: Get item by id or name
+Method: GET
+Path: /item/{id_or_name}
+Description: Return one item resource by numeric id or resource name.
+Request Example:
+```http
+GET /item/master-ball HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "name": "master-ball",
+  "cost": 0,
+  "category": { "name": "standard-balls", "url": "https://pokeapi.co/api/v2/item-category/34/" },
+  "effect_entries": [
+    { "short_effect": "Catches a wild Pokemon every time.", "language": { "name": "en" } }
+  ]
+}
+```
+Safe Probe: yes, use id_or_name=master-ball.
+
+## Endpoint 7: Get berry by id or name
+Method: GET
+Path: /berry/{id_or_name}
+Description: Return one berry resource by numeric id or resource name.
+Request Example:
+```http
+GET /berry/cheri HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "name": "cheri",
+  "growth_time": 3,
+  "max_harvest": 5,
+  "natural_gift_power": 60,
+  "item": { "name": "cheri-berry", "url": "https://pokeapi.co/api/v2/item/126/" },
+  "natural_gift_type": { "name": "fire", "url": "https://pokeapi.co/api/v2/type/10/" }
+}
+```
+Safe Probe: yes, use id_or_name=cheri.
+
+## Endpoint 8: Get generation by id or name
+Method: GET
+Path: /generation/{id_or_name}
+Description: Return one game generation resource by numeric id or resource name.
+Request Example:
+```http
+GET /generation/generation-i HTTP/1.1
+Host: pokeapi.co
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "name": "generation-i",
+  "main_region": { "name": "kanto", "url": "https://pokeapi.co/api/v2/region/1/" },
+  "pokemon_species": [
+    { "name": "bulbasaur", "url": "https://pokeapi.co/api/v2/pokemon-species/1/" }
+  ],
+  "version_groups": [
+    { "name": "red-blue", "url": "https://pokeapi.co/api/v2/version-group/1/" }
+  ]
+}
+```
+Safe Probe: yes, use id_or_name=generation-i or id=1.

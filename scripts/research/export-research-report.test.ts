@@ -136,8 +136,8 @@ describe("research report export dashboard run rows", () => {
         status: "success",
         duration_ms: 100,
         experiment_id: "batch-test",
-        build_request_id: "build-reddit",
-        server_id: "server-reddit",
+        build_request_id: "build-dummyjson",
+        server_id: "server-dummyjson",
       },
     ]);
     writeJsonl(runsPath, []);
@@ -173,15 +173,15 @@ describe("research report export dashboard run rows", () => {
         type: "benchmark_result",
         benchmarkType: "backend_toolcall_matrix",
         experimentId: "batch-test",
-        apiDocId: "reddit-input-doc",
-        caseId: "reddit-input-doc",
-        itemId: "reddit-input-doc",
-        apiType: "oauth_auth_input_doc",
+        apiDocId: "dummyjson-input-doc",
+        caseId: "dummyjson-input-doc",
+        itemId: "dummyjson-input-doc",
+        apiType: "public_fake_crud_input_doc",
         variantId: "static-rag-off",
         skillSelectionMode: "static",
         ragEnabled: "false",
         repeatIndex: 1,
-        buildRequestId: "build-reddit",
+        buildRequestId: "build-dummyjson",
         ok: true,
         runtimeMetadataOk: true,
         durationMs: 100,
@@ -213,7 +213,7 @@ describe("research report export dashboard run rows", () => {
     expect(byApiDoc).toContain("inspector_pass_rate");
     expect(byApiDoc).toContain("cleanup_success_rate");
     expect(byApiDoc).toContain("jsonplaceholder-input-doc");
-    expect(byApiDoc).not.toContain("reddit-input-doc");
+    expect(byApiDoc).not.toContain("dummyjson-input-doc");
 
     const summary = readFileSync(path.join(outputDir, "summary.md"), "utf8");
     expect(summary).toContain("API Doc Batch: jsonplaceholder-input-doc");

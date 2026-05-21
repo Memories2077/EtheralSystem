@@ -15,7 +15,7 @@ describe("research matrix planner", () => {
   it("plans the full three-doc shape as 36 builds", () => {
     const plan = buildMatrixPlan({
       mode: "full",
-      caseIds: ["jsonplaceholder-input-doc", "reddit-input-doc", "thedogapi-input-doc"],
+      caseIds: ["jsonplaceholder-input-doc", "dummyjson-input-doc", "pokeapi-input-doc"],
       variantIds: [...REQUIRED_VARIANT_IDS],
       repeats: 3,
     });
