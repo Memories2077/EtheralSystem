@@ -1,0 +1,4 @@
+caseId,count,build_success_rate,metadata_readiness_rate,tool_call_pass_rate,inspector_pass_rate,skipped_coverage,attempted_tool_count,successful_tool_count,skipped_tool_count,inspector_attempted_tool_count,inspector_successful_tool_count,inspector_skipped_tool_count,cleanup_success_rate,cleanup_attempted_count,cleanup_removed_count,cleanup_failed_count,cleanup_skipped_count,attempted_validation_count,skipped_only_validation_count,unknown_tool_validation_count,p50_ms,p95_ms,estimated_prompt_tokens,estimated_completion_tokens,llm_call_count,selected_skill_tokens,estimated_cost_usd
+jsonplaceholder-input-doc,4,1,1,1,0,0.5,16,16,16,16,0,16,1,4,4,0,0,4,0,4,106687,140080,0,0,16,0,0
+reddit-input-doc,4,1,1,,,1,0,0,24,0,0,24,1,4,4,0,0,0,0,4,111061,171732,0,0,20,0,0
+thedogapi-input-doc,4,1,1,1,0,0.875,4,4,28,4,0,28,1,4,4,0,0,4,0,4,155075,157600,0,0,16,0,0

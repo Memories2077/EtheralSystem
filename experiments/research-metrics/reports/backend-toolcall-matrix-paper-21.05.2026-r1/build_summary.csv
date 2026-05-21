@@ -1,0 +1,13 @@
+build_request_id,server_id,status,total_duration_ms,event_count,experiment_id
+backend-toolcall-matrix-paper-21.05.2026-r1-static-rag-off-jsonplaceholder-input-doc-r1-201fae68,ed6c8d20-414a-4e36-a36c-75fe8de04d30,success,54226,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-static-rag-off-reddit-input-doc-r1-4ea6b7ba,aeb3e29e-2882-4f41-b0a4-97b9037e1cc3,success,60067,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-static-rag-off-thedogapi-input-doc-r1-9e54b441,a092f216-b3b5-4ca2-a94c-d5331c089dc7,success,79050,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-static-rag-on-jsonplaceholder-input-doc-r1-230962b1,114a1182-12de-408f-892c-5ecd7b315efa,success,70232,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-static-rag-on-reddit-input-doc-r1-752c68a5,0735bc7d-a120-48f6-ac54-d6fb5f5e0f10,success,73337,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-static-rag-on-thedogapi-input-doc-r1-03dd7dc9,a3201db8-13b8-41c4-ac05-565bb8fd2e12,success,87870,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-dynamic-rag-off-jsonplaceholder-input-doc-r1-d8929b70,176c9d0f-3d92-4b52-b3a1-d890e0eec6fd,success,86966,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-dynamic-rag-off-reddit-input-doc-r1-6c9239ea,d0e0ba76-567c-4c0f-8ef0-f63c6daf239e,success,68435,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-dynamic-rag-off-thedogapi-input-doc-r1-7eb1e88c,340320ef-a055-44d5-b442-121bd77c08a9,success,104381,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-dynamic-rag-on-jsonplaceholder-input-doc-r1-b2c3c46f,d7b22bbb-7598-45a9-b920-e58805444f64,success,59209,3,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-dynamic-rag-on-reddit-input-doc-r1-4e7ceaa9,bedaf81e-526b-40f0-ba91-dc7837db16cf,success,113714,4,backend-toolcall-matrix-paper-21.05.2026-r1
+backend-toolcall-matrix-paper-21.05.2026-r1-dynamic-rag-on-thedogapi-input-doc-r1-227109f2,3c698217-510d-46dd-bbf1-b20a252f9802,success,72637,3,backend-toolcall-matrix-paper-21.05.2026-r1

@@ -1,0 +1,4 @@
+apiType,count,success_rate,runtime_success_rate,p50_ms,p95_ms,median_tool_count
+api_key_media_input_doc,4,1,1,155075,157600,8
+oauth_auth_input_doc,4,1,1,111061,171732,6
+public_crud_input_doc,4,1,1,106687,140080,8

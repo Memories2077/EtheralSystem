@@ -1,0 +1,5 @@
+mode_key,count,success_rate,runtime_success_rate,p50_ms,p95_ms,median_tool_count
+backend-api-toolcall:dynamic:no_rag:metaclaw,3,1,1,131617,155075,8
+backend-api-toolcall:dynamic:rag:metaclaw,3,1,1,156279,171732,8
+backend-api-toolcall:static:no_rag:metaclaw,3,1,1,107470,135950,8
+backend-api-toolcall:static:rag:metaclaw,3,1,1,156840,157600,8
