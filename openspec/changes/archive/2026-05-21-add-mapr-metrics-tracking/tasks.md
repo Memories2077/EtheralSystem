@@ -34,7 +34,7 @@
 ## 5. Smoke And Paper Run Verification
 
 - [x] 5.1 Run focused Bun tests for matrix labels, evaluator helpers, RAG metrics, and exporter fixtures.
-- [ ] 5.2 Run a smoke cell for `jsonplaceholder-input-doc` with `dynamic-rag-on` and verify quality, retrieval, token/cost, and report outputs.
-- [ ] 5.3 Run a second smoke cell for `jsonplaceholder-input-doc` with `dynamic-rag-off` and verify RAG-off metrics are marked not applicable instead of failed.
+- [x] 5.2 Run a smoke cell for `jsonplaceholder-input-doc` with `dynamic-rag-on` and verify quality, retrieval, token/cost, and report outputs.
+- [x] 5.3 Run a second smoke cell for `jsonplaceholder-input-doc` with `dynamic-rag-off` and verify RAG-off metrics are marked not applicable instead of failed.
 - [x] 5.4 Confirm dry-run planning still supports the final 3 API cases x 4 variants x 3 repeats target.
-- [ ] 5.5 Run the final paper matrix only after smoke exports are readable, then archive the generated reports for analysis.
+- [x] 5.5 Run the final paper matrix only after smoke exports are readable, then archive the generated reports for analysis.
