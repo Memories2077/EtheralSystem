@@ -1,6 +1,10 @@
 #!/usr/bin/env bun
 import fs from "fs";
 import path from "path";
+import {
+  normalizeEstimatedUsage as normalizeMaprEstimatedUsage,
+  successfulServerRatios,
+} from "./mapr-metrics";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -68,6 +72,30 @@ type BenchmarkRun = JsonRecord & {
   containerSkippedCount?: number | string;
   containerFailedCount?: number | string;
   estimatedUsage?: JsonRecord;
+  estimated_prompt_tokens?: number | string;
+  estimated_completion_tokens?: number | string;
+  estimated_total_tokens?: number | string;
+  estimated_cost_usd?: number | string;
+  expected_operation_count?: number | string;
+  mapped_operation_count?: number | string;
+  mapped_tool_count?: number | string;
+  generated_tool_count?: number | string;
+  hallucinated_tool_count?: number | string;
+  schema_valid_tool_count?: number | string;
+  endpoint_coverage?: number | string | null;
+  hallucinated_tool_rate?: number | string | null;
+  schema_validity_rate?: number | string | null;
+  retrieval_metric_applicable?: boolean;
+  retrieved_evidence_count?: number | string;
+  relevant_evidence_count?: number | string;
+  retrieval_hit_count?: number | string;
+  precision_at_3?: number | string | null;
+  recall_at_3?: number | string | null;
+  mrr_at_3?: number | string | null;
+  buildDurationMs?: number | string;
+  chatTotalLatencyMs?: number | string;
+  compileStartValidationPassed?: boolean;
+  mcpHandshakePass?: boolean;
 };
 
 type CsvRow = Record<string, unknown>;
@@ -186,6 +214,13 @@ function numeric(value: unknown): number {
   return 0;
 }
 
+function boolValue(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+  if (typeof value === "number") return value !== 0;
+  return fallback;
+}
+
 function nestedNumber(row: JsonRecord | undefined, key: string): number {
   return numeric(row?.[key]);
 }
@@ -204,23 +239,7 @@ function eventMetricText(event: ResearchEvent | undefined, key: string): string 
 }
 
 function summarizeEstimatedUsage(events: ResearchEvent[]): JsonRecord {
-  const metrics = events.map((event) => event.metrics || {});
-  const sum = (keys: string[]) => metrics.reduce((total, item) => {
-    for (const key of keys) {
-      const value = item[key];
-      if (typeof value === "number" && Number.isFinite(value)) return total + value;
-      if (typeof value === "string" && Number.isFinite(Number(value))) return total + Number(value);
-    }
-    return total;
-  }, 0);
-  return {
-    estimatedPromptTokens: sum(["prompt_token_estimate", "prompt_tokens", "estimated_prompt_tokens"]),
-    estimatedCompletionTokens: sum(["completion_token_estimate", "completion_tokens", "estimated_completion_tokens"]),
-    llmCallCount: sum(["llm_calls", "llm_call_count"]),
-    selectedSkillCount: sum(["selected_skill_count", "skills_selected_count"]),
-    selectedSkillTokens: sum(["skill_total_tokens", "selected_skill_tokens", "tokenCost"]),
-    estimatedCostUsd: sum(["estimated_cost_usd", "estimatedCostUsd", "cost_usd"]),
-  };
+  return normalizeMaprEstimatedUsage(events);
 }
 
 function outcomeCounts(event: ResearchEvent | undefined): JsonRecord {
@@ -240,6 +259,38 @@ function outcomeCounts(event: ResearchEvent | undefined): JsonRecord {
     toolCallPassRate: rate(success, attempted),
     skippedCoverage: rate(skipped, total),
     toolValidationStatus: event ? (attempted > 0 ? "attempted" : skipped > 0 ? "skipped_only" : "not_run") : "unknown",
+  };
+}
+
+function estimatedUsageForRun(run: BenchmarkRun): JsonRecord {
+  return normalizeMaprEstimatedUsage([run]);
+}
+
+function normalizeBenchmarkRun(run: BenchmarkRun): BenchmarkRun {
+  const usage = estimatedUsageForRun(run);
+  const runtimeMetadataOk = boolValue(run.runtimeMetadataOk);
+  const mcpHandshakePass = boolValue(run.mcpHandshakePass, boolValue(run.mcp_initialize_success, runtimeMetadataOk));
+  const compileStartValidationPassed = boolValue(run.compileStartValidationPassed, boolValue(run.compile_pass, run.ok === true));
+  const buildDurationMs = numeric(run.buildDurationMs) || numeric(run.build_total_latency_ms) || numeric(run.durationMs);
+  const chatTotalLatencyMs = numeric(run.chatTotalLatencyMs) || numeric(run.chat_total_latency_ms);
+  return {
+    ...run,
+    estimatedUsage: {
+      ...(run.estimatedUsage || {}),
+      ...usage,
+    },
+    estimated_prompt_tokens: numeric(run.estimated_prompt_tokens) || numeric(usage.estimated_prompt_tokens),
+    estimated_completion_tokens: numeric(run.estimated_completion_tokens) || numeric(usage.estimated_completion_tokens),
+    estimated_total_tokens: numeric(run.estimated_total_tokens) || numeric(usage.estimated_total_tokens),
+    estimated_cost_usd: numeric(run.estimated_cost_usd) || numeric(usage.estimated_cost_usd),
+    build_success: run.ok === true,
+    metadata_ready: runtimeMetadataOk,
+    mcpHandshakePass,
+    mcp_initialize_success: mcpHandshakePass,
+    compileStartValidationPassed,
+    compile_pass: compileStartValidationPassed,
+    build_total_latency_ms: buildDurationMs || "",
+    chat_total_latency_ms: chatTotalLatencyMs || "",
   };
 }
 
@@ -265,7 +316,7 @@ function buildDashboardRunRows(events: ResearchEvent[], knownBenchmarkBuildIds: 
       eventMetricText(event, "variant_id") ||
       `${selectionVariant}-rag-${ragEnabled === "false" ? "off" : "on"}`;
     const metadataToolCount = numeric(metadataEvent?.metrics?.mcp_tool_count);
-    return {
+    return normalizeBenchmarkRun({
       type: "benchmark_result",
       benchmarkType: "dashboard_manual_run",
       source: "dashboard",
@@ -294,7 +345,7 @@ function buildDashboardRunRows(events: ResearchEvent[], knownBenchmarkBuildIds: 
       runtimeToolCount: metadataToolCount || "",
       ...outcomeCounts(outcomeEvent),
       estimatedUsage: summarizeEstimatedUsage(group),
-    };
+    });
   });
 }
 
@@ -354,22 +405,45 @@ function summarizeToolcallMatrixGroups(
     const cleanupRemoved = group.reduce((sum, run) => sum + (numeric(run.containerRemovedCount) || (run.cleanupStatus === "removed" ? 1 : 0)), 0);
     const cleanupFailed = group.reduce((sum, run) => sum + (numeric(run.containerFailedCount) || (run.cleanupStatus === "failed" ? 1 : 0)), 0);
     const cleanupSkipped = group.reduce((sum, run) => sum + (numeric(run.containerSkippedCount) || (run.cleanupStatus === "skipped" ? 1 : 0)), 0);
-    const estimatedPromptTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedPromptTokens"), 0);
-    const estimatedCompletionTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedCompletionTokens"), 0);
+    const estimatedPromptTokens = group.reduce((sum, run) => sum + numeric(run.estimated_prompt_tokens), 0);
+    const estimatedCompletionTokens = group.reduce((sum, run) => sum + numeric(run.estimated_completion_tokens), 0);
+    const estimatedTotalTokens = group.reduce((sum, run) => sum + numeric(run.estimated_total_tokens), 0);
     const llmCallCount = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "llmCallCount"), 0);
     const selectedSkillTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "selectedSkillTokens"), 0);
-    const estimatedCostUsd = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "estimatedCostUsd"), 0);
+    const estimatedCostUsd = group.reduce((sum, run) => sum + numeric(run.estimated_cost_usd), 0);
+    const expectedOperations = group.reduce((sum, run) => sum + numeric(run.expected_operation_count), 0);
+    const mappedOperations = group.reduce((sum, run) => sum + numeric(run.mapped_operation_count), 0);
+    const mappedTools = group.reduce((sum, run) => sum + (numeric(run.mapped_tool_count) || numeric(run.mapped_operation_count)), 0);
+    const generatedTools = group.reduce((sum, run) => sum + numeric(run.generated_tool_count), 0);
+    const hallucinatedTools = group.reduce((sum, run) => sum + numeric(run.hallucinated_tool_count), 0);
+    const schemaValidTools = group.reduce((sum, run) => sum + numeric(run.schema_valid_tool_count), 0);
+    const successfulBuilds = group.filter((run) => run.ok === true).length;
+    const metadataReady = group.filter((run) => run.runtimeMetadataOk === true).length;
+    const handshakes = group.filter((run) => run.mcpHandshakePass === true || run.mcp_initialize_success === true || run.runtimeMetadataOk === true).length;
+    const compilePassed = group.filter((run) => run.compileStartValidationPassed === true || run.compile_pass === true).length;
+    const buildDurations = group.map((run) => numeric(run.build_total_latency_ms) || numeric(run.buildDurationMs) || numeric(run.durationMs)).filter((value) => Number.isFinite(value) && value > 0);
+    const chatDurations = group.map((run) => numeric(run.chat_total_latency_ms) || numeric(run.chatTotalLatencyMs)).filter((value) => Number.isFinite(value) && value > 0);
     const unknownToolValidation = group.filter((run) => !run.toolValidationStatus || run.toolValidationStatus === "unknown" || run.toolValidationStatus === "not_run").length;
     const skippedOnlyValidation = group.filter((run) => run.toolValidationStatus === "skipped_only").length;
     const attemptedValidation = group.filter((run) => numeric(run.attemptedToolCount) > 0).length;
     rows.push({
       [groupName]: key,
       count: group.length,
-      build_success_rate: rate(group.filter((run) => run.ok === true).length, group.length),
-      metadata_readiness_rate: rate(group.filter((run) => run.runtimeMetadataOk === true).length, group.length),
+      build_success_rate: rate(successfulBuilds, group.length),
+      metadata_readiness_rate: rate(metadataReady, group.length),
+      mcp_handshake_pass_rate: rate(handshakes, group.length),
       tool_call_pass_rate: rate(successfulTools, attemptedTools),
+      compile_pass_rate: rate(compilePassed, group.length),
       inspector_pass_rate: rate(inspectorSuccessfulTools, inspectorAttemptedTools),
       skipped_coverage: rate(skippedTools, totalTools),
+      expected_operation_count: expectedOperations,
+      mapped_operation_count: mappedOperations,
+      generated_tool_count: generatedTools,
+      hallucinated_tool_count: hallucinatedTools,
+      schema_valid_tool_count: schemaValidTools,
+      endpoint_coverage: rate(mappedOperations, expectedOperations),
+      hallucinated_tool_rate: rate(hallucinatedTools, generatedTools),
+      schema_validity_rate: rate(schemaValidTools, mappedTools),
       attempted_tool_count: attemptedTools,
       successful_tool_count: successfulTools,
       skipped_tool_count: skippedTools,
@@ -386,11 +460,21 @@ function summarizeToolcallMatrixGroups(
       unknown_tool_validation_count: unknownToolValidation,
       p50_ms: percentile(durations, 50),
       p95_ms: percentile(durations, 95),
+      p50_build_total_latency_ms: percentile(buildDurations, 50),
+      p95_build_total_latency_ms: percentile(buildDurations, 95),
+      p50_chat_total_latency_ms: percentile(chatDurations, 50),
+      p95_chat_total_latency_ms: percentile(chatDurations, 95),
       estimated_prompt_tokens: estimatedPromptTokens,
       estimated_completion_tokens: estimatedCompletionTokens,
+      estimated_total_tokens: estimatedTotalTokens,
       llm_call_count: llmCallCount,
       selected_skill_tokens: selectedSkillTokens,
       estimated_cost_usd: estimatedCostUsd,
+      ...successfulServerRatios({
+        estimatedTotalTokens,
+        estimatedCostUsd,
+        successfulBuilds,
+      }),
     });
   }
   return rows.sort((a, b) => String(a[groupName]).localeCompare(String(b[groupName])));
@@ -440,6 +524,126 @@ function summarizeFeedback(events: ResearchEvent[]): CsvRow[] {
   return rows.sort((a, b) => String(a.feedback_event).localeCompare(String(b.feedback_event)));
 }
 
+function finiteMetricRows(rows: CsvRow[], metric: string, variantIds: string[]): number[] {
+  const allowed = new Set(variantIds);
+  return rows
+    .filter((row) => allowed.has(String(row.variantId || "")))
+    .map((row) => Number(row[metric]))
+    .filter((value) => Number.isFinite(value));
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(4));
+}
+
+function delta(left: number | null, right: number | null): number | null {
+  if (left === null || right === null) return null;
+  return Number((left - right).toFixed(4));
+}
+
+function summarizeQualityByVariant(runs: BenchmarkRun[]): CsvRow[] {
+  return summarizeToolcallMatrixGroups(runs, "variantId", (run) => run.variantId || "unknown")
+    .map((row) => ({
+      variantId: row.variantId,
+      count: row.count,
+      expected_operation_count: row.expected_operation_count,
+      mapped_operation_count: row.mapped_operation_count,
+      generated_tool_count: row.generated_tool_count,
+      hallucinated_tool_count: row.hallucinated_tool_count,
+      schema_valid_tool_count: row.schema_valid_tool_count,
+      endpoint_coverage: row.endpoint_coverage,
+      hallucinated_tool_rate: row.hallucinated_tool_rate,
+      schema_validity_rate: row.schema_validity_rate,
+      build_success_rate: row.build_success_rate,
+      metadata_readiness_rate: row.metadata_readiness_rate,
+      tool_call_pass_rate: row.tool_call_pass_rate,
+    }));
+}
+
+function summarizeRagRetrievalByVariant(runs: BenchmarkRun[]): CsvRow[] {
+  const rows: CsvRow[] = [];
+  const ragRuns = runs.filter((run) => run.ragEnabled === "true");
+  for (const [variantId, group] of groupBy(ragRuns, (run) => run.variantId || "unknown")) {
+    const applicable = group.filter((run) => run.retrieval_metric_applicable === true);
+    const precisionValues = applicable.map((run) => Number(run.precision_at_3)).filter((value) => Number.isFinite(value));
+    const recallValues = applicable.map((run) => Number(run.recall_at_3)).filter((value) => Number.isFinite(value));
+    const mrrValues = applicable.map((run) => Number(run.mrr_at_3)).filter((value) => Number.isFinite(value));
+    rows.push({
+      variantId,
+      count: group.length,
+      applicable_count: applicable.length,
+      retrieved_evidence_count: group.reduce((sum, run) => sum + numeric(run.retrieved_evidence_count), 0),
+      relevant_evidence_count: group.reduce((sum, run) => sum + numeric(run.relevant_evidence_count), 0),
+      retrieval_hit_count: group.reduce((sum, run) => sum + numeric(run.retrieval_hit_count), 0),
+      precision_at_3: average(precisionValues),
+      recall_at_3: average(recallValues),
+      mrr_at_3: average(mrrValues),
+    });
+  }
+  return rows.sort((a, b) => String(a.variantId).localeCompare(String(b.variantId)));
+}
+
+function summarizeAblationEffects(variantRows: CsvRow[]): CsvRow[] {
+  const metrics = [
+    "build_success_rate",
+    "metadata_readiness_rate",
+    "mcp_handshake_pass_rate",
+    "tool_call_pass_rate",
+    "compile_pass_rate",
+    "endpoint_coverage",
+    "hallucinated_tool_rate",
+    "schema_validity_rate",
+  ];
+  return metrics.map((metric) => {
+    const ragOn = finiteMetricRows(variantRows, metric, ["static-rag-on", "dynamic-rag-on"]);
+    const ragOff = finiteMetricRows(variantRows, metric, ["static-rag-off", "dynamic-rag-off"]);
+    const dynamic = finiteMetricRows(variantRows, metric, ["dynamic-rag-on", "dynamic-rag-off"]);
+    const staticRows = finiteMetricRows(variantRows, metric, ["static-rag-on", "static-rag-off"]);
+    const ragOnAverage = average(ragOn);
+    const ragOffAverage = average(ragOff);
+    const dynamicAverage = average(dynamic);
+    const staticAverage = average(staticRows);
+    return {
+      metric,
+      rag_on_average: ragOnAverage,
+      rag_off_average: ragOffAverage,
+      rag_uplift: delta(ragOnAverage, ragOffAverage),
+      dynamic_average: dynamicAverage,
+      static_average: staticAverage,
+      static_vs_dynamic_success_delta: delta(dynamicAverage, staticAverage),
+      rag_on_count: ragOn.length,
+      rag_off_count: ragOff.length,
+      dynamic_count: dynamic.length,
+      static_count: staticRows.length,
+    };
+  });
+}
+
+function summarizeVariantMatrix(variantRows: CsvRow[]): CsvRow[] {
+  const byVariant = new Map(variantRows.map((row) => [String(row.variantId || ""), row]));
+  return [
+    { skill_selection: "static", rag_off_variant: "static-rag-off", rag_on_variant: "static-rag-on" },
+    { skill_selection: "dynamic", rag_off_variant: "dynamic-rag-off", rag_on_variant: "dynamic-rag-on" },
+  ].map((row) => {
+    const off = byVariant.get(row.rag_off_variant) || {};
+    const on = byVariant.get(row.rag_on_variant) || {};
+    return {
+      skill_selection: row.skill_selection,
+      rag_off_variant: row.rag_off_variant,
+      rag_off_count: off.count ?? "",
+      rag_off_build_success_rate: off.build_success_rate ?? "",
+      rag_off_endpoint_coverage: off.endpoint_coverage ?? "",
+      rag_off_tool_call_pass_rate: off.tool_call_pass_rate ?? "",
+      rag_on_variant: row.rag_on_variant,
+      rag_on_count: on.count ?? "",
+      rag_on_build_success_rate: on.build_success_rate ?? "",
+      rag_on_endpoint_coverage: on.endpoint_coverage ?? "",
+      rag_on_tool_call_pass_rate: on.tool_call_pass_rate ?? "",
+    };
+  });
+}
+
 function markdownTable(rows: CsvRow[], headers: string[]): string {
   if (rows.length === 0) return "_No data._\n";
   const lines = [
@@ -470,7 +674,7 @@ async function main() {
     row.type === "benchmark_result" &&
     (!experimentId || row.experimentId === experimentId) &&
     (!apiDocId || row.apiDocId === apiDocId || row.caseId === apiDocId || row.itemId === apiDocId)
-  );
+  ).map(normalizeBenchmarkRun);
   const knownBenchmarkBuildIds = new Set(runs.map((row) => String(row.buildRequestId || "").trim()).filter(Boolean));
   const eventsByExperiment = experimentId ? allEvents.filter((event) => event.experiment_id === experimentId) : allEvents;
   const events = apiDocId && knownBenchmarkBuildIds.size > 0
@@ -495,6 +699,10 @@ async function main() {
   const toolcallSkillRows = summarizeToolcallMatrixGroups(matrixRuns, "skillSelectionMode", (run) => run.skillSelectionMode || run.selectionVariant || "unknown");
   const toolcallRagRows = summarizeToolcallMatrixGroups(matrixRuns, "ragEnabled", (run) => run.ragEnabled === "true" ? "rag_on" : "rag_off");
   const toolcallApiDocRows = summarizeToolcallMatrixGroups(matrixRuns, "apiDocId", (run) => run.apiDocId || run.caseId || run.itemId || "unknown");
+  const qualityByVariantRows = summarizeQualityByVariant(matrixRuns);
+  const ragRetrievalByVariantRows = summarizeRagRetrievalByVariant(matrixRuns);
+  const ablationEffectRows = summarizeAblationEffects(toolcallVariantRows);
+  const variantMatrixRows = summarizeVariantMatrix(toolcallVariantRows);
   writeCsv(path.join(outputDir, "events.csv"), events);
   writeCsv(path.join(outputDir, "stage_summary.csv"), stageRows);
   writeCsv(path.join(outputDir, "build_summary.csv"), buildRows);
@@ -507,6 +715,9 @@ async function main() {
   writeCsv(path.join(outputDir, "toolcall_by_skill_selection.csv"), toolcallSkillRows);
   writeCsv(path.join(outputDir, "toolcall_by_rag.csv"), toolcallRagRows);
   writeCsv(path.join(outputDir, "toolcall_by_api_doc.csv"), toolcallApiDocRows);
+  writeCsv(path.join(outputDir, "quality_by_variant.csv"), qualityByVariantRows);
+  writeCsv(path.join(outputDir, "rag_retrieval_by_variant.csv"), ragRetrievalByVariantRows);
+  writeCsv(path.join(outputDir, "ablation_effects.csv"), ablationEffectRows);
   writeCsv(path.join(outputDir, "mode_comparison.csv"), modeRows);
   writeCsv(path.join(outputDir, "rag_comparison.csv"), ragRows);
   writeCsv(path.join(outputDir, "runtime_reliability.csv"), runtimeRows);
@@ -520,10 +731,18 @@ async function main() {
     apiDocId ? `API Doc Batch: ${apiDocId}` : `API Doc Batch: all`,
     `Generated: ${new Date().toISOString()}`,
     ``,
+    `## 2x2 Variant Matrix`,
+    markdownTable(variantMatrixRows, ["skill_selection", "rag_off_variant", "rag_off_count", "rag_off_build_success_rate", "rag_off_endpoint_coverage", "rag_off_tool_call_pass_rate", "rag_on_variant", "rag_on_count", "rag_on_build_success_rate", "rag_on_endpoint_coverage", "rag_on_tool_call_pass_rate"]),
+    `## Ablation Effects`,
+    markdownTable(ablationEffectRows, ["metric", "rag_on_average", "rag_off_average", "rag_uplift", "dynamic_average", "static_average", "static_vs_dynamic_success_delta", "rag_on_count", "rag_off_count"]),
+    `## Quality By Variant`,
+    markdownTable(qualityByVariantRows, ["variantId", "count", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "expected_operation_count", "mapped_operation_count", "generated_tool_count", "hallucinated_tool_count", "schema_valid_tool_count"]),
+    `## RAG Retrieval By Variant`,
+    markdownTable(ragRetrievalByVariantRows, ["variantId", "count", "applicable_count", "precision_at_3", "recall_at_3", "mrr_at_3", "retrieved_evidence_count", "relevant_evidence_count", "retrieval_hit_count"]),
     `## Backend Tool-Call Matrix By API Doc`,
-    markdownTable(toolcallApiDocRows, ["apiDocId", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "cleanup_removed_count", "cleanup_failed_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    markdownTable(toolcallApiDocRows, ["apiDocId", "count", "build_success_rate", "metadata_readiness_rate", "mcp_handshake_pass_rate", "compile_pass_rate", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "cleanup_removed_count", "cleanup_failed_count", "p50_build_total_latency_ms", "p95_build_total_latency_ms", "estimated_total_tokens", "tokens_per_successful_server", "estimated_cost_usd", "estimated_cost_per_successful_server"]),
     `## Backend Tool-Call Matrix By Variant`,
-    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
+    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "mcp_handshake_pass_rate", "compile_pass_rate", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_build_total_latency_ms", "p95_build_total_latency_ms", "estimated_total_tokens", "tokens_per_successful_server", "estimated_cost_usd", "estimated_cost_per_successful_server"]),
     `## Backend Tool-Call Matrix By Case`,
     markdownTable(toolcallCaseRows, ["caseId", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     `## Backend Tool-Call Matrix By API Type`,

@@ -1,0 +1,192 @@
+# Research API Input Document
+Format-Version: 1
+API-ID: dummyjson-input-doc
+Title: DummyJSON Posts API
+Base-URL: https://dummyjson.com
+Authentication: none
+Declared-Endpoint-Count: 8
+Safe-Probe-Policy: Public fake REST API. GET endpoints are safe for live probes. POST, PATCH, and DELETE return simulated responses and do not persist data. Safe benchmark probes may call GET endpoints and fake POST /posts/add.
+
+## Endpoint 1: List posts
+Method: GET
+Path: /posts
+Description: Return a paginated list of post resources. Optional query parameters include limit, skip, and select.
+Request Example:
+```http
+GET /posts?limit=3&skip=0&select=title,userId HTTP/1.1
+Host: dummyjson.com
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "posts": [
+    { "id": 1, "title": "His mother had always taught him", "userId": 121 }
+  ],
+  "total": 251,
+  "skip": 0,
+  "limit": 3
+}
+```
+Safe Probe: yes, use for list-posts with limit=3, skip=0, or no arguments.
+
+## Endpoint 2: Get post by id
+Method: GET
+Path: /posts/{id}
+Description: Return one post resource by numeric id.
+Request Example:
+```http
+GET /posts/1 HTTP/1.1
+Host: dummyjson.com
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "title": "His mother had always taught him",
+  "body": "Sample post body",
+  "tags": ["history", "american", "crime"],
+  "reactions": { "likes": 192, "dislikes": 25 },
+  "views": 305,
+  "userId": 121
+}
+```
+Safe Probe: yes, use id=1.
+
+## Endpoint 3: Search posts
+Method: GET
+Path: /posts/search
+Description: Search posts by text query using the q query parameter.
+Request Example:
+```http
+GET /posts/search?q=love HTTP/1.1
+Host: dummyjson.com
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "posts": [
+    { "id": 7, "title": "This is important to remember.", "body": "Sample matched post body", "userId": 70 }
+  ],
+  "total": 17,
+  "skip": 0,
+  "limit": 17
+}
+```
+Safe Probe: yes, use q=love.
+
+## Endpoint 4: List posts by user
+Method: GET
+Path: /posts/user/{userId}
+Description: Return posts written by a specific user id.
+Request Example:
+```http
+GET /posts/user/5 HTTP/1.1
+Host: dummyjson.com
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "posts": [
+    { "id": 61, "title": "I'm going to hire professional help tomorrow.", "userId": 5 }
+  ],
+  "total": 2,
+  "skip": 0,
+  "limit": 2
+}
+```
+Safe Probe: yes, use userId=5.
+
+## Endpoint 5: List comments for a post
+Method: GET
+Path: /posts/{id}/comments
+Description: Return comments associated with one post id.
+Request Example:
+```http
+GET /posts/1/comments HTTP/1.1
+Host: dummyjson.com
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "comments": [
+    {
+      "id": 93,
+      "body": "These are fabulous ideas!",
+      "postId": 1,
+      "likes": 7,
+      "user": { "id": 190, "username": "leahw", "fullName": "Leah Gutierrez" }
+    }
+  ],
+  "total": 3,
+  "skip": 0,
+  "limit": 3
+}
+```
+Safe Probe: yes, use id=1.
+
+## Endpoint 6: Create post
+Method: POST
+Path: /posts/add
+Description: Create a fake post. The service returns a simulated new id and does not persist the post.
+Request Example:
+```http
+POST /posts/add HTTP/1.1
+Host: dummyjson.com
+Content-Type: application/json
+
+{ "title": "benchmark", "body": "tool call", "userId": 5 }
+```
+Response Example:
+```json
+{ "id": 252, "title": "benchmark", "body": "tool call", "userId": 5 }
+```
+Safe Probe: yes, use for create-post because DummyJSON simulates the write.
+
+## Endpoint 7: Update post
+Method: PATCH
+Path: /posts/{id}
+Description: Partially update a fake post resource. The service returns a simulated updated object and does not persist the change.
+Request Example:
+```http
+PATCH /posts/1 HTTP/1.1
+Host: dummyjson.com
+Content-Type: application/json
+
+{ "title": "patched title" }
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "title": "patched title",
+  "body": "Sample post body",
+  "userId": 121
+}
+```
+Safe Probe: skip by default because mutation probes are not needed for success-rate calculation.
+
+## Endpoint 8: Delete post
+Method: DELETE
+Path: /posts/{id}
+Description: Delete a fake post resource. The service returns the deleted object with deletion metadata and does not persist the deletion.
+Request Example:
+```http
+DELETE /posts/1 HTTP/1.1
+Host: dummyjson.com
+Accept: application/json
+```
+Response Example:
+```json
+{
+  "id": 1,
+  "title": "His mother had always taught him",
+  "isDeleted": true,
+  "deletedOn": "2026-01-01T00:00:00.000Z"
+}
+```
+Safe Probe: skip by default because delete probes are not needed for success-rate calculation.

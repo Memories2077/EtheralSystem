@@ -1,0 +1,261 @@
+{
+  "formatVersion": 1,
+  "description": "MAPR labels for the backend tool-call matrix. Each case id matches backend_toolcall_matrix_dataset.json and each expected operation must match a declared input/*.txt endpoint.",
+  "cases": {
+    "jsonplaceholder-input-doc": {
+      "relevantRagEvidence": ["api_doc", "openapi_yaml", "typescript_code", "jsonplaceholder"],
+      "expectedOperations": [
+        {
+          "id": "list-posts",
+          "method": "GET",
+          "path": "/posts",
+          "aliases": ["list-posts", "get-all-posts", "list posts", "all posts", "get posts", "posts"],
+          "requiredParams": [],
+          "schemaHints": ["userId"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "posts"]
+        },
+        {
+          "id": "get-post-by-id",
+          "method": "GET",
+          "path": "/posts/{id}",
+          "aliases": ["get-post-by-id", "post-by-id", "get post", "single post", "posts/{id}", "posts by id"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "posts"]
+        },
+        {
+          "id": "create-post",
+          "method": "POST",
+          "path": "/posts",
+          "aliases": ["create-post", "create post", "add-post", "add post", "post /posts"],
+          "requiredParams": ["title", "body", "userId"],
+          "schemaHints": ["title", "body", "userId"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "posts"]
+        },
+        {
+          "id": "replace-post",
+          "method": "PUT",
+          "path": "/posts/{id}",
+          "aliases": ["replace-post", "replace post", "update-post", "update post", "put-post", "put /posts"],
+          "requiredParams": ["id", "title", "body", "userId"],
+          "schemaHints": ["id", "title", "body", "userId"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "posts"]
+        },
+        {
+          "id": "patch-post",
+          "method": "PATCH",
+          "path": "/posts/{id}",
+          "aliases": ["patch-post", "patch post", "partial update", "partially update", "patch /posts"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id", "title"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "posts"]
+        },
+        {
+          "id": "delete-post",
+          "method": "DELETE",
+          "path": "/posts/{id}",
+          "aliases": ["delete-post", "delete post", "remove-post", "remove post", "delete /posts"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "posts"]
+        },
+        {
+          "id": "post-comments",
+          "method": "GET",
+          "path": "/posts/{id}/comments",
+          "aliases": ["post-comments", "comments-by-post", "get-comments", "list-comments", "comments"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id", "postId"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "comments"]
+        },
+        {
+          "id": "get-user",
+          "method": "GET",
+          "path": "/users/{id}",
+          "aliases": ["get-user", "user-by-id", "users", "get user", "user"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "jsonplaceholder", "users"]
+        }
+      ]
+    },
+    "dummyjson-input-doc": {
+      "relevantRagEvidence": ["api_doc", "openapi_yaml", "typescript_code", "dummyjson"],
+      "expectedOperations": [
+        {
+          "id": "list-posts",
+          "method": "GET",
+          "path": "/posts",
+          "aliases": ["list-posts", "get-all-posts", "list posts", "all posts", "get posts", "posts"],
+          "requiredParams": [],
+          "schemaHints": ["limit", "skip", "select"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "posts"]
+        },
+        {
+          "id": "get-post-by-id",
+          "method": "GET",
+          "path": "/posts/{id}",
+          "aliases": ["get-post-by-id", "post-by-id", "get post", "single post", "posts/{id}", "posts by id"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "posts"]
+        },
+        {
+          "id": "search-posts",
+          "method": "GET",
+          "path": "/posts/search",
+          "aliases": ["search-posts", "search posts", "posts-search", "search /posts", "query posts"],
+          "requiredParams": ["q"],
+          "schemaHints": ["q"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "posts"]
+        },
+        {
+          "id": "list-posts-by-user",
+          "method": "GET",
+          "path": "/posts/user/{userId}",
+          "aliases": ["posts-by-user", "list-posts-by-user", "user-posts", "posts/user", "user posts"],
+          "requiredParams": ["userId"],
+          "schemaHints": ["userId", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "posts"]
+        },
+        {
+          "id": "post-comments",
+          "method": "GET",
+          "path": "/posts/{id}/comments",
+          "aliases": ["post-comments", "comments-by-post", "get-comments", "list-comments", "comments"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id", "postId"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "comments"]
+        },
+        {
+          "id": "create-post",
+          "method": "POST",
+          "path": "/posts/add",
+          "aliases": ["create-post", "create post", "add-post", "add post", "posts/add", "post /posts/add"],
+          "requiredParams": ["title", "body", "userId"],
+          "schemaHints": ["title", "body", "userId"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "posts"]
+        },
+        {
+          "id": "patch-post",
+          "method": "PATCH",
+          "path": "/posts/{id}",
+          "aliases": ["patch-post", "patch post", "update-post", "update post", "partial update", "patch /posts"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id", "title"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "posts"]
+        },
+        {
+          "id": "delete-post",
+          "method": "DELETE",
+          "path": "/posts/{id}",
+          "aliases": ["delete-post", "delete post", "remove-post", "remove post", "delete /posts"],
+          "requiredParams": ["id"],
+          "schemaHints": ["id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "dummyjson", "posts"]
+        }
+      ]
+    },
+    "pokeapi-input-doc": {
+      "relevantRagEvidence": ["api_doc", "openapi_yaml", "typescript_code", "pokeapi"],
+      "expectedOperations": [
+        {
+          "id": "list-pokemon",
+          "method": "GET",
+          "path": "/pokemon",
+          "aliases": ["list-pokemon", "list pokemon", "get-pokemon-list", "pokemon-list", "get pokemon", "pokemon"],
+          "requiredParams": [],
+          "schemaHints": ["limit", "offset"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "pokemon"]
+        },
+        {
+          "id": "get-pokemon",
+          "method": "GET",
+          "path": "/pokemon/{id_or_name}",
+          "aliases": ["get-pokemon-by-id-or-name", "pokemon-by-id", "pokemon-by-name", "get-pokemon", "pokemon detail"],
+          "requiredParams": ["id_or_name"],
+          "schemaHints": ["id_or_name", "idOrName", "name", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "pokemon"]
+        },
+        {
+          "id": "get-ability",
+          "method": "GET",
+          "path": "/ability/{id_or_name}",
+          "aliases": ["get-ability", "ability-by-id", "ability-by-name", "ability detail", "ability"],
+          "requiredParams": ["id_or_name"],
+          "schemaHints": ["id_or_name", "idOrName", "name", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "ability"]
+        },
+        {
+          "id": "get-type",
+          "method": "GET",
+          "path": "/type/{id_or_name}",
+          "aliases": ["get-type", "type-by-id", "type-by-name", "type detail", "pokemon type"],
+          "requiredParams": ["id_or_name"],
+          "schemaHints": ["id_or_name", "idOrName", "name", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "type"]
+        },
+        {
+          "id": "get-move",
+          "method": "GET",
+          "path": "/move/{id_or_name}",
+          "aliases": ["get-move", "move-by-id", "move-by-name", "move detail", "move"],
+          "requiredParams": ["id_or_name"],
+          "schemaHints": ["id_or_name", "idOrName", "name", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "move"]
+        },
+        {
+          "id": "get-item",
+          "method": "GET",
+          "path": "/item/{id_or_name}",
+          "aliases": ["get-item", "item-by-id", "item-by-name", "item detail", "item"],
+          "requiredParams": ["id_or_name"],
+          "schemaHints": ["id_or_name", "idOrName", "name", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "item"]
+        },
+        {
+          "id": "get-berry",
+          "method": "GET",
+          "path": "/berry/{id_or_name}",
+          "aliases": ["get-berry", "berry-by-id", "berry-by-name", "berry detail", "berry"],
+          "requiredParams": ["id_or_name"],
+          "schemaHints": ["id_or_name", "idOrName", "name", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "berry"]
+        },
+        {
+          "id": "get-generation",
+          "method": "GET",
+          "path": "/generation/{id_or_name}",
+          "aliases": ["get-generation", "generation-by-id", "generation-by-name", "generation detail", "generation"],
+          "requiredParams": ["id_or_name"],
+          "schemaHints": ["id_or_name", "idOrName", "name", "id"],
+          "authRequired": false,
+          "relevantRagEvidence": ["api_doc", "pokeapi", "generation"]
+        }
+      ]
+    }
+  }
+}

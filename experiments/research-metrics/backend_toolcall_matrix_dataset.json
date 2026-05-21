@@ -8,6 +8,20 @@
     "prompt": "Create an MCP Server from the provided JSONPlaceholder API documentation. Preserve all documented request and response shapes. JSONPlaceholder write operations are fake test operations and do not persist data.",
     "probes": [
       {
+        "id": "list-posts",
+        "operation": "GET /posts",
+        "match": ["get-all-posts", "list-posts", "list posts", "all posts", "get posts", "posts"],
+        "toolArgs": { "userId": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to list JSONPlaceholder posts. If arguments are needed, use userId=1. Return a compact answer with at least one post id or title."
+      },
+      {
+        "id": "get-post-by-id",
+        "operation": "GET /posts/{id}",
+        "match": ["get-post-by-id", "post-by-id", "get post", "single post", "posts/{id}", "posts by id"],
+        "toolArgs": { "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch JSONPlaceholder post id 1. Return the post id or title."
+      },
+      {
         "id": "create-post",
         "operation": "POST /posts",
         "match": ["create-post", "create post", "add-post", "add post", "post /posts"],
@@ -15,15 +29,29 @@
         "prompt": "Use the active MCP tool named \"{toolName}\" to create a fake JSONPlaceholder post with title=\"benchmark\", body=\"tool call\", and userId=1. Return the created id or title."
       },
       {
-        "id": "list-posts",
-        "operation": "GET /posts",
-        "match": ["get-all-posts", "list-posts", "list posts", "all posts", "get posts"],
-        "toolArgs": { "userId": 1 },
-        "prompt": "Use the active MCP tool named \"{toolName}\" to list JSONPlaceholder posts. If arguments are needed, use userId=1 or a limit of 3. Return a compact answer with at least one post id or title."
+        "id": "replace-post",
+        "operation": "PUT /posts/{id}",
+        "match": ["replace-post", "replace post", "update-post", "update post", "put-post", "put /posts"],
+        "toolArgs": { "id": 1, "title": "updated", "body": "updated body", "userId": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to replace fake JSONPlaceholder post id 1 with title=\"updated\", body=\"updated body\", and userId=1. Return the updated id or title."
+      },
+      {
+        "id": "patch-post",
+        "operation": "PATCH /posts/{id}",
+        "match": ["patch-post", "patch post", "partial update", "partially update", "patch /posts"],
+        "toolArgs": { "id": 1, "title": "patched title" },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to patch fake JSONPlaceholder post id 1 with title=\"patched title\". Return the updated id or title."
+      },
+      {
+        "id": "delete-post",
+        "operation": "DELETE /posts/{id}",
+        "match": ["delete-post", "delete post", "remove-post", "remove post", "delete /posts"],
+        "toolArgs": { "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to delete fake JSONPlaceholder post id 1. Return the delete response or status."
       },
       {
         "id": "post-comments",
-        "operation": "GET /posts/{id}/comments or GET /comments",
+        "operation": "GET /posts/{id}/comments",
         "match": ["post-comments", "comments-by-post", "get-comments", "list-comments", "comments"],
         "toolArgs": { "id": 1, "postId": 1 },
         "prompt": "Use the active MCP tool named \"{toolName}\" to fetch comments for JSONPlaceholder postId=1 or post id 1. Return a compact answer with at least one email or comment id."
@@ -31,58 +59,141 @@
       {
         "id": "get-user",
         "operation": "GET /users/{id}",
-        "match": ["get-user", "user-by-id", "users"],
+        "match": ["get-user", "user-by-id", "users", "get user", "user"],
         "toolArgs": { "id": 1 },
         "prompt": "Use the active MCP tool named \"{toolName}\" to fetch JSONPlaceholder user id 1. Return the user's name or username."
       }
-    ],
-    "skipRules": [
-      {
-        "match": ["delete", "remove", "patch", "put"],
-        "errorCode": "unsafe_mutation",
-        "diagnostic": "Mutation outside the safe fake POST subset is skipped."
-      }
     ]
   },
   {
-    "id": "reddit-input-doc",
-    "apiType": "oauth_auth_input_doc",
-    "title": "Reddit input API document with OAuth password flow",
-    "baseUrl": "https://oauth.reddit.com",
-    "inputPath": "input/reddit.txt",
-    "authInfoPath": "input/reddit_auth_information.txt",
-    "prompt": "Create an MCP Server from the provided Reddit API documentation and auth call example. All Reddit credentials and bearer tokens must be user-provided tool arguments. Do not hard-code or load credentials from environment variables.",
-    "probes": [],
-    "skipRules": [
-      {
-        "match": ["reddit", "access-token", "access token", "oauth", "bearer", "credential", "client", "secret", "password", "username", "karma", "prefs", "trophies", "announcement", "me"],
-        "errorCode": "auth_required_credentials_missing",
-        "diagnostic": "Reddit tools require user-provided OAuth credentials or bearer tokens; benchmark input only contains auth format, not live credentials."
-      }
-    ]
-  },
-  {
-    "id": "thedogapi-input-doc",
-    "apiType": "api_key_media_input_doc",
-    "title": "TheDogAPI input API document with API-key sections",
-    "baseUrl": "https://api.thedogapi.com/v1",
-    "inputPath": "input/thedogapi.txt",
-    "authInfoPath": "input/thedogapi_auth_information.txt",
-    "prompt": "Create an MCP Server from the provided TheDogAPI documentation and API-key information. Preserve documented request and response shapes. API keys must be user-provided tool arguments; do not hard-code or load credentials from environment variables.",
+    "id": "dummyjson-input-doc",
+    "apiType": "public_fake_crud_input_doc",
+    "title": "DummyJSON input API document",
+    "baseUrl": "https://dummyjson.com",
+    "inputPath": "input/dummyjson.txt",
+    "prompt": "Create an MCP Server from the provided DummyJSON API documentation. Preserve all documented request and response shapes. DummyJSON write operations are fake test operations and do not persist data.",
     "probes": [
       {
-        "id": "search-images",
-        "operation": "GET /images/search",
-        "match": ["images-search", "search-images", "search images", "image search"],
-        "toolArgs": { "limit": 1, "include_breeds": true, "has_breeds": true },
-        "prompt": "Use the active MCP tool named \"{toolName}\" to search TheDogAPI images with limit=1 and include_breeds=true or has_breeds=true if supported. Return the image id or URL."
-      }
-    ],
-    "skipRules": [
+        "id": "list-posts",
+        "operation": "GET /posts",
+        "match": ["get-all-posts", "list-posts", "list posts", "all posts", "get posts", "posts"],
+        "toolArgs": { "limit": 3, "skip": 0, "select": "title,userId" },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to list DummyJSON posts with limit=3 and skip=0 if supported. Return at least one post id or title."
+      },
       {
-        "match": ["status", "label", "delete", "public-request", "public request", "favourite", "favorite", "health", "pet", "ban", "category", "account", "sub-id", "sub id", "quota", "upload", "vote", "api-key", "x-api-key", "bearer", "patch", "post", "put"],
-        "errorCode": "auth_required_or_unsafe",
-        "diagnostic": "TheDogAPI API-key-only, account-specific, mutation, or non-public tools are skipped unless live credentials are provided."
+        "id": "get-post-by-id",
+        "operation": "GET /posts/{id}",
+        "match": ["get-post-by-id", "post-by-id", "get post", "single post", "posts/{id}", "posts by id"],
+        "toolArgs": { "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch DummyJSON post id 1. Return the post id or title."
+      },
+      {
+        "id": "search-posts",
+        "operation": "GET /posts/search",
+        "match": ["search-posts", "search posts", "posts-search", "search /posts", "query posts"],
+        "toolArgs": { "q": "love" },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to search DummyJSON posts with q=\"love\". Return at least one matched post id or title."
+      },
+      {
+        "id": "list-posts-by-user",
+        "operation": "GET /posts/user/{userId}",
+        "match": ["posts-by-user", "list-posts-by-user", "user-posts", "posts/user", "user posts"],
+        "toolArgs": { "userId": 5, "id": 5 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to list DummyJSON posts for userId=5. Return at least one post id or title."
+      },
+      {
+        "id": "post-comments",
+        "operation": "GET /posts/{id}/comments",
+        "match": ["post-comments", "comments-by-post", "get-comments", "list-comments", "comments"],
+        "toolArgs": { "id": 1, "postId": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch DummyJSON comments for post id 1. Return at least one comment id or body."
+      },
+      {
+        "id": "create-post",
+        "operation": "POST /posts/add",
+        "match": ["create-post", "create post", "add-post", "add post", "posts/add", "post /posts/add"],
+        "toolArgs": { "title": "benchmark", "body": "tool call", "userId": 5 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to create a fake DummyJSON post with title=\"benchmark\", body=\"tool call\", and userId=5. Return the created id or title."
+      },
+      {
+        "id": "patch-post",
+        "operation": "PATCH /posts/{id}",
+        "match": ["patch-post", "patch post", "update-post", "update post", "partial update", "patch /posts"],
+        "toolArgs": { "id": 1, "title": "patched title" },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to patch fake DummyJSON post id 1 with title=\"patched title\". Return the updated id or title."
+      },
+      {
+        "id": "delete-post",
+        "operation": "DELETE /posts/{id}",
+        "match": ["delete-post", "delete post", "remove-post", "remove post", "delete /posts"],
+        "toolArgs": { "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to delete fake DummyJSON post id 1. Return the delete response or status."
+      }
+    ]
+  },
+  {
+    "id": "pokeapi-input-doc",
+    "apiType": "public_readonly_input_doc",
+    "title": "PokeAPI input API document",
+    "baseUrl": "https://pokeapi.co/api/v2",
+    "inputPath": "input/pokeapi.txt",
+    "prompt": "Create an MCP Server from the provided PokeAPI documentation. Preserve all documented request and response shapes. All documented PokeAPI endpoints are public read-only GET requests.",
+    "probes": [
+      {
+        "id": "list-pokemon",
+        "operation": "GET /pokemon",
+        "match": ["list-pokemon", "list pokemon", "get-pokemon-list", "pokemon-list", "get pokemon", "pokemon"],
+        "toolArgs": { "limit": 5, "offset": 0 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to list Pokemon with limit=5 and offset=0 if supported. Return at least one Pokemon name."
+      },
+      {
+        "id": "get-pokemon",
+        "operation": "GET /pokemon/{id_or_name}",
+        "match": ["get-pokemon-by-id-or-name", "pokemon-by-id", "pokemon-by-name", "get-pokemon", "pokemon detail"],
+        "toolArgs": { "id_or_name": "pikachu", "idOrName": "pikachu", "name": "pikachu", "id": 25 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch the Pokemon named pikachu. Return the Pokemon name, id, or type."
+      },
+      {
+        "id": "get-ability",
+        "operation": "GET /ability/{id_or_name}",
+        "match": ["get-ability", "ability-by-id", "ability-by-name", "ability detail", "ability"],
+        "toolArgs": { "id_or_name": "stench", "idOrName": "stench", "name": "stench", "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch the PokeAPI ability named stench. Return the ability name or id."
+      },
+      {
+        "id": "get-type",
+        "operation": "GET /type/{id_or_name}",
+        "match": ["get-type", "type-by-id", "type-by-name", "type detail", "pokemon type"],
+        "toolArgs": { "id_or_name": "fire", "idOrName": "fire", "name": "fire", "id": 10 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch the PokeAPI type named fire. Return the type name or damage relation summary."
+      },
+      {
+        "id": "get-move",
+        "operation": "GET /move/{id_or_name}",
+        "match": ["get-move", "move-by-id", "move-by-name", "move detail", "move"],
+        "toolArgs": { "id_or_name": "pound", "idOrName": "pound", "name": "pound", "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch the PokeAPI move named pound. Return the move name, power, or type."
+      },
+      {
+        "id": "get-item",
+        "operation": "GET /item/{id_or_name}",
+        "match": ["get-item", "item-by-id", "item-by-name", "item detail", "item"],
+        "toolArgs": { "id_or_name": "master-ball", "idOrName": "master-ball", "name": "master-ball", "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch the PokeAPI item named master-ball. Return the item name, id, or cost."
+      },
+      {
+        "id": "get-berry",
+        "operation": "GET /berry/{id_or_name}",
+        "match": ["get-berry", "berry-by-id", "berry-by-name", "berry detail", "berry"],
+        "toolArgs": { "id_or_name": "cheri", "idOrName": "cheri", "name": "cheri", "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch the PokeAPI berry named cheri. Return the berry name or id."
+      },
+      {
+        "id": "get-generation",
+        "operation": "GET /generation/{id_or_name}",
+        "match": ["get-generation", "generation-by-id", "generation-by-name", "generation detail", "generation"],
+        "toolArgs": { "id_or_name": "generation-i", "idOrName": "generation-i", "name": "generation-i", "id": 1 },
+        "prompt": "Use the active MCP tool named \"{toolName}\" to fetch PokeAPI generation-i. Return the generation name, id, or main region."
       }
     ]
   }

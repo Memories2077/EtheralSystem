@@ -1,14 +1,14 @@
 # Backend Tool-Call Matrix Benchmark
 
-This benchmark is the paper-facing backend API E2E runner for generated MCP tool-call metrics. It does not use Playwright. Each run builds through backend `POST /chat`, connects the generated MCP URL through `POST /mcp/metadata`, then probes safe generated tools through follow-up backend `POST /chat` calls with `mcpServers`.
+This benchmark is the paper-facing backend API E2E runner for generated MCP tool-call metrics. It does not use Playwright. Each run builds through backend `POST /chat`, connects the generated MCP URL through `POST /mcp/metadata`, then probes generated tools through follow-up backend `POST /chat` calls with `mcpServers`.
 
 ## Cases And Variants
 
 Default cases live in `experiments/research-metrics/backend_toolcall_matrix_dataset.json` and reference the three API documents in `input/`:
 
 - `jsonplaceholder-input-doc` -> `input/jsonplaceholder.txt`
-- `reddit-input-doc` -> `input/reddit.txt` plus `input/reddit_auth_information.txt`
-- `thedogapi-input-doc` -> `input/thedogapi.txt` plus `input/thedogapi_auth_information.txt`
+- `dummyjson-input-doc` -> `input/dummyjson.txt`
+- `pokeapi-input-doc` -> `input/pokeapi.txt`
 
 Default variants are:
 
@@ -86,8 +86,6 @@ Important outputs:
 
 - `build_success_rate`: generated server build completed for the run.
 - `metadata_readiness_rate`: generated MCP metadata connected and returned tools.
-- `tool_call_pass_rate`: successful live-callable tool probes divided by attempted live-callable probes.
+- `tool_call_pass_rate`: successful tool probes divided by attempted tool probes.
 - `skipped_coverage`: skipped metadata tools divided by total metadata tools.
 - `estimated_prompt_tokens`, `estimated_completion_tokens`, `llm_call_count`, `selected_skill_tokens`: estimated usage metrics, not provider billing.
-
-For Reddit and auth-required TheDogAPI tools, the checked-in auth files document the credential format only. The benchmark includes that auth context in the generation input, but live tool probes skip tools that require unavailable user credentials so pass-rate does not penalize missing secrets.

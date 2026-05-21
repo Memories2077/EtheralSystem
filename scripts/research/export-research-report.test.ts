@@ -136,8 +136,8 @@ describe("research report export dashboard run rows", () => {
         status: "success",
         duration_ms: 100,
         experiment_id: "batch-test",
-        build_request_id: "build-reddit",
-        server_id: "server-reddit",
+        build_request_id: "build-dummyjson",
+        server_id: "server-dummyjson",
       },
     ]);
     writeJsonl(runsPath, []);
@@ -173,15 +173,15 @@ describe("research report export dashboard run rows", () => {
         type: "benchmark_result",
         benchmarkType: "backend_toolcall_matrix",
         experimentId: "batch-test",
-        apiDocId: "reddit-input-doc",
-        caseId: "reddit-input-doc",
-        itemId: "reddit-input-doc",
-        apiType: "oauth_auth_input_doc",
+        apiDocId: "dummyjson-input-doc",
+        caseId: "dummyjson-input-doc",
+        itemId: "dummyjson-input-doc",
+        apiType: "public_fake_crud_input_doc",
         variantId: "static-rag-off",
         skillSelectionMode: "static",
         ragEnabled: "false",
         repeatIndex: 1,
-        buildRequestId: "build-reddit",
+        buildRequestId: "build-dummyjson",
         ok: true,
         runtimeMetadataOk: true,
         durationMs: 100,
@@ -213,9 +213,176 @@ describe("research report export dashboard run rows", () => {
     expect(byApiDoc).toContain("inspector_pass_rate");
     expect(byApiDoc).toContain("cleanup_success_rate");
     expect(byApiDoc).toContain("jsonplaceholder-input-doc");
-    expect(byApiDoc).not.toContain("reddit-input-doc");
+    expect(byApiDoc).not.toContain("dummyjson-input-doc");
 
     const summary = readFileSync(path.join(outputDir, "summary.md"), "utf8");
     expect(summary).toContain("API Doc Batch: jsonplaceholder-input-doc");
+  });
+
+  it("writes MAPR quality, retrieval, ablation, and summary outputs", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "etheral-report-export-mapr-"));
+    const eventsPath = path.join(dir, "events.jsonl");
+    const runsPath = path.join(dir, "runs.jsonl");
+    const matrixPath = path.join(dir, "matrix.jsonl");
+    const outputDir = path.join(dir, "report");
+
+    writeJsonl(eventsPath, []);
+    writeJsonl(runsPath, []);
+    writeJsonl(matrixPath, [
+      {
+        type: "benchmark_result",
+        benchmarkType: "backend_toolcall_matrix",
+        experimentId: "mapr-test",
+        apiDocId: "jsonplaceholder-input-doc",
+        caseId: "jsonplaceholder-input-doc",
+        itemId: "jsonplaceholder-input-doc",
+        variantId: "static-rag-off",
+        skillSelectionMode: "static",
+        ragEnabled: "false",
+        ok: true,
+        runtimeMetadataOk: true,
+        mcpHandshakePass: true,
+        compileStartValidationPassed: true,
+        durationMs: 100,
+        buildDurationMs: 90,
+        totalToolCount: 4,
+        attemptedToolCount: 2,
+        successToolCount: 1,
+        expected_operation_count: 8,
+        mapped_operation_count: 4,
+        mapped_tool_count: 4,
+        generated_tool_count: 5,
+        hallucinated_tool_count: 1,
+        schema_valid_tool_count: 3,
+        endpoint_coverage: 0.5,
+        hallucinated_tool_rate: 0.2,
+        schema_validity_rate: 0.75,
+        retrieval_metric_applicable: false,
+        estimated_prompt_tokens: 100,
+        estimated_completion_tokens: 50,
+        estimated_total_tokens: 150,
+        estimated_cost_usd: 0.01,
+      },
+      {
+        type: "benchmark_result",
+        benchmarkType: "backend_toolcall_matrix",
+        experimentId: "mapr-test",
+        apiDocId: "jsonplaceholder-input-doc",
+        caseId: "jsonplaceholder-input-doc",
+        itemId: "jsonplaceholder-input-doc",
+        variantId: "static-rag-on",
+        skillSelectionMode: "static",
+        ragEnabled: "true",
+        ok: true,
+        runtimeMetadataOk: true,
+        mcpHandshakePass: true,
+        compileStartValidationPassed: true,
+        durationMs: 120,
+        buildDurationMs: 100,
+        totalToolCount: 5,
+        attemptedToolCount: 3,
+        successToolCount: 2,
+        expected_operation_count: 8,
+        mapped_operation_count: 6,
+        mapped_tool_count: 6,
+        generated_tool_count: 6,
+        hallucinated_tool_count: 0,
+        schema_valid_tool_count: 5,
+        retrieval_metric_applicable: true,
+        retrieved_evidence_count: 3,
+        relevant_evidence_count: 4,
+        retrieval_hit_count: 2,
+        precision_at_3: 0.6667,
+        recall_at_3: 0.5,
+        mrr_at_3: 1,
+        estimated_prompt_tokens: 120,
+        estimated_completion_tokens: 60,
+        estimated_total_tokens: 180,
+        estimated_cost_usd: 0.02,
+      },
+      {
+        type: "benchmark_result",
+        benchmarkType: "backend_toolcall_matrix",
+        experimentId: "mapr-test",
+        apiDocId: "jsonplaceholder-input-doc",
+        caseId: "jsonplaceholder-input-doc",
+        itemId: "jsonplaceholder-input-doc",
+        variantId: "dynamic-rag-off",
+        skillSelectionMode: "dynamic",
+        ragEnabled: "false",
+        ok: false,
+        runtimeMetadataOk: false,
+        durationMs: 80,
+        expected_operation_count: 8,
+        mapped_operation_count: 3,
+        mapped_tool_count: 3,
+        generated_tool_count: 4,
+        hallucinated_tool_count: 1,
+        schema_valid_tool_count: 2,
+      },
+      {
+        type: "benchmark_result",
+        benchmarkType: "backend_toolcall_matrix",
+        experimentId: "mapr-test",
+        apiDocId: "jsonplaceholder-input-doc",
+        caseId: "jsonplaceholder-input-doc",
+        itemId: "jsonplaceholder-input-doc",
+        variantId: "dynamic-rag-on",
+        skillSelectionMode: "dynamic",
+        ragEnabled: "true",
+        ok: true,
+        runtimeMetadataOk: true,
+        mcpHandshakePass: true,
+        compileStartValidationPassed: true,
+        durationMs: 110,
+        expected_operation_count: 8,
+        mapped_operation_count: 7,
+        mapped_tool_count: 7,
+        generated_tool_count: 7,
+        hallucinated_tool_count: 0,
+        schema_valid_tool_count: 6,
+        retrieval_metric_applicable: true,
+        retrieved_evidence_count: 2,
+        relevant_evidence_count: 4,
+        retrieval_hit_count: 1,
+        precision_at_3: 0.3333,
+        recall_at_3: 0.25,
+        mrr_at_3: 0.5,
+      },
+    ]);
+
+    const result = spawnSync("bun", [
+      "scripts/research/export-research-report.ts",
+      `--events=${eventsPath}`,
+      `--runs=${runsPath}`,
+      `--matrix-runs=${matrixPath}`,
+      "--experiment-id=mapr-test",
+      `--output-dir=${outputDir}`,
+    ], { cwd: path.resolve(import.meta.dir, "../.."), encoding: "utf8" });
+
+    expect(result.status).toBe(0);
+    const quality = readFileSync(path.join(outputDir, "quality_by_variant.csv"), "utf8");
+    expect(quality).toContain("endpoint_coverage");
+    expect(quality).toContain("schema_validity_rate");
+    expect(quality).toContain("dynamic-rag-on");
+
+    const retrieval = readFileSync(path.join(outputDir, "rag_retrieval_by_variant.csv"), "utf8");
+    expect(retrieval).toContain("precision_at_3");
+    expect(retrieval).toContain("mrr_at_3");
+    expect(retrieval).toContain("static-rag-on");
+    expect(retrieval).not.toContain("static-rag-off");
+
+    const ablation = readFileSync(path.join(outputDir, "ablation_effects.csv"), "utf8");
+    expect(ablation).toContain("rag_uplift");
+    expect(ablation).toContain("static_vs_dynamic_success_delta");
+
+    const matrixRuns = readFileSync(path.join(outputDir, "toolcall_matrix_runs.csv"), "utf8");
+    expect(matrixRuns).toContain("estimated_total_tokens");
+    expect(matrixRuns).toContain("endpoint_coverage");
+
+    const summary = readFileSync(path.join(outputDir, "summary.md"), "utf8");
+    expect(summary).toContain("## 2x2 Variant Matrix");
+    expect(summary).toContain("## Ablation Effects");
+    expect(summary).toContain("## RAG Retrieval By Variant");
   });
 });

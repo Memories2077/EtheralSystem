@@ -9,12 +9,20 @@ import { buildMatrixPlan, ensureExpectedBuildCount } from "./matrix-plan";
 import {
   inspectorCallTool,
   inspectorListTools,
-  skippedInspectorOutcome,
   summarizeInspectorOutcomes,
   type InspectorCallOutcome,
 } from "./inspector-cli";
 import { cleanupGeneratedContainer, type CleanupResult } from "./container-cleanup";
 import { buildResearchVariantEnv } from "./rag-env";
+import {
+  evaluateGeneratedToolQuality,
+  loadMaprLabelFile,
+  normalizeEstimatedUsage,
+  summarizeRagRetrievalForRun,
+  validateCaseMaprLabels,
+  type CaseMaprLabels,
+  type ExpectedOperationLabel,
+} from "./mapr-metrics";
 
 const root = process.cwd();
 
@@ -26,12 +34,6 @@ type ProbeDefinition = {
   match: string[];
   prompt: string;
   toolArgs?: Record<string, unknown>;
-};
-
-type SkipRule = {
-  match: string[];
-  errorCode: string;
-  diagnostic: string;
 };
 
 type MatrixCase = {
@@ -47,8 +49,9 @@ type MatrixCase = {
   apiDocId?: string;
   fixtureFormatVersion?: string;
   declaredEndpointCount?: number;
+  maprLabels?: CaseMaprLabels;
+  expectedOperations?: ExpectedOperationLabel[];
   probes: ProbeDefinition[];
-  skipRules?: SkipRule[];
 };
 
 type Variant = {
@@ -107,6 +110,7 @@ type ToolOutcome = {
 
 type Options = {
   datasetPath: string;
+  labelsPath: string;
   outputPath: string;
   eventsPath: string;
   experimentId: string;
@@ -199,10 +203,11 @@ function readOptionalText(filePath?: string): string {
   return fs.readFileSync(path.resolve(root, filePath), "utf8").trim();
 }
 
-function materializeCase(item: MatrixCase): MatrixCase {
+function materializeCase(item: MatrixCase, labelIndex: Record<string, CaseMaprLabels>): MatrixCase {
   const apiDoc = readOptionalText(item.inputPath);
   const authInfo = readOptionalText(item.authInfoPath);
   const fixture = item.inputPath ? validateInputDocFixture(path.resolve(root, item.inputPath)) : undefined;
+  const maprLabels = labelIndex[item.id] || (fixture?.apiId ? labelIndex[fixture.apiId] : undefined);
   const promptParts = [
     item.prompt || "Create an MCP Server from the following API documentation. Treat credentials as user-provided tool arguments; do not load secrets from environment variables.",
     apiDoc ? `API documentation source: ${item.inputPath}\n\n${apiDoc}` : "",
@@ -216,11 +221,13 @@ function materializeCase(item: MatrixCase): MatrixCase {
     apiDocId: fixture?.apiId || item.id,
     fixtureFormatVersion: fixture?.formatVersion,
     declaredEndpointCount: fixture?.declaredEndpointCount,
+    maprLabels,
+    expectedOperations: maprLabels?.expectedOperations || [],
   };
 }
 
-function materializeDataset(dataset: MatrixCase[]): MatrixCase[] {
-  return dataset.map(materializeCase);
+function materializeDataset(dataset: MatrixCase[], labelIndex: Record<string, CaseMaprLabels>): MatrixCase[] {
+  return dataset.map((item) => materializeCase(item, labelIndex));
 }
 
 function appendJsonl(filePath: string, value: JsonRecord): void {
@@ -509,21 +516,16 @@ function toolText(tool: MetadataTool): string {
   return `${tool.name || ""} ${tool.description || ""}`.toLowerCase();
 }
 
-function matchedSkipRule(item: MatrixCase, tool: MetadataTool): SkipRule | undefined {
-  const text = toolText(tool);
-  return (item.skipRules || []).find((rule) => rule.match.some((term) => text.includes(term.toLowerCase())));
-}
-
 function matchedProbe(item: MatrixCase, tool: MetadataTool): ProbeDefinition | undefined {
   const text = toolText(tool);
   return item.probes.find((probe) => probe.match.some((term) => text.includes(term.toLowerCase())));
 }
 
-function skippedOutcome(tool: MetadataTool, index: number, errorCode: string, diagnostic: string): ToolOutcome {
+function failedProbeCoverageOutcome(tool: MetadataTool, index: number, errorCode: string, diagnostic: string): ToolOutcome {
   return {
     tool_name: safeText(tool.name || `tool-${index + 1}`, 120),
     index,
-    status: "skipped",
+    status: "failed",
     error_code: errorCode,
     invocation_count: 0,
     result_count: 0,
@@ -562,17 +564,12 @@ async function validateTool({
 }): Promise<ToolOutcome> {
   const toolName = safeText(tool.name, 120);
   if (!toolName || toolName === "unknown") {
-    return skippedOutcome(tool, index, "missing_tool_name", "Metadata tool did not include a usable name.");
-  }
-
-  const skip = matchedSkipRule(item, tool);
-  if (skip) {
-    return skippedOutcome(tool, index, skip.errorCode, skip.diagnostic);
+    return failedProbeCoverageOutcome(tool, index, "missing_tool_name", "Metadata tool did not include a usable name.");
   }
 
   const probe = matchedProbe(item, tool);
   if (!probe) {
-    return skippedOutcome(tool, index, "no_safe_probe_match", "No safe live probe matched this generated tool.");
+    return failedProbeCoverageOutcome(tool, index, "no_probe_match", "No dataset probe matched this generated tool.");
   }
 
   const toolSessionId = `${baseSessionId}-tool-${index + 1}`;
@@ -744,19 +741,13 @@ async function validateDirectTools({
   for (const [index, tool] of tools.entries()) {
     const toolName = safeText(tool.name || `tool-${index + 1}`, 120);
     if (!toolName || toolName === "unknown") {
-      outcomes.push(skippedOutcome(tool, index, "missing_tool_name", "Metadata tool did not include a usable name."));
-      continue;
-    }
-
-    const skip = matchedSkipRule(item, tool);
-    if (skip) {
-      outcomes.push(skippedOutcome(tool, index, skip.errorCode, skip.diagnostic));
+      outcomes.push(failedProbeCoverageOutcome(tool, index, "missing_tool_name", "Metadata tool did not include a usable name."));
       continue;
     }
 
     const probe = matchedProbe(item, tool);
     if (!probe) {
-      outcomes.push(skippedOutcome(tool, index, "no_safe_probe_match", "No safe direct MCP probe matched this generated tool."));
+      outcomes.push(failedProbeCoverageOutcome(tool, index, "no_probe_match", "No dataset direct MCP probe matched this generated tool."));
       continue;
     }
 
@@ -914,15 +905,17 @@ function validateInspectorTools(item: MatrixCase, mcpUrl: string, tools: Metadat
 
   for (const [index, tool] of tools.entries()) {
     const toolName = safeText(tool.name || `tool-${index + 1}`, 120);
-    const skip = matchedSkipRule(item, tool);
-    if (skip) {
-      outcomes.push(skippedInspectorOutcome(toolName, index, skip.errorCode, skip.diagnostic));
-      continue;
-    }
-
     const probe = matchedProbe(item, tool);
     if (!probe) {
-      outcomes.push(skippedInspectorOutcome(toolName, index, "no_safe_probe_match", "No safe Inspector probe matched this generated tool."));
+      outcomes.push({
+        tool_name: toolName,
+        index,
+        status: "failed",
+        error_code: "no_probe_match",
+        response_length: 0,
+        response_hash: "",
+        diagnostic: "No dataset Inspector probe matched this generated tool.",
+      });
       continue;
     }
 
@@ -946,22 +939,7 @@ function validateInspectorTools(item: MatrixCase, mcpUrl: string, tools: Metadat
 }
 
 function summarizeEstimatedUsage(events: ResearchEvent[]): JsonRecord {
-  const metrics = events.map((event) => event.metrics || {});
-  const sum = (keys: string[]) => metrics.reduce((total, item) => {
-    for (const key of keys) {
-      const value = item[key];
-      if (typeof value === "number" && Number.isFinite(value)) return total + value;
-      if (typeof value === "string" && Number.isFinite(Number(value))) return total + Number(value);
-    }
-    return total;
-  }, 0);
-  return {
-    estimatedPromptTokens: sum(["prompt_token_estimate", "prompt_tokens"]),
-    estimatedCompletionTokens: sum(["completion_token_estimate", "completion_tokens"]),
-    llmCallCount: sum(["llm_calls", "llm_call_count"]),
-    selectedSkillCount: sum(["selected_skill_count", "skills_selected_count"]),
-    selectedSkillTokens: sum(["skill_total_tokens", "selected_skill_tokens", "tokenCost"]),
-  };
+  return normalizeEstimatedUsage(events);
 }
 
 function variantEnv(variant: Variant, options: Options): NodeJS.ProcessEnv {
@@ -1075,6 +1053,8 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     authInfoHash: item.authInfoHash || "",
     fixtureFormatVersion: item.fixtureFormatVersion || "",
     declaredEndpointCount: item.declaredEndpointCount || 0,
+    expectedOperationCount: item.expectedOperations?.length || 0,
+    expected_operation_count: item.expectedOperations?.length || 0,
     expectedBuildCount: options.expectedBuildCount || 0,
     variantId: variant.id,
     mode: "backend-api-toolcall",
@@ -1091,6 +1071,8 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     sessionId,
     buildRequestId,
     ok: false,
+    compileStartValidationPassed: false,
+    mcpHandshakePass: false,
   };
 
   let result: JsonRecord;
@@ -1146,6 +1128,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
     if (!runtimeMetadataOk) {
       throw new Error(`MCP metadata did not connect with tools: ${JSON.stringify(metadata)}`);
     }
+    const quality = evaluateGeneratedToolQuality(item.expectedOperations || [], tools);
 
     const inspectorStartedAt = Date.now();
     const inspector = validateInspectorTools(item, inspectorMcpUrl, tools);
@@ -1181,10 +1164,18 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
 
     const events = await readResearchEvents(buildRequestId, options.eventsPath);
     const counts = countOutcomes(outcomes);
+    const estimatedUsage = summarizeEstimatedUsage(events);
+    const ragRetrieval = summarizeRagRetrievalForRun({
+      events,
+      caseLabels: item.maprLabels,
+      ragEnabled: variant.ragEnabled === "true",
+    });
     result = {
       ...baseResult,
       statusCode: build.response.status,
       ok: true,
+      compileStartValidationPassed: true,
+      mcpHandshakePass: runtimeMetadataOk,
       serverId,
       containerId,
       generatedContainerId: containerId,
@@ -1202,7 +1193,13 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       toolValidationMethod: "backend-direct-mcp",
       outcomeDurationMs: Date.now() - outcomeStartedAt,
       ...counts,
-      estimatedUsage: summarizeEstimatedUsage(events),
+      ...quality,
+      ...ragRetrieval,
+      estimatedUsage,
+      estimated_prompt_tokens: estimatedUsage.estimated_prompt_tokens,
+      estimated_completion_tokens: estimatedUsage.estimated_completion_tokens,
+      estimated_total_tokens: estimatedUsage.estimated_total_tokens,
+      estimated_cost_usd: estimatedUsage.estimated_cost_usd,
       eventCount: events.length,
       outcomes,
     };
@@ -1216,6 +1213,8 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       mcpUrl: mcpUrl ? redactUrl(mcpUrl) : "",
       runtimeMetadataChecked: false,
       runtimeMetadataOk: false,
+      compileStartValidationPassed: false,
+      mcpHandshakePass: false,
       runtimeToolCount: 0,
       inspectorConnected: false,
       inspectorToolCount: 0,
@@ -1229,6 +1228,17 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       successToolCount: 0,
       failedToolCount: 0,
       skippedToolCount: 0,
+      ...evaluateGeneratedToolQuality(item.expectedOperations || [], []),
+      ...summarizeRagRetrievalForRun({
+        events: [],
+        caseLabels: item.maprLabels,
+        ragEnabled: variant.ragEnabled === "true",
+      }),
+      estimatedUsage: normalizeEstimatedUsage([]),
+      estimated_prompt_tokens: 0,
+      estimated_completion_tokens: 0,
+      estimated_total_tokens: 0,
+      estimated_cost_usd: 0,
       errorCode: "benchmark_run_error",
       diagnostic: redactDiagnostic(error instanceof Error ? error.message : String(error)),
     };
@@ -1263,6 +1273,7 @@ function parseOptions(): Options {
   const expectedBuildCountRaw = arg("expected-build-count", "");
   return {
     datasetPath: path.resolve(root, arg("dataset", "experiments/research-metrics/backend_toolcall_matrix_dataset.json")),
+    labelsPath: path.resolve(root, arg("labels", "experiments/research-metrics/backend_toolcall_matrix_labels.json")),
     outputPath: path.resolve(root, arg("output", "experiments/research-metrics/backend-toolcall-matrix-runs.jsonl")),
     eventsPath,
     experimentId,
@@ -1305,10 +1316,12 @@ function validateDataset(dataset: MatrixCase[]): void {
     if (!/^https?:\/\//.test(item.baseUrl)) throw new Error(`Dataset case ${item.id} has invalid baseUrl: ${item.baseUrl}`);
     if (item.inputPath && !fs.existsSync(path.resolve(root, item.inputPath))) throw new Error(`Dataset case ${item.id} inputPath does not exist: ${item.inputPath}`);
     if (item.authInfoPath && !fs.existsSync(path.resolve(root, item.authInfoPath))) throw new Error(`Dataset case ${item.id} authInfoPath does not exist: ${item.authInfoPath}`);
-    if (!Array.isArray(item.probes)) throw new Error(`Dataset case ${item.id} probes must be an array.`);
-    if (item.probes.length === 0 && (!Array.isArray(item.skipRules) || item.skipRules.length === 0)) {
-      throw new Error(`Dataset case ${item.id} must define at least one safe probe or explicit skip rule.`);
+    if (!Array.isArray(item.probes) || item.probes.length === 0) throw new Error(`Dataset case ${item.id} probes must be a non-empty array.`);
+    if (item.declaredEndpointCount && item.probes.length < item.declaredEndpointCount) {
+      throw new Error(`Dataset case ${item.id} must define probes for every declared endpoint: probes=${item.probes.length}, declaredEndpointCount=${item.declaredEndpointCount}.`);
     }
+    const fixture = item.inputPath ? validateInputDocFixture(path.resolve(root, item.inputPath)) : undefined;
+    validateCaseMaprLabels({ caseId: item.id, labels: item.maprLabels, fixture });
     for (const probe of item.probes) {
       if (!probe.id || !probe.operation || !Array.isArray(probe.match) || probe.match.length === 0 || !probe.prompt.includes("{toolName}")) {
         throw new Error(`Dataset case ${item.id} has invalid probe: ${JSON.stringify(probe)}`);
@@ -1319,7 +1332,8 @@ function validateDataset(dataset: MatrixCase[]): void {
 
 async function main(): Promise<void> {
   const options = parseOptions();
-  const dataset = materializeDataset(readJson<MatrixCase[]>(options.datasetPath));
+  const labelFile = loadMaprLabelFile(options.labelsPath);
+  const dataset = materializeDataset(readJson<MatrixCase[]>(options.datasetPath), labelFile.cases);
   validateDataset(dataset);
   const selectedCases = selectCases(dataset, options);
   const selectedVariants = selectVariants(options);
@@ -1339,6 +1353,8 @@ async function main(): Promise<void> {
     timestamp: new Date().toISOString(),
     experimentId: options.experimentId,
     datasetPath: options.datasetPath,
+    labelsPath: options.labelsPath,
+    labelFormatVersion: labelFile.formatVersion,
     outputPath: options.outputPath,
     eventsPath: options.eventsPath,
     localEventsPath: localEventsPath(options.eventsPath),
@@ -1353,6 +1369,7 @@ async function main(): Promise<void> {
       authInfoPath: item.authInfoPath || "",
       inputDocHash: item.inputDocHash || "",
       authInfoHash: item.authInfoHash || "",
+      expectedOperationCount: item.expectedOperations?.length || 0,
     })),
     variantIds: selectedVariants.map((item) => item.id),
     totalRuns: matrixPlan.expectedBuildCount,
