@@ -7,7 +7,7 @@ from my_agent.config import AGENT_CONFIG
 from my_agent.utils.state import AgentState, get_message_content
 from my_agent.utils.vector_db import search_mcp_artifacts
 from my_agent.utils.llm_factory import get_llm
-from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, record_research_event, state_research_context
+from my_agent.utils.research_metrics import content_hash, duration_since_ms, monotonic_ms, record_research_event, state_research_context
 
 # Initialize LLM via factory
 llm = get_llm(temperature=AGENT_CONFIG["examiner_agent"]["temperature"])
@@ -18,6 +18,31 @@ def rag_enabled(state: AgentState | None = None) -> bool:
     if value is None or value == "":
         value = os.getenv("RAG_ENABLED", "true")
     return str(value).lower() not in {"0", "false", "no", "off"}
+
+
+def _rag_evidence_label(item) -> str:
+    metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
+    for value in (
+        metadata.get("type"),
+        metadata.get("filename"),
+        metadata.get("server_id"),
+        item.get("id") if isinstance(item, dict) else "",
+    ):
+        if value:
+            return str(value).strip()
+    return "unknown"
+
+
+def _rag_evidence_hash(item) -> str:
+    if not isinstance(item, dict):
+        return content_hash(str(item))
+    stable_parts = [
+        str(item.get("id", "")),
+        str(item.get("metadata", {}).get("server_id", "")) if isinstance(item.get("metadata"), dict) else "",
+        str(item.get("metadata", {}).get("type", "")) if isinstance(item.get("metadata"), dict) else "",
+        str(item.get("content", ""))[:512],
+    ]
+    return content_hash("|".join(stable_parts))
 
 
 async def examiner_agent_node(state: AgentState) -> AgentState:
@@ -97,6 +122,9 @@ USER_ID: {user_id}
                 "rag_returned_count": 0,
                 "rag_context_item_count": 0,
                 "rag_context_chars": len(rag_context_json),
+                "rag_context_tokens": 0,
+                "rag_top_3_evidence_labels": [],
+                "rag_top_3_evidence_hashes": [],
             },
             tags={"rag_disabled_reason": "RAG_ENABLED=false"},
         )
@@ -123,6 +151,10 @@ USER_ID: {user_id}
     print(f"[Examiner] 🤖 Extracting structured technical data from {len(related_contents)} RAG items...")
     rag_context_data = await extract_structured_context(related_contents, llm)
     rag_context_json = json.dumps(rag_context_data, indent=2)
+    rag_top_3 = related_contents[:3]
+    rag_evidence_labels = [_rag_evidence_label(item) for item in rag_top_3]
+    rag_evidence_hashes = [_rag_evidence_hash(item) for item in rag_top_3]
+    rag_context_tokens = max(0, round(len(rag_context_json) / 4))
     
     # 7. Prepare Enriched Task 
     # Passing BOTH original prompt and extracted doc to ensure no loss of intent
@@ -155,6 +187,9 @@ USER_ID: {user_id}
             "rag_returned_count": len(related_contents),
             "rag_context_item_count": len(rag_context_data),
             "rag_context_chars": len(rag_context_json),
+            "rag_context_tokens": rag_context_tokens,
+            "rag_top_3_evidence_labels": rag_evidence_labels,
+            "rag_top_3_evidence_hashes": rag_evidence_hashes,
         },
     )
     

@@ -105,17 +105,27 @@ def test_examiner_rag_enabled_preserves_retrieval(monkeypatch):
     from my_agent.utils import openapi_parser
 
     captured = {}
+    recorded_events = []
 
     async def fake_search(api_doc, n_results):
         captured["api_doc"] = api_doc
         captured["n_results"] = n_results
-        return [{"id": "artifact-1"}]
+        return [{
+            "id": "artifact-1",
+            "content": "safe context",
+            "metadata": {"type": "api_doc", "server_id": "server-1", "filename": "fixture.yaml"},
+        }]
 
     async def fake_extract(related_contents, _llm):
         captured["related_contents"] = related_contents
         return [{"id": "structured-1"}]
 
+    async def fake_record_research_event(**kwargs):
+        recorded_events.append(kwargs)
+        return kwargs
+
     monkeypatch.setattr(examiner_agent, "search_mcp_artifacts", fake_search)
+    monkeypatch.setattr(examiner_agent, "record_research_event", fake_record_research_event)
     monkeypatch.setattr(openapi_parser, "extract_structured_context", fake_extract)
 
     result = asyncio.run(examiner_agent.examiner_agent_node({
@@ -133,8 +143,12 @@ def test_examiner_rag_enabled_preserves_retrieval(monkeypatch):
 
     assert captured["api_doc"] == "openapi: 3.0.0\npaths: {}"
     assert captured["n_results"] == 3
-    assert captured["related_contents"] == [{"id": "artifact-1"}]
+    assert captured["related_contents"][0]["id"] == "artifact-1"
     assert json.loads(result["enriched_context"]) == [{"id": "structured-1"}]
+    metrics = recorded_events[-1]["metrics"]
+    assert metrics["rag_context_tokens"] > 0
+    assert metrics["rag_top_3_evidence_labels"] == ["api_doc"]
+    assert len(metrics["rag_top_3_evidence_hashes"]) == 1
 
 
 def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(monkeypatch):
