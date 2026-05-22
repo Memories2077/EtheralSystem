@@ -60,10 +60,36 @@ export type RetrievalMetrics = JsonRecord & {
   mrr_at_3: number | null;
 };
 
-const PROMPT_TOKEN_KEYS = ["prompt_token_estimate", "prompt_tokens", "estimated_prompt_tokens", "estimatedPromptTokens"];
-const COMPLETION_TOKEN_KEYS = ["completion_token_estimate", "completion_tokens", "estimated_completion_tokens", "estimatedCompletionTokens"];
-const TOTAL_TOKEN_KEYS = ["total_token_estimate", "total_tokens", "estimated_total_tokens", "estimatedTotalTokens"];
+const GEMINI_2_5_FLASH_INPUT_USD_PER_1M = 0.30;
+const GEMINI_2_5_FLASH_OUTPUT_USD_PER_1M = 2.50;
+const REDACTED_VALUE = "[REDACTED]";
+
+const PROMPT_TOKEN_KEYS = [
+  "prompt_token_estimate",
+  "prompt_tokens",
+  "promptTokens",
+  "estimated_prompt_tokens",
+  "estimatedPromptTokens",
+  "input_tokens",
+  "inputTokens",
+  "input_token_count",
+  "inputTokenCount",
+];
+const COMPLETION_TOKEN_KEYS = [
+  "completion_token_estimate",
+  "completion_tokens",
+  "completionTokens",
+  "estimated_completion_tokens",
+  "estimatedCompletionTokens",
+  "output_tokens",
+  "outputTokens",
+  "output_token_count",
+  "outputTokenCount",
+];
+const TOTAL_TOKEN_KEYS = ["total_token_estimate", "total_tokens", "totalTokens", "estimated_total_tokens", "estimatedTotalTokens"];
 const COST_KEYS = ["estimated_cost_usd", "estimatedCostUsd", "cost_usd"];
+const PROMPT_CHAR_KEYS = ["estimated_prompt_chars", "prompt_chars", "input_chars", "input_length", "prompt_length"];
+const COMPLETION_CHAR_KEYS = ["estimated_completion_chars", "completion_chars", "output_chars", "output_length", "response_length"];
 
 export function safeRate(part: number, total: number): number | null {
   if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) return null;
@@ -359,6 +385,24 @@ function firstMetricNumber(events: Array<{ metrics?: JsonRecord }>, keys: string
   return 0;
 }
 
+function eventTagSource(event: { tags?: JsonRecord; source?: unknown }): string {
+  return String(event.source || event.tags?.source || "");
+}
+
+function isRealLangGraphExaminerEvent(event: { service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown }): boolean {
+  return (
+    event.service === "langgraph-agent" &&
+    event.event_name === "examiner_completed" &&
+    eventTagSource(event) !== "backend_langgraph_fallback"
+  );
+}
+
+export function realLangGraphExaminerEvents<T extends { service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown }>(
+  events: T[],
+): T[] {
+  return events.filter(isRealLangGraphExaminerEvent);
+}
+
 export function rankedRagEvidenceFromEvents(events: Array<{ metrics?: JsonRecord }>): string[] {
   const withEvidence = [...events].reverse().find((event) => {
     const metrics = event.metrics || {};
@@ -376,21 +420,47 @@ export function summarizeRagRetrievalForRun({
   caseLabels,
   ragEnabled,
 }: {
-  events: Array<{ metrics?: JsonRecord }>;
+  events: Array<{ service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown; metrics?: JsonRecord }>;
   caseLabels?: CaseMaprLabels;
   ragEnabled: boolean;
 }): RetrievalMetrics {
-  const ragReturnedCount = firstMetricNumber(events, ["rag_returned_count", "ragReturnedCount"]);
-  const ragContextTokens = firstMetricNumber(events, ["rag_context_tokens", "ragContextTokens"]);
+  const realExaminerEvents = realLangGraphExaminerEvents(events);
+  const eventsForRetrieval = ragEnabled ? realExaminerEvents : events;
+  const ragReturnedCount = firstMetricNumber(eventsForRetrieval, ["rag_returned_count", "ragReturnedCount"]);
+  const ragContextTokens = firstMetricNumber(eventsForRetrieval, ["rag_context_tokens", "ragContextTokens"]);
   if (!ragEnabled) {
     return {
       ...computeRetrievalMetrics({ rankedEvidence: [], relevantEvidence: [], applicable: false }),
       rag_returned_count: ragReturnedCount,
       rag_context_tokens: ragContextTokens,
       rag_retrieval_status: "not_applicable_rag_disabled",
+      rag_retrieval_source: "not_applicable",
+      rag_real_examiner_event_count: realExaminerEvents.length,
     };
   }
-  const rankedEvidence = rankedRagEvidenceFromEvents(events);
+  if (realExaminerEvents.length === 0) {
+    return {
+      ...computeRetrievalMetrics({ rankedEvidence: [], relevantEvidence: collectRelevantRagEvidence(caseLabels), applicable: false }),
+      rag_returned_count: 0,
+      rag_context_tokens: 0,
+      rag_top_3_evidence: [],
+      rag_retrieval_status: "missing_real_examiner_evidence",
+      rag_retrieval_source: "unavailable",
+      rag_real_examiner_event_count: 0,
+    };
+  }
+  const rankedEvidence = rankedRagEvidenceFromEvents(realExaminerEvents);
+  if (rankedEvidence.length === 0) {
+    return {
+      ...computeRetrievalMetrics({ rankedEvidence: [], relevantEvidence: collectRelevantRagEvidence(caseLabels), applicable: false }),
+      rag_returned_count: ragReturnedCount,
+      rag_context_tokens: ragContextTokens,
+      rag_top_3_evidence: [],
+      rag_retrieval_status: "no_real_rag_evidence",
+      rag_retrieval_source: "langgraph-agent",
+      rag_real_examiner_event_count: realExaminerEvents.length,
+    };
+  }
   return {
     ...computeRetrievalMetrics({
       rankedEvidence,
@@ -401,6 +471,8 @@ export function summarizeRagRetrievalForRun({
     rag_context_tokens: ragContextTokens,
     rag_top_3_evidence: rankedEvidence.slice(0, 3),
     rag_retrieval_status: rankedEvidence.length > 0 ? "evaluated" : "no_evidence",
+    rag_retrieval_source: "langgraph-agent",
+    rag_real_examiner_event_count: realExaminerEvents.length,
   };
 }
 
@@ -409,37 +481,142 @@ function metricContainer(record: JsonRecord | undefined, key: "metrics" | "estim
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
-function firstNumericMetric(record: JsonRecord | undefined, keys: string[]): number {
-  const containers = [metricContainer(record, "metrics"), metricContainer(record, "estimatedUsage"), record || {}];
+function nestedContainer(record: JsonRecord, key: string): JsonRecord {
+  const value = record[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function metricContainers(record: JsonRecord | undefined): JsonRecord[] {
+  const base = record || {};
+  const metrics = metricContainer(record, "metrics");
+  const estimatedUsage = metricContainer(record, "estimatedUsage");
+  return [
+    metrics,
+    estimatedUsage,
+    base,
+    nestedContainer(metrics, "usage_metadata"),
+    nestedContainer(metrics, "usageMetadata"),
+    nestedContainer(metrics, "token_usage"),
+    nestedContainer(metrics, "tokenUsage"),
+    nestedContainer(nestedContainer(metrics, "response_metadata"), "token_usage"),
+    nestedContainer(nestedContainer(metrics, "responseMetadata"), "tokenUsage"),
+    nestedContainer(base, "usage_metadata"),
+    nestedContainer(base, "usageMetadata"),
+    nestedContainer(base, "token_usage"),
+    nestedContainer(base, "tokenUsage"),
+  ];
+}
+
+function numericMetricResult(record: JsonRecord | undefined, keys: string[]): { value: number | null; redacted: boolean } {
+  const containers = metricContainers(record);
   for (const container of containers) {
     for (const key of keys) {
       const value = container[key];
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-      if (typeof value === "string" && Number.isFinite(Number(value))) return Number(value);
+      if (typeof value === "number" && Number.isFinite(value)) return { value, redacted: false };
+      if (typeof value === "string" && Number.isFinite(Number(value))) return { value: Number(value), redacted: false };
+      if (String(value || "") === REDACTED_VALUE) return { value: null, redacted: true };
     }
   }
-  return 0;
+  return { value: null, redacted: false };
+}
+
+function firstNumericMetric(record: JsonRecord | undefined, keys: string[]): number {
+  return numericMetricResult(record, keys).value || 0;
+}
+
+function estimatedTokensFromChars(record: JsonRecord | undefined, keys: string[]): { value: number | null; redacted: boolean } {
+  const result = numericMetricResult(record, keys);
+  if (result.value === null) return result;
+  return { value: Math.max(0, Math.ceil(result.value / 4)), redacted: false };
+}
+
+function derivedGeminiFlashCost(promptTokens: number, completionTokens: number): number {
+  const cost =
+    (promptTokens * GEMINI_2_5_FLASH_INPUT_USD_PER_1M) / 1_000_000 +
+    (completionTokens * GEMINI_2_5_FLASH_OUTPUT_USD_PER_1M) / 1_000_000;
+  return Number(cost.toFixed(8));
 }
 
 export function normalizeEstimatedUsage(records: Array<JsonRecord | undefined>): JsonRecord {
-  const estimatedPromptTokens = records.reduce((sum, record) => sum + firstNumericMetric(record, PROMPT_TOKEN_KEYS), 0);
-  const estimatedCompletionTokens = records.reduce((sum, record) => sum + firstNumericMetric(record, COMPLETION_TOKEN_KEYS), 0);
-  const explicitTotalTokens = records.reduce((sum, record) => sum + firstNumericMetric(record, TOTAL_TOKEN_KEYS), 0);
-  const estimatedTotalTokens = explicitTotalTokens || estimatedPromptTokens + estimatedCompletionTokens;
-  const estimatedCostUsd = records.reduce((sum, record) => sum + firstNumericMetric(record, COST_KEYS), 0);
+  let estimatedPromptTokens = 0;
+  let estimatedCompletionTokens = 0;
+  let explicitTotalTokens = 0;
+  let estimatedCostUsd = 0;
+  let promptAvailable = false;
+  let completionAvailable = false;
+  let totalAvailable = false;
+  let costAvailable = false;
+  let sawRedactedUsage = false;
+  let usedDeterministicEstimate = false;
+  let usedExplicitUsage = false;
+
+  for (const record of records) {
+    const promptMetric = numericMetricResult(record, PROMPT_TOKEN_KEYS);
+    const prompt = promptMetric.value === null ? estimatedTokensFromChars(record, PROMPT_CHAR_KEYS) : promptMetric;
+    const completionMetric = numericMetricResult(record, COMPLETION_TOKEN_KEYS);
+    const completion = completionMetric.value === null ? estimatedTokensFromChars(record, COMPLETION_CHAR_KEYS) : completionMetric;
+    const total = numericMetricResult(record, TOTAL_TOKEN_KEYS);
+    const cost = numericMetricResult(record, COST_KEYS);
+
+    sawRedactedUsage ||= promptMetric.redacted || completionMetric.redacted || total.redacted || cost.redacted;
+    usedDeterministicEstimate ||= (promptMetric.value === null && prompt.value !== null) || (completionMetric.value === null && completion.value !== null);
+    usedExplicitUsage ||= promptMetric.value !== null || completionMetric.value !== null || total.value !== null || cost.value !== null;
+
+    if (prompt.value !== null) {
+      estimatedPromptTokens += prompt.value;
+      promptAvailable = true;
+    }
+    if (completion.value !== null) {
+      estimatedCompletionTokens += completion.value;
+      completionAvailable = true;
+    }
+    if (total.value !== null) {
+      explicitTotalTokens += total.value;
+      totalAvailable = true;
+    }
+    if (cost.value !== null) {
+      estimatedCostUsd += cost.value;
+      costAvailable = true;
+    }
+  }
+
+  const estimatedTotalTokens = totalAvailable
+    ? explicitTotalTokens
+    : promptAvailable && completionAvailable
+      ? estimatedPromptTokens + estimatedCompletionTokens
+      : null;
+  if (!costAvailable && promptAvailable && completionAvailable) {
+    estimatedCostUsd = derivedGeminiFlashCost(estimatedPromptTokens, estimatedCompletionTokens);
+    costAvailable = true;
+  }
+  const usageComplete = promptAvailable && completionAvailable && estimatedTotalTokens !== null && costAvailable;
+  const usageStatus = usageComplete
+    ? "complete"
+    : sawRedactedUsage
+      ? "unavailable_redacted"
+      : "unavailable_missing_usage";
+  const usageSource = usageComplete
+    ? usedExplicitUsage && usedDeterministicEstimate
+      ? "mixed"
+      : usedDeterministicEstimate
+        ? "deterministic_estimate"
+        : "provider_usage"
+    : "unavailable";
   const llmCallCount = records.reduce((sum, record) => sum + firstNumericMetric(record, ["llm_calls", "llm_call_count"]), 0);
   const selectedSkillCount = records.reduce((sum, record) => sum + firstNumericMetric(record, ["selected_skill_count", "skills_selected_count"]), 0);
   const selectedSkillTokens = records.reduce((sum, record) => sum + firstNumericMetric(record, ["skill_total_tokens", "selected_skill_tokens", "tokenCost"]), 0);
 
   return {
-    estimated_prompt_tokens: estimatedPromptTokens,
-    estimated_completion_tokens: estimatedCompletionTokens,
+    estimated_prompt_tokens: promptAvailable ? estimatedPromptTokens : null,
+    estimated_completion_tokens: completionAvailable ? estimatedCompletionTokens : null,
     estimated_total_tokens: estimatedTotalTokens,
-    estimated_cost_usd: estimatedCostUsd,
-    estimatedPromptTokens,
-    estimatedCompletionTokens,
+    estimated_cost_usd: costAvailable ? estimatedCostUsd : null,
+    usage_status: usageStatus,
+    usage_source: usageSource,
+    estimatedPromptTokens: promptAvailable ? estimatedPromptTokens : null,
+    estimatedCompletionTokens: completionAvailable ? estimatedCompletionTokens : null,
     estimatedTotalTokens,
-    estimatedCostUsd,
+    estimatedCostUsd: costAvailable ? estimatedCostUsd : null,
     llmCallCount,
     selectedSkillCount,
     selectedSkillTokens,

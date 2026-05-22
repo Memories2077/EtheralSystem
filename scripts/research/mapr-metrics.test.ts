@@ -8,6 +8,7 @@ import {
   normalizeEstimatedUsage,
   safeRate,
   safeRatio,
+  summarizeRagRetrievalForRun,
   successfulServerRatios,
   validateCaseMaprLabels,
   type ExpectedOperationLabel,
@@ -115,5 +116,115 @@ describe("MAPR metric helpers", () => {
     expect(usage.estimated_completion_tokens).toBe(60);
     expect(usage.estimated_total_tokens).toBe(180);
     expect(usage.estimated_cost_usd).toBe(0.03);
+    expect(usage.usage_status).toBe("complete");
+    expect(usage.usage_source).toBe("provider_usage");
+  });
+
+  it("derives Gemini 2.5 Flash cost from deterministic input and output estimates", () => {
+    const usage = normalizeEstimatedUsage([
+      { metrics: { estimated_prompt_chars: 400, estimated_completion_chars: 200 } },
+    ]);
+
+    expect(usage.estimated_prompt_tokens).toBe(100);
+    expect(usage.estimated_completion_tokens).toBe(50);
+    expect(usage.estimated_total_tokens).toBe(150);
+    expect(usage.estimated_cost_usd).toBe(0.000155);
+    expect(usage.usage_status).toBe("complete");
+    expect(usage.usage_source).toBe("deterministic_estimate");
+  });
+
+  it("uses the effective Gemini 2.5 Flash price for MetaClaw-backed usage", () => {
+    const usage = normalizeEstimatedUsage([
+      {
+        provider: "metaclaw",
+        model: "metaclaw-router",
+        metrics: {
+          prompt_tokens: 1_000_000,
+          completion_tokens: 1_000_000,
+        },
+      },
+    ]);
+
+    expect(usage.estimated_prompt_tokens).toBe(1_000_000);
+    expect(usage.estimated_completion_tokens).toBe(1_000_000);
+    expect(usage.estimated_total_tokens).toBe(2_000_000);
+    expect(usage.estimated_cost_usd).toBe(2.8);
+    expect(usage.usage_status).toBe("complete");
+  });
+
+  it("marks missing or redacted usage as unavailable instead of zero", () => {
+    const missing = normalizeEstimatedUsage([]);
+    expect(missing.estimated_prompt_tokens).toBeNull();
+    expect(missing.estimated_cost_usd).toBeNull();
+    expect(missing.usage_status).toBe("unavailable_missing_usage");
+
+    const redacted = normalizeEstimatedUsage([
+      { metrics: { prompt_token_estimate: "[REDACTED]", completion_tokens: 30 } },
+    ]);
+    expect(redacted.estimated_prompt_tokens).toBeNull();
+    expect(redacted.estimated_completion_tokens).toBe(30);
+    expect(redacted.estimated_cost_usd).toBeNull();
+    expect(redacted.usage_status).toBe("unavailable_redacted");
+  });
+
+  it("uses only real LangGraph examiner events for RAG retrieval metrics", () => {
+    const result = summarizeRagRetrievalForRun({
+      ragEnabled: true,
+      caseLabels: {
+        relevantRagEvidence: ["posts"],
+        expectedOperations: [],
+      },
+      events: [
+        {
+          service: "chatbot-backend",
+          event_name: "examiner_completed",
+          tags: { source: "backend_langgraph_fallback" },
+          metrics: {
+            rag_returned_count: 3,
+            rag_context_tokens: 999,
+            rag_top_3_evidence_labels: ["posts"],
+          },
+        },
+        {
+          service: "langgraph-agent",
+          event_name: "examiner_completed",
+          metrics: {
+            rag_returned_count: 2,
+            rag_context_tokens: 40,
+            rag_top_3_evidence_labels: ["wrong", "posts"],
+          },
+        },
+      ],
+    });
+
+    expect(result.rag_retrieval_status).toBe("evaluated");
+    expect(result.rag_retrieval_source).toBe("langgraph-agent");
+    expect(result.rag_real_examiner_event_count).toBe(1);
+    expect(result.rag_returned_count).toBe(2);
+    expect(result.rag_context_tokens).toBe(40);
+    expect(result.precision_at_3).toBe(0.3333);
+    expect(result.mrr_at_3).toBe(0.5);
+  });
+
+  it("does not convert missing real examiner evidence into zero-valued retrieval success", () => {
+    const result = summarizeRagRetrievalForRun({
+      ragEnabled: true,
+      caseLabels: {
+        relevantRagEvidence: ["posts"],
+        expectedOperations: [],
+      },
+      events: [
+        {
+          service: "chatbot-backend",
+          event_name: "examiner_completed",
+          tags: { source: "backend_langgraph_fallback" },
+          metrics: { rag_top_3_evidence_labels: ["posts"] },
+        },
+      ],
+    });
+
+    expect(result.retrieval_metric_applicable).toBe(false);
+    expect(result.precision_at_3).toBeNull();
+    expect(result.rag_retrieval_status).toBe("missing_real_examiner_evidence");
   });
 });

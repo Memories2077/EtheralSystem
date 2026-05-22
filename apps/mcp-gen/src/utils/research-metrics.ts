@@ -61,6 +61,28 @@ const SENSITIVE_KEY_NAMES = [
   "user_content",
 ];
 
+const SAFE_NUMERIC_USAGE_KEY_NAMES = [
+  "completion_token_estimate",
+  "completion_tokens",
+  "estimated_completion_tokens",
+  "estimated_prompt_tokens",
+  "estimated_total_tokens",
+  "input_tokens",
+  "output_tokens",
+  "prompt_token_estimate",
+  "prompt_tokens",
+  "rag_context_tokens",
+  "selected_skill_tokens",
+  "skill_total_tokens",
+  "token_count",
+  "total_token_estimate",
+  "total_tokens",
+];
+
+const SAFE_NUMERIC_USAGE_COMPACT_KEYS = SAFE_NUMERIC_USAGE_KEY_NAMES.map((name) =>
+  name.replaceAll("_", ""),
+);
+
 let mongoClient: MongoClient | null = null;
 
 export function researchMetricsEnabled(): boolean {
@@ -90,6 +112,22 @@ function isSensitiveKey(key: string): boolean {
   );
 }
 
+function isNumericUsageValue(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string" && value.trim()) return Number.isFinite(Number(value));
+  return false;
+}
+
+function isSafeNumericUsageField(key: string, value: unknown): boolean {
+  const lowered = key.toLowerCase().replaceAll("-", "_");
+  const compact = lowered.replaceAll("_", "");
+  return (
+    (SAFE_NUMERIC_USAGE_KEY_NAMES.includes(lowered) ||
+      SAFE_NUMERIC_USAGE_COMPACT_KEYS.includes(compact)) &&
+    isNumericUsageValue(value)
+  );
+}
+
 export function redactSensitive<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => redactSensitive(item)) as T;
@@ -97,7 +135,10 @@ export function redactSensitive<T>(value: T): T {
   if (value && typeof value === "object") {
     const redacted: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      redacted[key] = isSensitiveKey(key) ? "[REDACTED]" : redactSensitive(item);
+      redacted[key] =
+        isSensitiveKey(key) && !isSafeNumericUsageField(key, item)
+          ? "[REDACTED]"
+          : redactSensitive(item);
     }
     return redacted as T;
   }

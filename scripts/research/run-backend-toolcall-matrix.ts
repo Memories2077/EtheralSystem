@@ -85,11 +85,14 @@ type MetadataResponse = JsonRecord & {
 };
 
 type ResearchEvent = JsonRecord & {
+  service?: string;
   event_name?: string;
   status?: string;
   session_id?: string;
   build_request_id?: string;
   metrics?: JsonRecord;
+  tags?: JsonRecord;
+  source?: string;
 };
 
 type ToolOutcomeStatus = "success" | "failed" | "skipped";
@@ -126,6 +129,7 @@ type Options = {
   restartStack: boolean;
   cleanupContainers: boolean;
   verifyRagEnv: boolean;
+  strictEvidence: boolean;
   expectedBuildCount?: number;
   requireAllVariants: boolean;
 };
@@ -250,6 +254,18 @@ function contentHash(content: string): string {
 function safeText(value: unknown, maxLength: number): string {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function benchmarkCreationPrompt(item: MatrixCase): string {
+  const prompt = item.prompt || "";
+  if (/API_DOCUMENTATION:/i.test(prompt) && /examiner/i.test(prompt)) return prompt;
+  return [
+    "Create an MCP server from the following API documentation.",
+    "Route this benchmark build through the examiner before generator execution.",
+    "",
+    "API_DOCUMENTATION:",
+    prompt,
+  ].join("\n");
 }
 
 function redactDiagnostic(value: string): string {
@@ -484,6 +500,64 @@ async function readResearchEvents(buildRequestId: string, eventsPath: string): P
     // JSONL fallback keeps local runs useful when Mongo is not exposed on localhost.
   }
   return readJsonlEvents(localEventsPath(eventsPath), buildRequestId);
+}
+
+function eventSource(event: ResearchEvent): string {
+  return String(event.source || event.tags?.source || "");
+}
+
+function isRealLangGraphEvent(event: ResearchEvent, eventName: string): boolean {
+  return (
+    event.service === "langgraph-agent" &&
+    event.event_name === eventName &&
+    eventSource(event) !== "backend_langgraph_fallback"
+  );
+}
+
+function finiteUsageNumber(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string" && value.trim()) return Number.isFinite(Number(value));
+  return false;
+}
+
+function assertStrictEvidence({
+  events,
+  estimatedUsage,
+  ragRetrieval,
+  variant,
+}: {
+  events: ResearchEvent[];
+  estimatedUsage: JsonRecord;
+  ragRetrieval: JsonRecord;
+  variant: Variant;
+}): void {
+  const hasGeneratorEvent = events.some((event) => isRealLangGraphEvent(event, "generator_completed"));
+  if (!hasGeneratorEvent) {
+    throw new Error("Strict evidence validation failed: missing real langgraph-agent generator_completed event.");
+  }
+
+  if (variant.ragEnabled === "true") {
+    const hasExaminerEvent = events.some((event) => isRealLangGraphEvent(event, "examiner_completed"));
+    if (!hasExaminerEvent) {
+      throw new Error("Strict evidence validation failed: RAG-on run is missing real langgraph-agent examiner_completed event.");
+    }
+    if (ragRetrieval.rag_retrieval_status !== "evaluated") {
+      throw new Error(`Strict evidence validation failed: RAG-on retrieval evidence was not evaluated (${String(ragRetrieval.rag_retrieval_status || "unknown")}).`);
+    }
+  }
+
+  const requiredUsageFields = [
+    "estimated_prompt_tokens",
+    "estimated_completion_tokens",
+    "estimated_total_tokens",
+    "estimated_cost_usd",
+  ];
+  const missingUsageFields = requiredUsageFields.filter((field) => !finiteUsageNumber(estimatedUsage[field]));
+  if (estimatedUsage.usage_status !== "complete" || missingUsageFields.length > 0) {
+    throw new Error(
+      `Strict evidence validation failed: numeric usage evidence unavailable (usage_status=${String(estimatedUsage.usage_status || "unknown")}, missing=${missingUsageFields.join("|") || "none"}).`,
+    );
+  }
 }
 
 async function waitForInvocationEvent(buildRequestId: string, sessionId: string, eventsPath: string): Promise<ResearchEvent> {
@@ -1033,6 +1107,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
   const buildRequestId = `${options.experimentId}-${variant.id}-${item.id}-r${repeatIndex}-${traceId.slice(0, 8)}`;
   const sessionId = `session-${options.experimentId}-${variant.id}-${item.id}-r${repeatIndex}`;
   const startedAt = Date.now();
+  const creationPrompt = benchmarkCreationPrompt(item);
   let serverId = "";
   let mcpUrl = "";
   let containerId = "";
@@ -1079,7 +1154,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
   try {
     const build = await postChat({
       backendUrl: options.backendUrl,
-      messages: [{ role: "user", content: item.prompt || "" }],
+      messages: [{ role: "user", content: creationPrompt }],
       mcpServers: [],
       sessionId,
       buildRequestId,
@@ -1164,12 +1239,25 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
 
     const events = await readResearchEvents(buildRequestId, options.eventsPath);
     const counts = countOutcomes(outcomes);
-    const estimatedUsage = summarizeEstimatedUsage(events);
+    const estimatedUsage = summarizeEstimatedUsage([
+      ...events,
+      {
+        provider: options.provider,
+        model: options.model,
+        metrics: {
+          estimated_prompt_chars: creationPrompt.length,
+          estimated_completion_chars: build.content.length,
+        },
+      },
+    ]);
     const ragRetrieval = summarizeRagRetrievalForRun({
       events,
       caseLabels: item.maprLabels,
       ragEnabled: variant.ragEnabled === "true",
     });
+    if (options.strictEvidence) {
+      assertStrictEvidence({ events, estimatedUsage, ragRetrieval, variant });
+    }
     result = {
       ...baseResult,
       statusCode: build.response.status,
@@ -1200,10 +1288,13 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       estimated_completion_tokens: estimatedUsage.estimated_completion_tokens,
       estimated_total_tokens: estimatedUsage.estimated_total_tokens,
       estimated_cost_usd: estimatedUsage.estimated_cost_usd,
+      usage_status: estimatedUsage.usage_status,
+      usage_source: estimatedUsage.usage_source,
       eventCount: events.length,
       outcomes,
     };
   } catch (error) {
+    const unavailableUsage = normalizeEstimatedUsage([]);
     result = {
       ...baseResult,
       durationMs: Date.now() - startedAt,
@@ -1234,11 +1325,13 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
         caseLabels: item.maprLabels,
         ragEnabled: variant.ragEnabled === "true",
       }),
-      estimatedUsage: normalizeEstimatedUsage([]),
-      estimated_prompt_tokens: 0,
-      estimated_completion_tokens: 0,
-      estimated_total_tokens: 0,
-      estimated_cost_usd: 0,
+      estimatedUsage: unavailableUsage,
+      estimated_prompt_tokens: unavailableUsage.estimated_prompt_tokens,
+      estimated_completion_tokens: unavailableUsage.estimated_completion_tokens,
+      estimated_total_tokens: unavailableUsage.estimated_total_tokens,
+      estimated_cost_usd: unavailableUsage.estimated_cost_usd,
+      usage_status: unavailableUsage.usage_status,
+      usage_source: unavailableUsage.usage_source,
       errorCode: "benchmark_run_error",
       diagnostic: redactDiagnostic(error instanceof Error ? error.message : String(error)),
     };
@@ -1289,6 +1382,7 @@ function parseOptions(): Options {
     restartStack,
     cleanupContainers: flag("cleanup-containers", true),
     verifyRagEnv: flag("verify-rag-env", restartStack),
+    strictEvidence: flag("strict-evidence", true),
     expectedBuildCount: expectedBuildCountRaw ? Number(expectedBuildCountRaw) : undefined,
     requireAllVariants: !flag("allow-partial-variants", false),
   };
@@ -1376,6 +1470,7 @@ async function main(): Promise<void> {
     expectedBuildCount: matrixPlan.expectedBuildCount,
     cleanupContainers: options.cleanupContainers,
     verifyRagEnv: options.verifyRagEnv,
+    strictEvidence: options.strictEvidence,
   };
   console.info("[backend-toolcall-matrix-plan]", JSON.stringify(plan));
   if (options.dryRun) return;

@@ -76,6 +76,8 @@ type BenchmarkRun = JsonRecord & {
   estimated_completion_tokens?: number | string;
   estimated_total_tokens?: number | string;
   estimated_cost_usd?: number | string;
+  usage_status?: string;
+  usage_source?: string;
   expected_operation_count?: number | string;
   mapped_operation_count?: number | string;
   mapped_tool_count?: number | string;
@@ -92,6 +94,9 @@ type BenchmarkRun = JsonRecord & {
   precision_at_3?: number | string | null;
   recall_at_3?: number | string | null;
   mrr_at_3?: number | string | null;
+  rag_retrieval_status?: string;
+  rag_retrieval_source?: string;
+  rag_real_examiner_event_count?: number | string;
   buildDurationMs?: number | string;
   chatTotalLatencyMs?: number | string;
   compileStartValidationPassed?: boolean;
@@ -214,6 +219,14 @@ function numeric(value: unknown): number {
   return 0;
 }
 
+function optionalNumeric(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
 function boolValue(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
@@ -268,6 +281,16 @@ function estimatedUsageForRun(run: BenchmarkRun): JsonRecord {
 
 function normalizeBenchmarkRun(run: BenchmarkRun): BenchmarkRun {
   const usage = estimatedUsageForRun(run);
+  const estimatedPromptTokens = optionalNumeric(run.estimated_prompt_tokens, usage.estimated_prompt_tokens);
+  const estimatedCompletionTokens = optionalNumeric(run.estimated_completion_tokens, usage.estimated_completion_tokens);
+  const estimatedTotalTokens = optionalNumeric(run.estimated_total_tokens, usage.estimated_total_tokens);
+  const estimatedCostUsd = optionalNumeric(run.estimated_cost_usd, usage.estimated_cost_usd);
+  const usageStatus = textValue(run.usage_status, usage.usage_status) || (
+    estimatedPromptTokens !== null && estimatedCompletionTokens !== null && estimatedTotalTokens !== null && estimatedCostUsd !== null
+      ? "complete"
+      : "unavailable_missing_usage"
+  );
+  const usageSource = textValue(run.usage_source, usage.usage_source) || (usageStatus === "complete" ? "provider_usage" : "unavailable");
   const runtimeMetadataOk = boolValue(run.runtimeMetadataOk);
   const mcpHandshakePass = boolValue(run.mcpHandshakePass, boolValue(run.mcp_initialize_success, runtimeMetadataOk));
   const compileStartValidationPassed = boolValue(run.compileStartValidationPassed, boolValue(run.compile_pass, run.ok === true));
@@ -279,10 +302,12 @@ function normalizeBenchmarkRun(run: BenchmarkRun): BenchmarkRun {
       ...(run.estimatedUsage || {}),
       ...usage,
     },
-    estimated_prompt_tokens: numeric(run.estimated_prompt_tokens) || numeric(usage.estimated_prompt_tokens),
-    estimated_completion_tokens: numeric(run.estimated_completion_tokens) || numeric(usage.estimated_completion_tokens),
-    estimated_total_tokens: numeric(run.estimated_total_tokens) || numeric(usage.estimated_total_tokens),
-    estimated_cost_usd: numeric(run.estimated_cost_usd) || numeric(usage.estimated_cost_usd),
+    estimated_prompt_tokens: estimatedPromptTokens,
+    estimated_completion_tokens: estimatedCompletionTokens,
+    estimated_total_tokens: estimatedTotalTokens,
+    estimated_cost_usd: estimatedCostUsd,
+    usage_status: usageStatus,
+    usage_source: usageSource,
     build_success: run.ok === true,
     metadata_ready: runtimeMetadataOk,
     mcpHandshakePass,
@@ -405,12 +430,16 @@ function summarizeToolcallMatrixGroups(
     const cleanupRemoved = group.reduce((sum, run) => sum + (numeric(run.containerRemovedCount) || (run.cleanupStatus === "removed" ? 1 : 0)), 0);
     const cleanupFailed = group.reduce((sum, run) => sum + (numeric(run.containerFailedCount) || (run.cleanupStatus === "failed" ? 1 : 0)), 0);
     const cleanupSkipped = group.reduce((sum, run) => sum + (numeric(run.containerSkippedCount) || (run.cleanupStatus === "skipped" ? 1 : 0)), 0);
-    const estimatedPromptTokens = group.reduce((sum, run) => sum + numeric(run.estimated_prompt_tokens), 0);
-    const estimatedCompletionTokens = group.reduce((sum, run) => sum + numeric(run.estimated_completion_tokens), 0);
-    const estimatedTotalTokens = group.reduce((sum, run) => sum + numeric(run.estimated_total_tokens), 0);
+    const usageComplete = group.filter((run) => run.usage_status === "complete");
+    const usageUnavailable = group.length - usageComplete.length;
+    const usageStatuses = [...new Set(group.map((run) => String(run.usage_status || "unknown")))].sort().join("|");
+    const usageSources = [...new Set(group.map((run) => String(run.usage_source || "unknown")))].sort().join("|");
+    const estimatedPromptTokens = usageComplete.reduce((sum, run) => sum + numeric(run.estimated_prompt_tokens), 0);
+    const estimatedCompletionTokens = usageComplete.reduce((sum, run) => sum + numeric(run.estimated_completion_tokens), 0);
+    const estimatedTotalTokens = usageComplete.reduce((sum, run) => sum + numeric(run.estimated_total_tokens), 0);
     const llmCallCount = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "llmCallCount"), 0);
     const selectedSkillTokens = group.reduce((sum, run) => sum + nestedNumber(run.estimatedUsage, "selectedSkillTokens"), 0);
-    const estimatedCostUsd = group.reduce((sum, run) => sum + numeric(run.estimated_cost_usd), 0);
+    const estimatedCostUsd = usageComplete.reduce((sum, run) => sum + numeric(run.estimated_cost_usd), 0);
     const expectedOperations = group.reduce((sum, run) => sum + numeric(run.expected_operation_count), 0);
     const mappedOperations = group.reduce((sum, run) => sum + numeric(run.mapped_operation_count), 0);
     const mappedTools = group.reduce((sum, run) => sum + (numeric(run.mapped_tool_count) || numeric(run.mapped_operation_count)), 0);
@@ -426,6 +455,9 @@ function summarizeToolcallMatrixGroups(
     const unknownToolValidation = group.filter((run) => !run.toolValidationStatus || run.toolValidationStatus === "unknown" || run.toolValidationStatus === "not_run").length;
     const skippedOnlyValidation = group.filter((run) => run.toolValidationStatus === "skipped_only").length;
     const attemptedValidation = group.filter((run) => numeric(run.attemptedToolCount) > 0).length;
+    const usageRatios = usageUnavailable === 0
+      ? successfulServerRatios({ estimatedTotalTokens, estimatedCostUsd, successfulBuilds })
+      : { tokens_per_successful_server: null, estimated_cost_per_successful_server: null };
     rows.push({
       [groupName]: key,
       count: group.length,
@@ -458,6 +490,11 @@ function summarizeToolcallMatrixGroups(
       attempted_validation_count: attemptedValidation,
       skipped_only_validation_count: skippedOnlyValidation,
       unknown_tool_validation_count: unknownToolValidation,
+      usage_complete_count: usageComplete.length,
+      usage_unavailable_count: usageUnavailable,
+      usage_complete_rate: rate(usageComplete.length, group.length),
+      usage_statuses: usageStatuses,
+      usage_sources: usageSources,
       p50_ms: percentile(durations, 50),
       p95_ms: percentile(durations, 95),
       p50_build_total_latency_ms: percentile(buildDurations, 50),
@@ -470,11 +507,7 @@ function summarizeToolcallMatrixGroups(
       llm_call_count: llmCallCount,
       selected_skill_tokens: selectedSkillTokens,
       estimated_cost_usd: estimatedCostUsd,
-      ...successfulServerRatios({
-        estimatedTotalTokens,
-        estimatedCostUsd,
-        successfulBuilds,
-      }),
+      ...usageRatios,
     });
   }
   return rows.sort((a, b) => String(a[groupName]).localeCompare(String(b[groupName])));
@@ -569,10 +602,18 @@ function summarizeRagRetrievalByVariant(runs: BenchmarkRun[]): CsvRow[] {
     const precisionValues = applicable.map((run) => Number(run.precision_at_3)).filter((value) => Number.isFinite(value));
     const recallValues = applicable.map((run) => Number(run.recall_at_3)).filter((value) => Number.isFinite(value));
     const mrrValues = applicable.map((run) => Number(run.mrr_at_3)).filter((value) => Number.isFinite(value));
+    const retrievalStatuses = [...new Set(group.map((run) => String(run.rag_retrieval_status || "unknown")))].sort().join("|");
+    const missingRealExaminerCount = group.filter((run) => run.rag_retrieval_status === "missing_real_examiner_evidence").length;
+    const noEvidenceCount = group.filter((run) => run.rag_retrieval_status === "no_real_rag_evidence").length;
+    const evaluatedCount = group.filter((run) => run.rag_retrieval_status === "evaluated").length;
     rows.push({
       variantId,
       count: group.length,
       applicable_count: applicable.length,
+      evaluated_count: evaluatedCount,
+      missing_real_examiner_count: missingRealExaminerCount,
+      no_evidence_count: noEvidenceCount,
+      retrieval_statuses: retrievalStatuses,
       retrieved_evidence_count: group.reduce((sum, run) => sum + numeric(run.retrieved_evidence_count), 0),
       relevant_evidence_count: group.reduce((sum, run) => sum + numeric(run.relevant_evidence_count), 0),
       retrieval_hit_count: group.reduce((sum, run) => sum + numeric(run.retrieval_hit_count), 0),
@@ -738,11 +779,11 @@ async function main() {
     `## Quality By Variant`,
     markdownTable(qualityByVariantRows, ["variantId", "count", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "expected_operation_count", "mapped_operation_count", "generated_tool_count", "hallucinated_tool_count", "schema_valid_tool_count"]),
     `## RAG Retrieval By Variant`,
-    markdownTable(ragRetrievalByVariantRows, ["variantId", "count", "applicable_count", "precision_at_3", "recall_at_3", "mrr_at_3", "retrieved_evidence_count", "relevant_evidence_count", "retrieval_hit_count"]),
+    markdownTable(ragRetrievalByVariantRows, ["variantId", "count", "applicable_count", "evaluated_count", "missing_real_examiner_count", "no_evidence_count", "retrieval_statuses", "precision_at_3", "recall_at_3", "mrr_at_3", "retrieved_evidence_count", "relevant_evidence_count", "retrieval_hit_count"]),
     `## Backend Tool-Call Matrix By API Doc`,
-    markdownTable(toolcallApiDocRows, ["apiDocId", "count", "build_success_rate", "metadata_readiness_rate", "mcp_handshake_pass_rate", "compile_pass_rate", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "cleanup_removed_count", "cleanup_failed_count", "p50_build_total_latency_ms", "p95_build_total_latency_ms", "estimated_total_tokens", "tokens_per_successful_server", "estimated_cost_usd", "estimated_cost_per_successful_server"]),
+    markdownTable(toolcallApiDocRows, ["apiDocId", "count", "build_success_rate", "metadata_readiness_rate", "mcp_handshake_pass_rate", "compile_pass_rate", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "cleanup_removed_count", "cleanup_failed_count", "usage_complete_count", "usage_unavailable_count", "usage_complete_rate", "usage_statuses", "p50_build_total_latency_ms", "p95_build_total_latency_ms", "estimated_total_tokens", "tokens_per_successful_server", "estimated_cost_usd", "estimated_cost_per_successful_server"]),
     `## Backend Tool-Call Matrix By Variant`,
-    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "mcp_handshake_pass_rate", "compile_pass_rate", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_build_total_latency_ms", "p95_build_total_latency_ms", "estimated_total_tokens", "tokens_per_successful_server", "estimated_cost_usd", "estimated_cost_per_successful_server"]),
+    markdownTable(toolcallVariantRows, ["variantId", "count", "build_success_rate", "metadata_readiness_rate", "mcp_handshake_pass_rate", "compile_pass_rate", "endpoint_coverage", "hallucinated_tool_rate", "schema_validity_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "usage_complete_count", "usage_unavailable_count", "usage_complete_rate", "usage_statuses", "p50_build_total_latency_ms", "p95_build_total_latency_ms", "estimated_total_tokens", "tokens_per_successful_server", "estimated_cost_usd", "estimated_cost_per_successful_server"]),
     `## Backend Tool-Call Matrix By Case`,
     markdownTable(toolcallCaseRows, ["caseId", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     `## Backend Tool-Call Matrix By API Type`,
@@ -753,7 +794,7 @@ async function main() {
     markdownTable(toolcallRagRows, ["ragEnabled", "count", "build_success_rate", "metadata_readiness_rate", "inspector_pass_rate", "tool_call_pass_rate", "skipped_coverage", "cleanup_success_rate", "unknown_tool_validation_count", "p50_ms", "p95_ms", "estimated_prompt_tokens", "llm_call_count", "selected_skill_tokens", "estimated_cost_usd"]),
     ``,
     `## Benchmark Runs`,
-    markdownTable(runs, ["itemId", "apiDocId", "apiType", "mode", "repeatIndex", "ok", "inspectorPassRate", "cleanupStatus", "serverId", "durationMs"]),
+    markdownTable(runs, ["itemId", "apiDocId", "apiType", "mode", "repeatIndex", "ok", "inspectorPassRate", "cleanupStatus", "serverId", "durationMs", "rag_retrieval_status", "rag_real_examiner_event_count", "estimated_prompt_tokens", "estimated_completion_tokens", "estimated_total_tokens", "estimated_cost_usd", "usage_status", "usage_source"]),
     `## Dashboard Runs`,
     markdownTable(dashboardRuns, ["buildRequestId", "variantId", "ok", "runtimeMetadataOk", "toolValidationStatus", "toolCallPassRate", "durationMs", "serverId"]),
     `## Static vs Dynamic / Mode Comparison`,
