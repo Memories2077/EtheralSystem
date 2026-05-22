@@ -9,6 +9,12 @@ The system SHALL use Gemini `gemini-embedding-2` as the supported embedding prov
 - **AND** the model can be overridden through an environment variable without reintroducing Ollama-specific configuration
 - **AND** authentication uses the existing Gemini API key configuration
 
+#### Scenario: Gemini collection is isolated from old Ollama vectors
+- **WHEN** the agent opens the Chroma collection for RAG
+- **THEN** it uses `mcp_servers_hierarchical_gemini` by default
+- **AND** the collection name can be overridden through `CHROMA_COLLECTION_NAME`
+- **AND** old Ollama-indexed collection data is not deleted automatically
+
 #### Scenario: RAG-disabled runs do not require embeddings
 - **WHEN** a benchmark or validation run executes with `RAG_ENABLED=false`
 - **THEN** the run does not require a Gemini embedding call

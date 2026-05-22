@@ -26,9 +26,9 @@ The repository already uses Gemini for generation through `GEMINI_API_KEY`, and 
 
    The implementation should replace `llama_index.embeddings.ollama.OllamaEmbedding` with `llama_index.embeddings.google_genai.GoogleGenAIEmbedding` and add `llama-index-embeddings-google-genai` to the LangChain application dependencies. This keeps the existing `Settings.embed_model` flow intact for `VectorStoreIndex`, retrieval, and the compatibility `get_embeddings()` helper. A direct custom `google.genai` wrapper was considered, but it would duplicate adapter behavior that LlamaIndex already provides and would increase maintenance surface.
 
-2. Configure the embedding model through environment-backed constants.
+2. Configure the embedding model and collection through environment-backed constants.
 
-   The default embedding model should be `gemini-embedding-2`, with an override such as `GEMINI_EMBEDDING_MODEL` for future migrations. Authentication should use `GEMINI_API_KEY` from the existing `.env`/Compose environment. Missing API key or dependency errors should fail RAG indexing/search with clear diagnostics while preserving the existing RAG-disabled behavior.
+   The default embedding model should be `gemini-embedding-2`, with `GEMINI_EMBEDDING_MODEL` available for future migrations. Authentication should use `GEMINI_API_KEY` from the existing `.env`/Compose environment. The default Chroma collection should change to `mcp_servers_hierarchical_gemini`, with `CHROMA_COLLECTION_NAME` available for override. This avoids mixing Gemini 3072-dimensional vectors with old Ollama-indexed data. Missing API key or dependency errors should fail RAG indexing/search with clear diagnostics while preserving the existing RAG-disabled behavior.
 
 3. Keep ChromaDB as the only local vector infrastructure service.
 
@@ -41,6 +41,6 @@ The repository already uses Gemini for generation through `GEMINI_API_KEY`, and 
 ## Risks / Trade-offs
 
 - Google API availability or quota can block RAG indexing/search -> emit clear error diagnostics, keep `RAG_ENABLED=false` paths independent, and document that Gemini embeddings require outbound API access.
-- Embedding dimension changes could conflict with existing Chroma collection data -> use the existing collection only after confirming dimensions, and document that old Ollama-indexed collection data may need clearing or re-indexing when dimensions differ.
+- Embedding dimension changes could conflict with existing Chroma collection data -> use the new Gemini collection by default and leave old Ollama-indexed data untouched unless an operator explicitly overrides the collection name.
 - New dependency may not already be present in the agent image -> update `pyproject.toml` and run focused import tests before image build.
 - Removing Ollama can break stale docs/tests that still expect the container -> update Compose references, cleanup allowlists, scripts, and OpenSpec requirements in the same change.

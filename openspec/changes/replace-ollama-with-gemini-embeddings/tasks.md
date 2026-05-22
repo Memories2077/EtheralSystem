@@ -1,6 +1,6 @@
 ## 1. Pre-Build Verification
 
-- [ ] 1.1 Add or document a repeatable Gemini-to-Chroma smoke that embeds text with `gemini-embedding-2`, upserts a temporary Chroma record, queries it back, and cleans up the temporary collection.
+- [x] 1.1 Add or document a repeatable Gemini-to-Chroma smoke that embeds text with `gemini-embedding-2`, upserts a temporary Chroma record, queries it back, and cleans up the temporary collection.
 - [ ] 1.2 Run the smoke without building images and record the embedding dimension, Chroma count, and top query result.
 - [ ] 1.3 Verify `RAG_ENABLED=false` runs do not require a Gemini embedding call or any local embedding service.
 

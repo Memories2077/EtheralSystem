@@ -5,7 +5,7 @@ The RAG embedding path currently depends on an Ollama embedding container that i
 ## What Changes
 
 - Replace the LangGraph RAG embedding provider from Ollama `qwen3-embedding:0.6b` to Gemini `gemini-embedding-2`.
-- Store and query Gemini-generated embeddings in the existing ChromaDB service.
+- Store and query Gemini-generated embeddings in the existing ChromaDB service using a new Gemini-specific collection by default.
 - Remove the Ollama Compose service, agent `OLLAMA_BASE_URL` wiring, Ollama dependency edges, persistent Ollama volume, and obsolete Ollama check scripts or dependencies when they are no longer used.
 - Update validation expectations so the baseline Compose stack requires Chroma but does not require Ollama.
 - Keep `RAG_ENABLED=false` behavior unchanged for benchmark and validation runs that intentionally disable retrieval.
@@ -24,4 +24,5 @@ The RAG embedding path currently depends on an Ollama embedding container that i
 - Affected code: `apps/langChain-application/my_agent/utils/vector_db.py`, LangChain application Python dependencies, Docker Compose agent environment and dependency wiring, Ollama utility scripts, and project documentation that names Ollama as baseline infrastructure.
 - Affected systems: LangGraph agent RAG retrieval, ChromaDB vector persistence, Docker Compose local/dev stack, research matrix smoke validation, and cleanup/image-retention logic.
 - External dependency: Google Gen AI embeddings through `GEMINI_API_KEY` and model `gemini-embedding-2`.
+- New runtime configuration: `GEMINI_EMBEDDING_MODEL` defaults to `gemini-embedding-2`; `CHROMA_COLLECTION_NAME` defaults to `mcp_servers_hierarchical_gemini`.
 - Removal impact: local Ollama embedding service and its persistent volume are no longer required for EtheralSystem RAG.
