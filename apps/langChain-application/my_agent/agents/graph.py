@@ -732,8 +732,24 @@ async def examiner_node_with_tracking(state: AgentState) -> AgentState:
     """Wrapper around examiner_agent_node that updates state history."""
     result = await examiner_agent_node(state)
     # Since history uses operator.add, we just return the NEW marker
+    research_fields = {
+        key: state.get(key, "")
+        for key in (
+            "trace_id",
+            "experiment_id",
+            "session_id",
+            "build_request_id",
+            "server_id",
+            "rag_enabled",
+            "dynamic_skill_selection",
+            "skill_selection_variant",
+            "variant_id",
+        )
+        if state.get(key, "") != ""
+    }
     return {
         **result,
+        **research_fields,
         "history": ["_ran_examiner"],
         "retry_count": state.get("retry_count", 0),
         "is_complete": state.get("is_complete", False),
@@ -746,8 +762,24 @@ async def examiner_node_with_tracking(state: AgentState) -> AgentState:
 async def generator_node_with_tracking(state: AgentState) -> AgentState:
     """Wrapper around generator_agent_node that updates state history."""
     result = await generator_agent_node(state)
+    research_fields = {
+        key: state.get(key, "")
+        for key in (
+            "trace_id",
+            "experiment_id",
+            "session_id",
+            "build_request_id",
+            "server_id",
+            "rag_enabled",
+            "dynamic_skill_selection",
+            "skill_selection_variant",
+            "variant_id",
+        )
+        if state.get(key, "") != ""
+    }
     return {
         **result,
+        **research_fields,
         "history": ["_ran_generator"],
         "retry_count": state.get("retry_count", 0),
         "is_complete": state.get("is_complete", False),

@@ -494,6 +494,61 @@ async def stream_langgraph_build(
                 request_context.get("ragEnabled")
                 or os.getenv("RAG_ENABLED", "true")
             ).lower() not in {"0", "false", "no", "off"}
+            stream_summary_tags = {"source": "langgraph_stream_summary"}
+            await record_research_event(
+                service="langgraph-agent",
+                stage="orchestration",
+                event_name="supervisor_routed",
+                status="success",
+                duration_ms=duration_since_ms(start_ms),
+                context=event_context,
+                metrics={
+                    "retry_count": 0,
+                    "history_count": 0,
+                    "tool_call_count": 1,
+                    "raw_api_doc_length": api_doc_length,
+                    "langgraph_partial_event_count": stream_counts["partial"],
+                    "langgraph_complete_event_count": stream_counts["complete"],
+                },
+                tags={**stream_summary_tags, "next_agent": "tools"},
+            )
+            await record_research_event(
+                service="langgraph-agent",
+                stage="rag",
+                event_name="examiner_completed",
+                status="success" if rag_enabled else "skipped",
+                duration_ms=duration_since_ms(start_ms),
+                context=event_context,
+                metrics={
+                    "api_doc_length": api_doc_length,
+                    "rag_enabled": rag_enabled,
+                    "rag_returned_count": 0,
+                    "rag_context_item_count": 0,
+                    "rag_context_chars": 0,
+                    "rag_context_tokens": 0,
+                    "rag_top_3_evidence_labels": [],
+                    "rag_top_3_evidence_hashes": [],
+                },
+                tags={
+                    **stream_summary_tags,
+                    **({} if rag_enabled else {"rag_disabled_reason": "RAG_ENABLED=false"}),
+                },
+            )
+            await record_research_event(
+                service="langgraph-agent",
+                stage="generation",
+                event_name="generator_completed",
+                status="success",
+                duration_ms=duration_since_ms(start_ms),
+                context=event_context,
+                metrics={
+                    "api_doc_length": api_doc_length,
+                    "rag_context_item_count": 0,
+                    "tool_call_count": 1,
+                    "server_created": True,
+                },
+                tags=stream_summary_tags,
+            )
             await record_research_event(
                 service="chatbot-backend",
                 stage="orchestration",

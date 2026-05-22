@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import time
 import uuid
@@ -33,6 +34,24 @@ SENSITIVE_KEY_NAMES = (
     "raw_user_content",
     "request_body",
     "user_content",
+)
+
+SAFE_NUMERIC_USAGE_KEY_NAMES = (
+    "completion_token_estimate",
+    "completion_tokens",
+    "estimated_completion_tokens",
+    "estimated_prompt_tokens",
+    "estimated_total_tokens",
+    "input_tokens",
+    "output_tokens",
+    "prompt_token_estimate",
+    "prompt_tokens",
+    "rag_context_tokens",
+    "selected_skill_tokens",
+    "skill_total_tokens",
+    "token_count",
+    "total_token_estimate",
+    "total_tokens",
 )
 
 _mongo_client = None
@@ -79,11 +98,37 @@ def _is_sensitive_key(key: str) -> bool:
     )
 
 
+def _is_numeric_usage_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return math.isfinite(float(value))
+    if isinstance(value, str) and value.strip():
+        try:
+            return math.isfinite(float(value))
+        except ValueError:
+            return False
+    return False
+
+
+def _is_safe_numeric_usage_field(key: str, value: Any) -> bool:
+    lowered = key.lower().replace("-", "_")
+    compact = lowered.replace("_", "")
+    exact_names = set(SAFE_NUMERIC_USAGE_KEY_NAMES)
+    compact_names = {name.replace("_", "") for name in SAFE_NUMERIC_USAGE_KEY_NAMES}
+    return (lowered in exact_names or compact in compact_names) and _is_numeric_usage_value(value)
+
+
 def redact_sensitive(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: Dict[str, Any] = {}
         for key, item in value.items():
-            redacted[key] = "[REDACTED]" if _is_sensitive_key(str(key)) else redact_sensitive(item)
+            key_text = str(key)
+            redacted[key] = (
+                "[REDACTED]"
+                if _is_sensitive_key(key_text) and not _is_safe_numeric_usage_field(key_text, item)
+                else redact_sensitive(item)
+            )
         return redacted
     if isinstance(value, list):
         return [redact_sensitive(item) for item in value]

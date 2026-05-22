@@ -49,17 +49,6 @@ services:
     networks:
       - etheral-network
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama-server
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    restart: unless-stopped
-    networks:
-      - etheral-network
-
   # =========================================================================
   # MCP Gen
   # =========================================================================
@@ -180,7 +169,8 @@ services:
     environment:
       - CHROMA_HOST=chromadb-server
       - CHROMA_PORT=8000
-      - OLLAMA_BASE_URL=http://ollama-server:11434
+      - CHROMA_COLLECTION_NAME=${CHROMA_COLLECTION_NAME:-mcp_servers_hierarchical_gemini}
+      - GEMINI_EMBEDDING_MODEL=${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
       - MCP_BASE_URL=${MCP_BASE_URL:-http://docker-manager:8080/api}
       - MCP_MANAGER_URL=${MCP_MANAGER_URL:-http://docker-manager:8080}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
@@ -210,7 +200,6 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - chromadb
-      - ollama
       - docker-manager
     restart: unless-stopped
     networks:
@@ -315,7 +304,6 @@ volumes:
   mongodb_data:
   rabbitmq_data:
   chromadb_data:
-  ollama_data:
   jwt_data:
   shared_input:
   shared_openapi_spec:

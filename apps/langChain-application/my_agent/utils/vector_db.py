@@ -12,12 +12,12 @@ try:
     from llama_index.storage.docstore.mongodb import MongoDocumentStore
     from llama_index.vector_stores.chroma import ChromaVectorStore
     from llama_index.llms.langchain import LangChainLLM
-    from llama_index.embeddings.ollama import OllamaEmbedding
+    from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
 except ImportError as e:
     chromadb = None
     Document = VectorStoreIndex = StorageContext = Settings = None
     HierarchicalNodeParser = get_leaf_nodes = AutoMergingRetriever = None
-    MongoDocumentStore = ChromaVectorStore = LangChainLLM = OllamaEmbedding = None
+    MongoDocumentStore = ChromaVectorStore = LangChainLLM = GoogleGenAIEmbedding = None
     _VECTOR_DB_IMPORT_ERROR = e
 else:
     _VECTOR_DB_IMPORT_ERROR = None
@@ -35,12 +35,13 @@ logger = logging.getLogger(__name__)
 # Constants
 CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8025"))
-COLLECTION_NAME = "mcp_servers_hierarchical"
-EMBEDDING_MODEL = "qwen3-embedding:0.6b"
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "mcp_servers_hierarchical_gemini")
+EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2")
 
 MONGO_URI = API_CONFIG.get("mongo_uri", "mongodb://mongodb:27017")
 MONGO_DB_NAME = API_CONFIG.get("mongo_db_name", "mcp_agent_db")
+GEMINI_API_KEY = API_CONFIG.get("gemini_api_key", "")
+_EMBEDDING_INIT_ERROR: Exception | None = None
 
 def _ensure_vector_db_dependencies() -> None:
     """Raise a clear runtime error if optional vector DB dependencies are missing."""
@@ -49,21 +50,30 @@ def _ensure_vector_db_dependencies() -> None:
             "Vector DB dependencies are not installed. Install project dependencies from "
             "pyproject.toml before using RAG features."
         ) from _VECTOR_DB_IMPORT_ERROR
+    if _EMBEDDING_INIT_ERROR is not None:
+        raise RuntimeError(
+            "Gemini embedding model is not configured. Ensure GEMINI_API_KEY is set "
+            "and llama-index-embeddings-google-genai is installed before using RAG features."
+        ) from _EMBEDDING_INIT_ERROR
 
 
 # Global LlamaIndex Settings
-if Settings is not None and OllamaEmbedding is not None and LangChainLLM is not None:
-    Settings.embed_model = OllamaEmbedding(
-        model_name=EMBEDDING_MODEL,
-        base_url=OLLAMA_BASE_URL,
-        request_timeout=60.0,
-    )
+if Settings is not None and GoogleGenAIEmbedding is not None and LangChainLLM is not None:
     try:
-        langchain_llm_cls = cast(Any, LangChainLLM)
+        if not GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is not set")
+        google_embedding_cls = cast(Any, GoogleGenAIEmbedding)
         settings = cast(Any, Settings)
+        settings.embed_model = google_embedding_cls(
+            model_name=EMBEDDING_MODEL,
+            api_key=GEMINI_API_KEY,
+            timeout=60,
+        )
+        langchain_llm_cls = cast(Any, LangChainLLM)
         settings.llm = langchain_llm_cls(llm=get_llm(temperature=0.0))
     except Exception as e:
-        logger.warning(f"[VectorDB] ⚠️ LLM initialization skipped: {e}")
+        _EMBEDDING_INIT_ERROR = e
+        logger.warning("[VectorDB] Gemini embedding initialization skipped: %s", e)
 
 # Initialize Chroma and Storage
 def get_storage_context():
@@ -87,14 +97,14 @@ def get_storage_context():
     )
 
 async def get_embeddings(text: str) -> List[float]:
-    """Compatibility function: Get embeddings for a given text using LlamaIndex/Ollama."""
+    """Compatibility function: Get embeddings for a given text using Gemini."""
     try:
         _ensure_vector_db_dependencies()
         settings = cast(Any, Settings)
         return await settings.embed_model.aget_text_embedding(text)
     except Exception as e:
-        logger.error(f"[VectorDB] ❌ Failed to get embeddings: {e}")
-        return [0.0] * 1024
+        logger.error("[VectorDB] Failed to get Gemini embeddings: %s", e)
+        return []
 
 def _sync_process_and_save(server_id: str, documents: List[LlamaDocument]):
     """Synchronous helper for saving artifacts without blocking event loop."""

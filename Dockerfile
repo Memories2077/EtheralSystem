@@ -1,7 +1,7 @@
 # =============================================================================
 # Etheral System - Single Multi-Stage Dockerfile
 # All application services built from one file with stage targets.
-# Infrastructure services (mongodb, rabbitmq, chromadb, ollama) use base images.
+# Infrastructure services (mongodb, rabbitmq, chromadb) use base images.
 # =============================================================================
 
 # ---------------------------------------------------------------------------

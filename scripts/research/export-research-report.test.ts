@@ -295,10 +295,15 @@ describe("research report export dashboard run rows", () => {
         precision_at_3: 0.6667,
         recall_at_3: 0.5,
         mrr_at_3: 1,
+        rag_retrieval_status: "evaluated",
+        rag_retrieval_source: "langgraph-agent",
+        rag_real_examiner_event_count: 1,
         estimated_prompt_tokens: 120,
         estimated_completion_tokens: 60,
         estimated_total_tokens: 180,
         estimated_cost_usd: 0.02,
+        usage_status: "complete",
+        usage_source: "provider_usage",
       },
       {
         type: "benchmark_result",
@@ -348,6 +353,9 @@ describe("research report export dashboard run rows", () => {
         precision_at_3: 0.3333,
         recall_at_3: 0.25,
         mrr_at_3: 0.5,
+        rag_retrieval_status: "evaluated",
+        rag_retrieval_source: "langgraph-agent",
+        rag_real_examiner_event_count: 1,
       },
     ]);
 
@@ -369,6 +377,8 @@ describe("research report export dashboard run rows", () => {
     const retrieval = readFileSync(path.join(outputDir, "rag_retrieval_by_variant.csv"), "utf8");
     expect(retrieval).toContain("precision_at_3");
     expect(retrieval).toContain("mrr_at_3");
+    expect(retrieval).toContain("retrieval_statuses");
+    expect(retrieval).toContain("evaluated");
     expect(retrieval).toContain("static-rag-on");
     expect(retrieval).not.toContain("static-rag-off");
 
@@ -378,11 +388,14 @@ describe("research report export dashboard run rows", () => {
 
     const matrixRuns = readFileSync(path.join(outputDir, "toolcall_matrix_runs.csv"), "utf8");
     expect(matrixRuns).toContain("estimated_total_tokens");
+    expect(matrixRuns).toContain("usage_status");
+    expect(matrixRuns).toContain("usage_source");
     expect(matrixRuns).toContain("endpoint_coverage");
 
     const summary = readFileSync(path.join(outputDir, "summary.md"), "utf8");
     expect(summary).toContain("## 2x2 Variant Matrix");
     expect(summary).toContain("## Ablation Effects");
     expect(summary).toContain("## RAG Retrieval By Variant");
+    expect(summary).toContain("usage_complete_rate");
   });
 });

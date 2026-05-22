@@ -17,10 +17,21 @@ def test_redact_sensitive_removes_secrets_and_raw_inputs():
     payload = {
         "apiKey": "secret-key",
         "Authorization": "Bearer secret",
+        "access_token": "secret-token",
+        "jwt": "eyJ.secret",
+        "cookie": "sid=secret",
         "input_hash": "safe-hash",
+        "prompt_token_estimate": 123,
+        "completion_tokens": 45,
+        "totalTokenEstimate": "168",
+        "rag_context_tokens": 20,
+        "skill_total_tokens": 11,
+        "token": 999,
+        "refresh_token_count": 1,
         "nested": {
             "rawUserContent": "private prompt",
             "promptText": "private prompt",
+            "token_count": 7,
         },
     }
 
@@ -28,9 +39,20 @@ def test_redact_sensitive_removes_secrets_and_raw_inputs():
 
     assert redacted["apiKey"] == "[REDACTED]"
     assert redacted["Authorization"] == "[REDACTED]"
+    assert redacted["access_token"] == "[REDACTED]"
+    assert redacted["jwt"] == "[REDACTED]"
+    assert redacted["cookie"] == "[REDACTED]"
     assert redacted["input_hash"] == "safe-hash"
+    assert redacted["prompt_token_estimate"] == 123
+    assert redacted["completion_tokens"] == 45
+    assert redacted["totalTokenEstimate"] == "168"
+    assert redacted["rag_context_tokens"] == 20
+    assert redacted["skill_total_tokens"] == 11
+    assert redacted["token"] == "[REDACTED]"
+    assert redacted["refresh_token_count"] == "[REDACTED]"
     assert redacted["nested"]["rawUserContent"] == "[REDACTED]"
     assert redacted["nested"]["promptText"] == "[REDACTED]"
+    assert redacted["nested"]["token_count"] == 7
 
 
 def test_build_research_event_preserves_correlation_context():

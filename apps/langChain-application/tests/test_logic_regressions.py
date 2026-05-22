@@ -1,6 +1,7 @@
 import json
 import importlib
 import asyncio
+import sys
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -24,6 +25,7 @@ def test_create_mcp_server_uses_explicit_rag_context(monkeypatch):
     from my_agent.tools import generator_tools
 
     captured = {}
+    recorded_events = []
 
     class StubMCPResponse:
         serverId = "server-123"
@@ -73,6 +75,35 @@ def test_parse_rag_context_returns_only_lists():
     assert parse_rag_context('{"id": "x"}') == []
     assert parse_rag_context("not-json") == []
 
+def test_agent_research_redaction_preserves_safe_numeric_usage_fields():
+    from my_agent.utils.research_metrics import redact_sensitive
+
+    redacted = redact_sensitive({
+        "api_key": "secret",
+        "Authorization": "Bearer secret",
+        "jwt": "eyJ.secret",
+        "cookie": "sid=secret",
+        "prompt_token_estimate": 100,
+        "completion_tokens": 50,
+        "estimatedTotalTokens": "150",
+        "rag_context_tokens": 25,
+        "skill_total_tokens": 10,
+        "token": 123,
+        "access_token_count": 1,
+    })
+
+    assert redacted["api_key"] == "[REDACTED]"
+    assert redacted["Authorization"] == "[REDACTED]"
+    assert redacted["jwt"] == "[REDACTED]"
+    assert redacted["cookie"] == "[REDACTED]"
+    assert redacted["prompt_token_estimate"] == 100
+    assert redacted["completion_tokens"] == 50
+    assert redacted["estimatedTotalTokens"] == "150"
+    assert redacted["rag_context_tokens"] == 25
+    assert redacted["skill_total_tokens"] == 10
+    assert redacted["token"] == "[REDACTED]"
+    assert redacted["access_token_count"] == "[REDACTED]"
+
 
 def test_examiner_rag_disabled_bypasses_retrieval(monkeypatch):
     from my_agent.agents.sub_agents import examiner_agent
@@ -98,6 +129,19 @@ def test_examiner_rag_disabled_bypasses_retrieval(monkeypatch):
     assert result["next_agent"] == "generator"
     assert result["enriched_context"] == "[]"
     assert "DELEGATE_TO_GENERATOR" in result["messages"][0].content
+
+
+def test_vector_db_uses_gemini_embedding_configuration(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+    monkeypatch.setenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2")
+    monkeypatch.setenv("CHROMA_COLLECTION_NAME", "mcp_servers_hierarchical_gemini")
+    sys.modules.pop("my_agent.utils.vector_db", None)
+
+    vector_db = importlib.import_module("my_agent.utils.vector_db")
+
+    assert vector_db.EMBEDDING_MODEL == "gemini-embedding-2"
+    assert vector_db.COLLECTION_NAME == "mcp_servers_hierarchical_gemini"
+    assert not hasattr(vector_db, "OLLAMA_BASE_URL")
 
 
 def test_examiner_rag_enabled_preserves_retrieval(monkeypatch):
@@ -145,8 +189,15 @@ def test_examiner_rag_enabled_preserves_retrieval(monkeypatch):
     assert captured["n_results"] == 3
     assert captured["related_contents"][0]["id"] == "artifact-1"
     assert json.loads(result["enriched_context"]) == [{"id": "structured-1"}]
+    delegation = result["messages"][0].content
+    assert "DELEGATE_TO_GENERATOR:" in delegation
+    assert "ORIGINAL_PROMPT:" in delegation
+    assert "API_DOCUMENTATION:\nopenapi: 3.0.0\npaths: {}" in delegation
+    assert "ENRICHED_CONTEXT (RAG):" in delegation
     metrics = recorded_events[-1]["metrics"]
     assert metrics["rag_context_tokens"] > 0
+    assert metrics["rag_returned_count"] == 1
+    assert metrics["rag_context_item_count"] == 1
     assert metrics["rag_top_3_evidence_labels"] == ["api_doc"]
     assert len(metrics["rag_top_3_evidence_hashes"]) == 1
 
@@ -156,6 +207,7 @@ def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(monkeypa
     from my_agent.utils import llm_factory
 
     captured = {}
+    recorded_events = []
 
     class NoToolCallLLM:
         def bind_tools(self, _tools):
@@ -181,6 +233,10 @@ def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(monkeypa
     async def fake_save_mcp_artifacts(**_kwargs):
         return {"status": "skipped_empty"}
 
+    async def fake_record_research_event(**kwargs):
+        recorded_events.append(kwargs)
+        return kwargs
+
     class FakeCreateMCPServerTool:
         async def ainvoke(self, args):
             return await fake_create_mcp_server(args)
@@ -189,6 +245,7 @@ def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(monkeypa
     monkeypatch.setattr(generator_agent, "create_MCPServer", FakeCreateMCPServerTool())
     monkeypatch.setattr(generator_agent, "fetch_mcp_files", fake_fetch_mcp_files)
     monkeypatch.setattr(generator_agent, "save_mcp_artifacts", fake_save_mcp_artifacts)
+    monkeypatch.setattr(generator_agent, "record_research_event", fake_record_research_event)
 
     result = asyncio.run(generator_agent.generator_agent_node({
         "messages": [AIMessage(content="DELEGATE_TO_GENERATOR: API_DOCUMENTATION:\nGET /items")],
@@ -207,6 +264,9 @@ def test_generator_falls_back_to_direct_create_when_llm_omits_tool_call(monkeypa
     assert "fake-hallucinated-id" not in result["final_response"]
     assert captured["args"]["query"][0] == "openapi: 3.0.0\npaths: {}"
     assert captured["args"]["rag_context"] == []
+    assert recorded_events[-1]["service"] == "langgraph-agent"
+    assert recorded_events[-1]["event_name"] == "generator_completed"
+    assert recorded_events[-1]["metrics"]["server_created"] is True
 
 
 def import_graph_with_dummy_llm(monkeypatch):
