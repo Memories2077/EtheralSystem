@@ -310,6 +310,73 @@ def _extract_json_payload(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _section_after(text: str, marker: str, stop_markers: tuple[str, ...]) -> str:
+    start = text.find(marker)
+    if start == -1:
+        return ""
+    section_start = start + len(marker)
+    section_end = len(text)
+    for stop_marker in stop_markers:
+        stop = text.find(stop_marker, section_start)
+        if stop != -1:
+            section_end = min(section_end, stop)
+    return text[section_start:section_end].strip()
+
+
+def _json_list_section(text: str, marker: str) -> list[str]:
+    raw = _section_after(
+        text,
+        marker,
+        (
+            "\n\nRAG_EVIDENCE_LABELS:",
+            "\n\nRAG_EVIDENCE_HASHES:",
+            "\n\nUSER_ID:",
+            "\n\nEMAIL:",
+        ),
+    )
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    except Exception:
+        return []
+    return []
+
+
+def _extract_rag_summary_from_message(content: str) -> Dict[str, Any]:
+    if "DELEGATE_TO_GENERATOR:" not in content or "ENRICHED_CONTEXT (RAG):" not in content:
+        return {}
+    rag_context = _section_after(
+        content,
+        "ENRICHED_CONTEXT (RAG):",
+        (
+            "\n\nRAG_EVIDENCE_LABELS:",
+            "\n\nRAG_EVIDENCE_HASHES:",
+            "\n\nUSER_ID:",
+            "\n\nEMAIL:",
+        ),
+    )
+    labels = _json_list_section(content, "RAG_EVIDENCE_LABELS:")
+    hashes = _json_list_section(content, "RAG_EVIDENCE_HASHES:")
+    item_count = 0
+    try:
+        parsed_context = json.loads(rag_context) if rag_context else []
+        item_count = len(parsed_context) if isinstance(parsed_context, list) else 0
+    except Exception:
+        item_count = 0
+    evidence_count = len(labels) or len(hashes) or item_count
+    return {
+        "rag_returned_count": evidence_count,
+        "rag_context_item_count": item_count,
+        "rag_context_chars": len(rag_context),
+        "rag_context_tokens": max(0, round(len(rag_context) / 4)),
+        "rag_top_3_evidence_labels": labels[:3],
+        "rag_top_3_evidence_hashes": hashes[:3],
+    }
+
+
 def _extract_mcp_server_url(payload: Dict[str, Any]) -> str:
     """Pull the tokenized streamable MCP URL from a Claude/mcp-remote config."""
     config = payload.get("config") or payload.get("claudeConfig") or {}
@@ -397,6 +464,7 @@ async def stream_langgraph_build(
         streamed_ids = set()
         last_msg_id = ""
         latest_build_result: Optional[Dict[str, Any]] = None
+        rag_stream_summary: Dict[str, Any] = {}
 
         async for lg_chunk in lg_client.runs.stream(
             thread["thread_id"],
@@ -456,6 +524,9 @@ async def stream_langgraph_build(
                     msg_id = msg_chunk.get("id")
                     content = msg_chunk.get("content", "")
                     if msg_id and isinstance(content, str):
+                        extracted_rag_summary = _extract_rag_summary_from_message(content)
+                        if extracted_rag_summary:
+                            rag_stream_summary = extracted_rag_summary
                         parsed_result = _extract_json_payload(content)
                         if parsed_result and parsed_result.get("serverId"):
                             latest_build_result = parsed_result
@@ -522,12 +593,12 @@ async def stream_langgraph_build(
                 metrics={
                     "api_doc_length": api_doc_length,
                     "rag_enabled": rag_enabled,
-                    "rag_returned_count": 0,
-                    "rag_context_item_count": 0,
-                    "rag_context_chars": 0,
-                    "rag_context_tokens": 0,
-                    "rag_top_3_evidence_labels": [],
-                    "rag_top_3_evidence_hashes": [],
+                    "rag_returned_count": rag_stream_summary.get("rag_returned_count", 0),
+                    "rag_context_item_count": rag_stream_summary.get("rag_context_item_count", 0),
+                    "rag_context_chars": rag_stream_summary.get("rag_context_chars", 0),
+                    "rag_context_tokens": rag_stream_summary.get("rag_context_tokens", 0),
+                    "rag_top_3_evidence_labels": rag_stream_summary.get("rag_top_3_evidence_labels", []),
+                    "rag_top_3_evidence_hashes": rag_stream_summary.get("rag_top_3_evidence_hashes", []),
                 },
                 tags={
                     **stream_summary_tags,
@@ -543,7 +614,7 @@ async def stream_langgraph_build(
                 context=event_context,
                 metrics={
                     "api_doc_length": api_doc_length,
-                    "rag_context_item_count": 0,
+                    "rag_context_item_count": rag_stream_summary.get("rag_context_item_count", 0),
                     "tool_call_count": 1,
                     "server_created": True,
                 },

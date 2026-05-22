@@ -104,6 +104,12 @@ API_DOCUMENTATION:
 ENRICHED_CONTEXT (RAG):
 {rag_context_json}
 
+RAG_EVIDENCE_LABELS:
+[]
+
+RAG_EVIDENCE_HASHES:
+[]
+
 USER_ID: {user_id}
 {f"EMAIL: {email}" if email != "user@example.com" else ""}"""
         delegation_msg = f"DELEGATE_TO_GENERATOR: {enriched_task}"
@@ -166,6 +172,12 @@ API_DOCUMENTATION:
 
 ENRICHED_CONTEXT (RAG):
 {rag_context_json}
+
+RAG_EVIDENCE_LABELS:
+{json.dumps(rag_evidence_labels)}
+
+RAG_EVIDENCE_HASHES:
+{json.dumps(rag_evidence_hashes)}
 
 USER_ID: {user_id}
 {f"EMAIL: {email}" if email != "user@example.com" else ""}"""

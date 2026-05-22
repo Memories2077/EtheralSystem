@@ -45,6 +45,25 @@ from my_agent.utils.research_metrics import duration_since_ms, monotonic_ms, rec
 # CONSTANTS
 # ============================================================================
 MAX_RETRIES = 3  # Guard: tối đa bao nhiêu lần Supervisor có thể re-route
+RESEARCH_STATE_KEYS = (
+    "trace_id",
+    "experiment_id",
+    "session_id",
+    "build_request_id",
+    "server_id",
+    "rag_enabled",
+    "dynamic_skill_selection",
+    "skill_selection_variant",
+    "variant_id",
+)
+
+
+def _research_state_fields(state: AgentState) -> dict[str, str]:
+    return {
+        key: state.get(key, "")
+        for key in RESEARCH_STATE_KEYS
+        if state.get(key, "") != ""
+    }
 
 # ============================================================================
 # LLM INITIALIZATION (via factory → MetaClaw hoặc fallback)
@@ -277,12 +296,24 @@ async def tools_node_wrapper(state: AgentState) -> AgentState:
         fixed_state = dict(state)
         fixed_state["messages"] = messages
         tool_node = ToolNode(SUPERVISOR_TOOLS)
-        return await tool_node.ainvoke(fixed_state)
+        result = await tool_node.ainvoke(fixed_state)
+        return {
+            **result,
+            **_research_state_fields(state),
+            "raw_api_doc": state.get("raw_api_doc", ""),
+            "enriched_context": state.get("enriched_context", ""),
+        }
 
     except Exception as e:
         print(f"[ToolNode] ❌ Error: {e}")
         import traceback; traceback.print_exc()
-        return await ToolNode(SUPERVISOR_TOOLS).ainvoke(state)
+        result = await ToolNode(SUPERVISOR_TOOLS).ainvoke(state)
+        return {
+            **result,
+            **_research_state_fields(state),
+            "raw_api_doc": state.get("raw_api_doc", ""),
+            "enriched_context": state.get("enriched_context", ""),
+        }
 
 
 # ============================================================================
@@ -318,6 +349,7 @@ async def supervisor_node(state: AgentState) -> AgentState:
     messages = state["messages"]
     history = state.get("history", [])
     retry_count = state.get("retry_count", 0)
+    research_fields = _research_state_fields(state)
     
     print(f"\n[Supervisor] 🧠 Phase 2 routing | retry={retry_count} | history={history}")
 
@@ -347,7 +379,8 @@ async def supervisor_node(state: AgentState) -> AgentState:
             "current_plan": "forced_completion_marker",
             "is_complete": True,
             "raw_api_doc": state.get("raw_api_doc", ""),
-            "enriched_context": state.get("enriched_context", "")
+            "enriched_context": state.get("enriched_context", ""),
+            **research_fields,
         }
 
     # ── Guard: max retries reached → force completion ──────────────────────
@@ -374,7 +407,8 @@ async def supervisor_node(state: AgentState) -> AgentState:
             "current_plan": "forced_completion",
             "is_complete": state.get("is_complete", False),
             "raw_api_doc": state.get("raw_api_doc", ""),
-            "enriched_context": state.get("enriched_context", "")
+            "enriched_context": state.get("enriched_context", ""),
+            **research_fields,
         }
 
     # ── Build context summary for LLM decision ─────────────────────────────
@@ -505,7 +539,8 @@ Most Recent Agent Output:
         "is_complete": state.get("is_complete", False),
         "current_plan": str(getattr(response, "content", ""))[:200],
         "raw_api_doc": raw_api_doc,
-        "enriched_context": state.get("enriched_context", "")
+        "enriched_context": state.get("enriched_context", ""),
+        **research_fields,
     }
 
 
@@ -524,6 +559,7 @@ async def supervisor_final_node(state: AgentState) -> AgentState:
     history = state.get("history", [])
     retry_count = state.get("retry_count", 0)
     messages = state["messages"]
+    research_fields = _research_state_fields(state)
     
     # ── Detect which agent just ran ────────────────────────────────────────
     agent_that_ran = "unknown"
@@ -593,7 +629,8 @@ ENRICHED_CONTEXT (RAG):
                 "is_complete": False,
                 "current_plan": "fast_path_examiner_to_generator",
                 "raw_api_doc": state.get("raw_api_doc", ""),
-                "enriched_context": state.get("enriched_context", "")
+                "enriched_context": state.get("enriched_context", ""),
+                **research_fields,
             }
         else:
             print("[SupervisorFinal] ⚠️ Examiner ran but no DELEGATE_TO_GENERATOR found. Falling back to supervisor.")
@@ -634,7 +671,8 @@ ENRICHED_CONTEXT (RAG):
                 "is_complete": True,
                 "current_plan": "evaluated_generator_output",
                 "raw_api_doc": state.get("raw_api_doc", ""),
-                "enriched_context": state.get("enriched_context", "")
+                "enriched_context": state.get("enriched_context", ""),
+                **research_fields,
             }
         
         eval_prompt = f"""Analyze the following output from a Generator Agent and determine if the MCP Server creation was SUCCESSFUL.
@@ -720,7 +758,8 @@ Return ONLY a JSON object:
         "is_complete": is_complete,
         "current_plan": f"evaluated_{agent_that_ran}_output",
         "raw_api_doc": state.get("raw_api_doc", ""),
-        "enriched_context": state.get("enriched_context", "")
+        "enriched_context": state.get("enriched_context", ""),
+        **research_fields,
     }
 
 
@@ -732,21 +771,7 @@ async def examiner_node_with_tracking(state: AgentState) -> AgentState:
     """Wrapper around examiner_agent_node that updates state history."""
     result = await examiner_agent_node(state)
     # Since history uses operator.add, we just return the NEW marker
-    research_fields = {
-        key: state.get(key, "")
-        for key in (
-            "trace_id",
-            "experiment_id",
-            "session_id",
-            "build_request_id",
-            "server_id",
-            "rag_enabled",
-            "dynamic_skill_selection",
-            "skill_selection_variant",
-            "variant_id",
-        )
-        if state.get(key, "") != ""
-    }
+    research_fields = _research_state_fields(state)
     return {
         **result,
         **research_fields,
@@ -762,21 +787,7 @@ async def examiner_node_with_tracking(state: AgentState) -> AgentState:
 async def generator_node_with_tracking(state: AgentState) -> AgentState:
     """Wrapper around generator_agent_node that updates state history."""
     result = await generator_agent_node(state)
-    research_fields = {
-        key: state.get(key, "")
-        for key in (
-            "trace_id",
-            "experiment_id",
-            "session_id",
-            "build_request_id",
-            "server_id",
-            "rag_enabled",
-            "dynamic_skill_selection",
-            "skill_selection_variant",
-            "variant_id",
-        )
-        if state.get(key, "") != ""
-    }
+    research_fields = _research_state_fields(state)
     return {
         **result,
         **research_fields,

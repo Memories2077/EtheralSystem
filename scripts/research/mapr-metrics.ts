@@ -389,11 +389,18 @@ function eventTagSource(event: { tags?: JsonRecord; source?: unknown }): string 
   return String(event.source || event.tags?.source || "");
 }
 
-function isRealLangGraphExaminerEvent(event: { service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown }): boolean {
+function hasRagEvidenceMetrics(metrics: JsonRecord = {}): boolean {
+  return firstMetricArray(metrics, ["rag_top_3_evidence_labels", "rag_evidence_labels", "rag_top3_evidence_labels"]).length > 0 ||
+    firstMetricArray(metrics, ["rag_top_3_evidence_hashes", "rag_evidence_hashes", "rag_top3_evidence_hashes"]).length > 0;
+}
+
+function isRealLangGraphExaminerEvent(event: { service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown; metrics?: JsonRecord }): boolean {
+  const source = eventTagSource(event);
+  if (source === "backend_langgraph_fallback") return false;
+  if (source === "langgraph_stream_summary" && !hasRagEvidenceMetrics(event.metrics || {})) return false;
   return (
     event.service === "langgraph-agent" &&
-    event.event_name === "examiner_completed" &&
-    eventTagSource(event) !== "backend_langgraph_fallback"
+    event.event_name === "examiner_completed"
   );
 }
 
@@ -405,9 +412,7 @@ export function realLangGraphExaminerEvents<T extends { service?: unknown; event
 
 export function rankedRagEvidenceFromEvents(events: Array<{ metrics?: JsonRecord }>): string[] {
   const withEvidence = [...events].reverse().find((event) => {
-    const metrics = event.metrics || {};
-    return firstMetricArray(metrics, ["rag_top_3_evidence_labels", "rag_evidence_labels", "rag_top3_evidence_labels"]).length > 0 ||
-      firstMetricArray(metrics, ["rag_top_3_evidence_hashes", "rag_evidence_hashes", "rag_top3_evidence_hashes"]).length > 0;
+    return hasRagEvidenceMetrics(event.metrics || {});
   });
   const metrics = withEvidence?.metrics || {};
   const labels = firstMetricArray(metrics, ["rag_top_3_evidence_labels", "rag_evidence_labels", "rag_top3_evidence_labels"]);

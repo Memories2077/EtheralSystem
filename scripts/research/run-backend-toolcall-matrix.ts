@@ -130,6 +130,7 @@ type Options = {
   cleanupContainers: boolean;
   verifyRagEnv: boolean;
   strictEvidence: boolean;
+  preseedRag: boolean;
   expectedBuildCount?: number;
   requireAllVariants: boolean;
 };
@@ -507,10 +508,19 @@ function eventSource(event: ResearchEvent): string {
 }
 
 function isRealLangGraphEvent(event: ResearchEvent, eventName: string): boolean {
+  const source = eventSource(event);
+  const hasEvidence =
+    stringArrayMetric(event.metrics, "rag_top_3_evidence_labels").length > 0 ||
+    stringArrayMetric(event.metrics, "rag_evidence_labels").length > 0 ||
+    stringArrayMetric(event.metrics, "rag_top3_evidence_labels").length > 0 ||
+    stringArrayMetric(event.metrics, "rag_top_3_evidence_hashes").length > 0 ||
+    stringArrayMetric(event.metrics, "rag_evidence_hashes").length > 0 ||
+    stringArrayMetric(event.metrics, "rag_top3_evidence_hashes").length > 0;
+  if (source === "backend_langgraph_fallback") return false;
+  if (source === "langgraph_stream_summary" && eventName === "examiner_completed" && !hasEvidence) return false;
   return (
     event.service === "langgraph-agent" &&
-    event.event_name === eventName &&
-    eventSource(event) !== "backend_langgraph_fallback"
+    event.event_name === eventName
   );
 }
 
@@ -540,6 +550,14 @@ function assertStrictEvidence({
     const hasExaminerEvent = events.some((event) => isRealLangGraphEvent(event, "examiner_completed"));
     if (!hasExaminerEvent) {
       throw new Error("Strict evidence validation failed: RAG-on run is missing real langgraph-agent examiner_completed event.");
+    }
+    const retrievalStatus = String(ragRetrieval.rag_retrieval_status || "unknown");
+    const retrievedEvidenceCount = Number(ragRetrieval.retrieved_evidence_count || 0);
+    const missingRetrievalMetrics = ["precision_at_3", "recall_at_3", "mrr_at_3"].filter((field) => !finiteUsageNumber(ragRetrieval[field]));
+    if (retrievalStatus !== "evaluated" || retrievedEvidenceCount <= 0 || missingRetrievalMetrics.length > 0) {
+      throw new Error(
+        `Strict evidence validation failed: RAG-on retrieval evidence unavailable (status=${retrievalStatus}, retrieved=${retrievedEvidenceCount}, missing=${missingRetrievalMetrics.join("|") || "none"}).`,
+      );
     }
   }
 
@@ -1099,6 +1117,41 @@ async function applyVariantEnvironment(variant: Variant, options: Options): Prom
   if (options.verifyRagEnv) verifyRagEnvironment(variant);
 }
 
+function seedRagForCase(item: MatrixCase, options: Options): void {
+  if (!options.preseedRag) return;
+  if (!item.inputPath) throw new Error(`Cannot preseed RAG for ${item.id}: missing inputPath.`);
+  const inputDoc = fs.readFileSync(path.resolve(root, item.inputPath), "utf8");
+  const container = env("BACKEND_TOOLCALL_RAG_SEED_CONTAINER", "agent-service");
+  const output = execFileSync(
+    "docker",
+    [
+      "exec",
+      "-i",
+      container,
+      "python",
+      "/app/my_agent/scripts/seed_research_rag.py",
+      "--case-id",
+      item.id,
+      "--api-title",
+      item.title,
+      "--base-url",
+      item.baseUrl,
+      "--input-path",
+      "-",
+      "--server-id",
+      `research-rag-seed-${item.id}`,
+      "--require-retrieval",
+    ],
+    {
+      cwd: root,
+      input: inputDoc,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  console.info(`[backend-toolcall-matrix-rag-seed] case=${item.id} ${safeText(output, 1000)}`);
+}
+
 async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, options: Options): Promise<JsonRecord> {
   const traceId = randomUUID();
   const buildRequestId = `${options.experimentId}-${variant.id}-${item.id}-r${repeatIndex}-${traceId.slice(0, 8)}`;
@@ -1380,6 +1433,7 @@ function parseOptions(): Options {
     cleanupContainers: flag("cleanup-containers", true),
     verifyRagEnv: flag("verify-rag-env", restartStack),
     strictEvidence: flag("strict-evidence", true),
+    preseedRag: flag("preseed-rag", true),
     expectedBuildCount: expectedBuildCountRaw ? Number(expectedBuildCountRaw) : undefined,
     requireAllVariants: !flag("allow-partial-variants", false),
   };
@@ -1468,6 +1522,7 @@ async function main(): Promise<void> {
     cleanupContainers: options.cleanupContainers,
     verifyRagEnv: options.verifyRagEnv,
     strictEvidence: options.strictEvidence,
+    preseedRag: options.preseedRag,
   };
   console.info("[backend-toolcall-matrix-plan]", JSON.stringify(plan));
   if (options.dryRun) return;
@@ -1478,6 +1533,7 @@ async function main(): Promise<void> {
   for (const variant of selectedVariants) {
     await applyVariantEnvironment(variant, options);
     for (const item of selectedCases) {
+      if (variant.ragEnabled === "true") seedRagForCase(item, options);
       for (let repeatIndex = 1; repeatIndex <= options.repeats; repeatIndex++) {
         const result = await runOne(item, variant, repeatIndex, options);
         appendJsonl(options.outputPath, result);

@@ -194,6 +194,16 @@ describe("MAPR metric helpers", () => {
             rag_top_3_evidence_labels: ["wrong", "posts"],
           },
         },
+        {
+          service: "langgraph-agent",
+          event_name: "examiner_completed",
+          tags: { source: "langgraph_stream_summary" },
+          metrics: {
+            rag_returned_count: 0,
+            rag_context_tokens: 0,
+            rag_top_3_evidence_labels: [],
+          },
+        },
       ],
     });
 
