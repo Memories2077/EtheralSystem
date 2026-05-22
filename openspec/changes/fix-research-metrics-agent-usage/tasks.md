@@ -33,9 +33,9 @@
 ## 5. One-Build Smoke And Cleanup
 
 - [x] 5.1 Run focused unit tests for redaction, usage normalization, RAG retrieval event selection, and exporter behavior.
-- [ ] 5.2 Run exactly one build smoke using `jsonplaceholder-input-doc` with `dynamic-rag-on` and Gemini 2.5 Flash.
-- [ ] 5.3 Verify the smoke evidence contains `service="langgraph-agent"` examiner/generator events and no MAPR retrieval metrics sourced from backend fallback.
-- [ ] 5.4 Verify run/report outputs include numeric prompt tokens, completion tokens, total tokens, `estimated_cost_usd`, `usage_status`, and non-empty RAG evidence when retrieval returns evidence.
-- [ ] 5.5 Remove the generated MCP container through the manager or Docker and record cleanup status.
-- [ ] 5.6 Remove only no-longer-needed generated/dangling images, preserving active Compose service images.
-- [ ] 5.7 Commit the smoke verification and cleanup unit after the one-build evidence passes.
+- [x] 5.2 Run exactly one build smoke using `jsonplaceholder-input-doc` with `dynamic-rag-on` and Gemini 2.5 Flash.
+- [x] 5.3 Verify the smoke evidence contains `service="langgraph-agent"` examiner/generator events and no MAPR retrieval metrics sourced from backend fallback.
+- [x] 5.4 Verify run/report outputs include numeric prompt tokens, completion tokens, total tokens, `estimated_cost_usd`, `usage_status`, and non-empty RAG evidence when retrieval returns evidence.
+- [x] 5.5 Remove the generated MCP container through the manager or Docker and record cleanup status.
+- [x] 5.6 Remove only no-longer-needed generated/dangling images, preserving active Compose service images.
+- [x] 5.7 Commit the smoke verification and cleanup unit after the one-build evidence passes.

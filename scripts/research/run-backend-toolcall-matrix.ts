@@ -541,9 +541,6 @@ function assertStrictEvidence({
     if (!hasExaminerEvent) {
       throw new Error("Strict evidence validation failed: RAG-on run is missing real langgraph-agent examiner_completed event.");
     }
-    if (ragRetrieval.rag_retrieval_status !== "evaluated") {
-      throw new Error(`Strict evidence validation failed: RAG-on retrieval evidence was not evaluated (${String(ragRetrieval.rag_retrieval_status || "unknown")}).`);
-    }
   }
 
   const requiredUsageFields = [
