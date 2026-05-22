@@ -185,7 +185,7 @@ The system SHALL track the generated MCP server container for each run and remov
 - **WHEN** a generated MCP server finishes successful metadata and tool validation
 - **THEN** the runner removes the Docker container identified by that run's generated `containerId`
 - **AND** the run record includes cleanup status, cleanup latency, and any cleanup error message
-- **AND** Compose baseline services such as MongoDB, RabbitMQ, Chroma, Ollama, manager, proxy, agent, and chatbot backend remain running
+- **AND** Compose baseline services such as MongoDB, RabbitMQ, Chroma, manager, proxy, agent, and chatbot backend remain running
 
 #### Scenario: Failed validation retains the generated container
 - **WHEN** a run fails after creating a generated MCP server container
@@ -230,4 +230,3 @@ The system SHALL record generated MCP server protocol diagnostics with `@modelco
 - **WHEN** Inspector CLI validation completes
 - **THEN** the runner stores parseable JSON or normalized JSON-derived results in the raw run record
 - **AND** the benchmark does not require opening the Inspector UI for diagnostic collection
-
