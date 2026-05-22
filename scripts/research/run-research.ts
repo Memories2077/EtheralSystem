@@ -23,6 +23,7 @@ type Options = {
   dryRun: boolean;
   restartStack: boolean;
   cleanupContainers: boolean;
+  preseedRag: boolean;
   provider: string;
   model: string;
   backendUrl: string;
@@ -74,10 +75,11 @@ function parseOptions(): Options {
     allApiDocs: flag("all-api-docs", false) || flag("full", false),
     smoke,
     repeats: Number(arg("repeats", smoke ? "1" : String(DEFAULT_RESEARCH_REPEATS))),
-    variants: csvArg("variants").length > 0 ? csvArg("variants") : smoke ? ["static-rag-off"] : [...REQUIRED_VARIANT_IDS],
+    variants: csvArg("variants").length > 0 ? csvArg("variants") : smoke ? ["dynamic-rag-on"] : [...REQUIRED_VARIANT_IDS],
     dryRun: flag("dry-run", false) || flag("validate-only", false),
     restartStack: flag("restart-stack", true),
     cleanupContainers: flag("cleanup-containers", true),
+    preseedRag: flag("preseed-rag", true),
     provider: arg("provider", env("BACKEND_TOOLCALL_PROVIDER", "gemini")),
     model: arg("model", env("BACKEND_TOOLCALL_MODEL", "gemini-2.5-flash")),
     backendUrl: arg("backend-url", env("E2E_BACKEND_URL", "http://localhost:8000")),
@@ -156,6 +158,7 @@ async function main() {
       `--expected-build-count=${options.variants.length * options.repeats}`,
       options.restartStack ? "--restart-stack" : "--no-restart-stack",
       options.cleanupContainers ? "--cleanup-containers" : "--no-cleanup-containers",
+      options.preseedRag ? "--preseed-rag" : "--no-preseed-rag",
       options.smoke ? "--allow-partial-variants" : "",
     ].filter(Boolean);
     runCommand("bun", runnerArgs);
