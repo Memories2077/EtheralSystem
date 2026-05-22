@@ -7,7 +7,7 @@ dependencies = [
     "langchain_openai",
     "langchain_google_genai",
     "langchain_groq",
-    "langchain_ollama",
+    "llama_index.embeddings.google_genai",
     "chromadb",
     "llama_index",
     "pymongo",

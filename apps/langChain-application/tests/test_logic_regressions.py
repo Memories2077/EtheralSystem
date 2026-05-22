@@ -1,6 +1,7 @@
 import json
 import importlib
 import asyncio
+import sys
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -128,6 +129,19 @@ def test_examiner_rag_disabled_bypasses_retrieval(monkeypatch):
     assert result["next_agent"] == "generator"
     assert result["enriched_context"] == "[]"
     assert "DELEGATE_TO_GENERATOR" in result["messages"][0].content
+
+
+def test_vector_db_uses_gemini_embedding_configuration(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+    monkeypatch.setenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2")
+    monkeypatch.setenv("CHROMA_COLLECTION_NAME", "mcp_servers_hierarchical_gemini")
+    sys.modules.pop("my_agent.utils.vector_db", None)
+
+    vector_db = importlib.import_module("my_agent.utils.vector_db")
+
+    assert vector_db.EMBEDDING_MODEL == "gemini-embedding-2"
+    assert vector_db.COLLECTION_NAME == "mcp_servers_hierarchical_gemini"
+    assert not hasattr(vector_db, "OLLAMA_BASE_URL")
 
 
 def test_examiner_rag_enabled_preserves_retrieval(monkeypatch):

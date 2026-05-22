@@ -37,13 +37,14 @@ def request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         raise RuntimeError(f"{method} {path} failed: {exc.code} {detail}") from exc
 
 
-def embed(text: str) -> list[float]:
-    result = genai.Client().models.embed_content(model=MODEL, contents=text)
+def embed(client: genai.Client, text: str) -> list[float]:
+    result = client.models.embed_content(model=MODEL, contents=text)
     return [float(value) for value in result.embeddings[0].values]
 
 
 def main() -> None:
     collection_id: str | None = None
+    collection_created = False
     doc_text = (
         "Gemini embedding smoke document: ChromaDB can store MCP server "
         "research context vectors."
@@ -51,8 +52,9 @@ def main() -> None:
     query_text = "Can ChromaDB retrieve the stored Gemini MCP research context?"
 
     try:
-        doc_embedding = embed(doc_text)
-        query_embedding = embed(query_text)
+        client = genai.Client()
+        doc_embedding = embed(client, doc_text)
+        query_embedding = embed(client, query_text)
         collection = request(
             "POST",
             "/collections",
@@ -63,6 +65,7 @@ def main() -> None:
             },
         )
         collection_id = collection["id"]
+        collection_created = True
 
         request(
             "POST",
@@ -100,11 +103,19 @@ def main() -> None:
             )
         )
     finally:
-        try:
-            request("DELETE", f"/collections/{COLLECTION_NAME}")
-            print(json.dumps({"cleanup": "deleted temporary collection", "collection": COLLECTION_NAME}))
-        except Exception as exc:
-            print(json.dumps({"cleanup_error": str(exc)}))
+        if collection_created:
+            try:
+                request("DELETE", f"/collections/{COLLECTION_NAME}")
+                print(
+                    json.dumps(
+                        {
+                            "cleanup": "deleted temporary collection",
+                            "collection": COLLECTION_NAME,
+                        }
+                    )
+                )
+            except Exception as exc:
+                print(json.dumps({"cleanup_error": str(exc)}))
 
 
 if __name__ == "__main__":

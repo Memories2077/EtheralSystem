@@ -20,7 +20,6 @@ const PROTECTED_COMPOSE_CONTAINERS = new Set([
   "mongodb",
   "rabbitmq",
   "chromadb-server",
-  "ollama-server",
   "docker-manager",
   "my-proxy",
   "agent-service",
