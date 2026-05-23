@@ -591,6 +591,16 @@ function summarizeQualityByVariant(runs: BenchmarkRun[]): CsvRow[] {
       build_success_rate: row.build_success_rate,
       metadata_readiness_rate: row.metadata_readiness_rate,
       tool_call_pass_rate: row.tool_call_pass_rate,
+      usage_complete_count: row.usage_complete_count,
+      usage_unavailable_count: row.usage_unavailable_count,
+      usage_complete_rate: row.usage_complete_rate,
+      usage_statuses: row.usage_statuses,
+      estimated_prompt_tokens: row.estimated_prompt_tokens,
+      estimated_completion_tokens: row.estimated_completion_tokens,
+      estimated_total_tokens: row.estimated_total_tokens,
+      estimated_cost_usd: row.estimated_cost_usd,
+      tokens_per_successful_server: row.tokens_per_successful_server,
+      estimated_cost_per_successful_server: row.estimated_cost_per_successful_server,
     }));
 }
 
@@ -611,6 +621,7 @@ function summarizeRagRetrievalByVariant(runs: BenchmarkRun[]): CsvRow[] {
       count: group.length,
       applicable_count: applicable.length,
       evaluated_count: evaluatedCount,
+      evaluated_retrieval_count: evaluatedCount,
       missing_real_examiner_count: missingRealExaminerCount,
       no_evidence_count: noEvidenceCount,
       retrieval_statuses: retrievalStatuses,
@@ -645,14 +656,19 @@ function summarizeAblationEffects(variantRows: CsvRow[]): CsvRow[] {
     const ragOffAverage = average(ragOff);
     const dynamicAverage = average(dynamic);
     const staticAverage = average(staticRows);
+    const ragUplift = delta(ragOnAverage, ragOffAverage);
+    const staticVsDynamicDelta = delta(dynamicAverage, staticAverage);
     return {
+      effect: "fixed_variant_ablation",
       metric,
       rag_on_average: ragOnAverage,
       rag_off_average: ragOffAverage,
-      rag_uplift: delta(ragOnAverage, ragOffAverage),
+      rag_uplift: ragUplift,
+      delta: ragUplift,
       dynamic_average: dynamicAverage,
       static_average: staticAverage,
-      static_vs_dynamic_success_delta: delta(dynamicAverage, staticAverage),
+      static_vs_dynamic_success_delta: staticVsDynamicDelta,
+      static_vs_dynamic_delta: staticVsDynamicDelta,
       rag_on_count: ragOn.length,
       rag_off_count: ragOff.length,
       dynamic_count: dynamic.length,

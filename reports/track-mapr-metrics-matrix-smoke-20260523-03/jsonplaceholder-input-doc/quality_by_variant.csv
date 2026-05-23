@@ -1,2 +1,2 @@
-variantId,count,expected_operation_count,mapped_operation_count,generated_tool_count,hallucinated_tool_count,schema_valid_tool_count,endpoint_coverage,hallucinated_tool_rate,schema_validity_rate,build_success_rate,metadata_readiness_rate,tool_call_pass_rate
-dynamic-rag-on,1,8,8,8,0,1,1,0,0.125,1,1,1
+variantId,count,expected_operation_count,mapped_operation_count,generated_tool_count,hallucinated_tool_count,schema_valid_tool_count,endpoint_coverage,hallucinated_tool_rate,schema_validity_rate,build_success_rate,metadata_readiness_rate,tool_call_pass_rate,usage_complete_count,usage_unavailable_count,usage_complete_rate,usage_statuses,estimated_prompt_tokens,estimated_completion_tokens,estimated_total_tokens,estimated_cost_usd,tokens_per_successful_server,estimated_cost_per_successful_server
+dynamic-rag-on,1,8,8,8,0,1,1,0,0.125,1,1,1,1,0,1,complete,11907,0,11907,0.0035721,11907,0.0036

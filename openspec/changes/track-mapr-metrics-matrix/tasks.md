@@ -15,11 +15,11 @@
 
 ## 3. Export Completeness
 
-- [ ] 3.1 Verify report export writes run-level quality, retrieval, token, cost, evidence status, and cleanup columns for the smoke experiment.
-- [ ] 3.2 Verify `quality_by_variant.csv`, `rag_retrieval_by_variant.csv`, `ablation_effects.csv`, and `summary.md` contain the required MAPR columns and denominators.
-- [ ] 3.3 Patch exporter aggregation if incomplete RAG, usage, token, or cost evidence is averaged as zero or silently included in denominators.
-- [ ] 3.4 Add or update exporter fixture tests for the 2x2 matrix table, RAG uplift, static-vs-dynamic success delta, variant counts, and completeness counts.
-- [ ] 3.5 Commit the completed export subunit if code changed and tests pass.
+- [x] 3.1 Verify report export writes run-level quality, retrieval, token, cost, evidence status, and cleanup columns for the smoke experiment.
+- [x] 3.2 Verify `quality_by_variant.csv`, `rag_retrieval_by_variant.csv`, `ablation_effects.csv`, and `summary.md` contain the required MAPR columns and denominators.
+- [x] 3.3 Patch exporter aggregation if incomplete RAG, usage, token, or cost evidence is averaged as zero or silently included in denominators.
+- [x] 3.4 Add or update exporter fixture tests for the 2x2 matrix table, RAG uplift, static-vs-dynamic success delta, variant counts, and completeness counts.
+- [x] 3.5 Commit the completed export subunit if code changed and tests pass.
 
 ## 4. Full MAPR Matrix Run
 
