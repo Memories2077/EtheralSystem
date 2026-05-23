@@ -1,0 +1,5 @@
+variantId,count,expected_operation_count,mapped_operation_count,generated_tool_count,hallucinated_tool_count,schema_valid_tool_count,endpoint_coverage,hallucinated_tool_rate,schema_validity_rate,build_success_rate,metadata_readiness_rate,tool_call_pass_rate,usage_complete_count,usage_unavailable_count,usage_complete_rate,usage_statuses,estimated_prompt_tokens,estimated_completion_tokens,estimated_total_tokens,estimated_cost_usd,tokens_per_successful_server,estimated_cost_per_successful_server
+dynamic-rag-off,9,72,69,72,0,12,0.9583,0,0.1667,1,1,0.8333,9,0,1,complete,115385,0,115385,0.0346155,12820.5556,0.0038
+dynamic-rag-on,9,72,69,72,0,12,0.9583,0,0.1667,1,1,0.8333,9,0,1,complete,115609,0,115609,0.0346827,12845.4444,0.0039
+static-rag-off,9,72,67,72,0,13,0.9306,0,0.1806,1,1,0.8333,9,0,1,complete,112944,0,112944,0.0338832,12549.3333,0.0038
+static-rag-on,9,72,65,72,0,14,0.9028,0,0.1944,1,1,0.8333,9,0,1,complete,116371,0,116371,0.0349113,12930.1111,0.0039

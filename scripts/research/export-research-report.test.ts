@@ -8,6 +8,18 @@ function writeJsonl(filePath: string, rows: unknown[]) {
   writeFileSync(filePath, rows.map((row) => JSON.stringify(row)).join("\n"));
 }
 
+function parseSimpleCsv(text: string): Map<string, Record<string, string>> {
+  const [headerLine, ...lines] = text.trim().split(/\n/).filter(Boolean);
+  const headers = headerLine.split(",");
+  return new Map(lines.map((line) => {
+    const cells = line.split(",");
+    return [
+      cells[0],
+      Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""])),
+    ];
+  }));
+}
+
 describe("research report export dashboard run rows", () => {
   it("keeps dashboard builds reportable without treating missing or skipped validation as failures", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "etheral-report-export-"));
@@ -316,7 +328,12 @@ describe("research report export dashboard run rows", () => {
         skillSelectionMode: "dynamic",
         ragEnabled: "false",
         ok: false,
+        serverId: "failed-server",
         runtimeMetadataOk: false,
+        cleanupStatus: "skipped",
+        cleanupAttempted: false,
+        errorCode: "benchmark_run_error",
+        diagnostic: "Strict evidence validation failed: numeric usage evidence unavailable.",
         durationMs: 80,
         expected_operation_count: 8,
         mapped_operation_count: 3,
@@ -372,25 +389,43 @@ describe("research report export dashboard run rows", () => {
     const quality = readFileSync(path.join(outputDir, "quality_by_variant.csv"), "utf8");
     expect(quality).toContain("endpoint_coverage");
     expect(quality).toContain("schema_validity_rate");
+    expect(quality).toContain("usage_complete_count");
+    expect(quality).toContain("usage_unavailable_count");
+    expect(quality).toContain("estimated_total_tokens");
+    expect(quality).toContain("estimated_cost_usd");
     expect(quality).toContain("dynamic-rag-on");
+    const qualityRows = parseSimpleCsv(quality);
+    expect(qualityRows.get("static-rag-on")?.usage_complete_count).toBe("1");
+    expect(qualityRows.get("dynamic-rag-on")?.usage_unavailable_count).toBe("1");
 
     const retrieval = readFileSync(path.join(outputDir, "rag_retrieval_by_variant.csv"), "utf8");
     expect(retrieval).toContain("precision_at_3");
     expect(retrieval).toContain("mrr_at_3");
+    expect(retrieval).toContain("evaluated_retrieval_count");
     expect(retrieval).toContain("retrieval_statuses");
     expect(retrieval).toContain("evaluated");
     expect(retrieval).toContain("static-rag-on");
     expect(retrieval).not.toContain("static-rag-off");
+    const retrievalRows = parseSimpleCsv(retrieval);
+    expect(retrievalRows.get("static-rag-on")?.evaluated_retrieval_count).toBe("1");
 
     const ablation = readFileSync(path.join(outputDir, "ablation_effects.csv"), "utf8");
+    expect(ablation).toContain("effect");
     expect(ablation).toContain("rag_uplift");
     expect(ablation).toContain("static_vs_dynamic_success_delta");
+    expect(ablation).toContain("rag_on_count");
+    expect(ablation).toContain("rag_off_count");
+    expect(ablation).toContain("fixed_variant_ablation,build_success_rate");
 
     const matrixRuns = readFileSync(path.join(outputDir, "toolcall_matrix_runs.csv"), "utf8");
     expect(matrixRuns).toContain("estimated_total_tokens");
     expect(matrixRuns).toContain("usage_status");
     expect(matrixRuns).toContain("usage_source");
     expect(matrixRuns).toContain("endpoint_coverage");
+    expect(matrixRuns).toContain("diagnostic");
+    expect(matrixRuns).toContain("benchmark_run_error");
+    expect(matrixRuns).toContain("numeric usage evidence unavailable");
+    expect(matrixRuns).toContain("skipped");
 
     const summary = readFileSync(path.join(outputDir, "summary.md"), "utf8");
     expect(summary).toContain("## 2x2 Variant Matrix");

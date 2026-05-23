@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import path from "path";
 import { validateInputDocFixture } from "./input-doc-format";
 import {
+  assertStrictMaprEvidence,
   computeRetrievalMetrics,
   evaluateGeneratedToolQuality,
   loadMaprLabelFile,
@@ -236,5 +237,98 @@ describe("MAPR metric helpers", () => {
     expect(result.retrieval_metric_applicable).toBe(false);
     expect(result.precision_at_3).toBeNull();
     expect(result.rag_retrieval_status).toBe("missing_real_examiner_evidence");
+  });
+
+  it("accepts strict smoke evidence only when real RAG retrieval and usage are complete", () => {
+    expect(() => assertStrictMaprEvidence({
+      ragEnabled: true,
+      events: [
+        {
+          service: "langgraph-agent",
+          event_name: "generator_completed",
+          tags: { source: "langgraph_stream_summary" },
+        },
+        {
+          service: "langgraph-agent",
+          event_name: "examiner_completed",
+          tags: { source: "langgraph_stream_summary" },
+          metrics: {
+            rag_top_3_evidence_labels: ["posts", "api_doc", "jsonplaceholder"],
+            rag_returned_count: 3,
+          },
+        },
+      ],
+      ragRetrieval: {
+        rag_retrieval_status: "evaluated",
+        retrieved_evidence_count: 3,
+        precision_at_3: 1,
+        recall_at_3: 0.75,
+        mrr_at_3: 1,
+      },
+      estimatedUsage: {
+        estimated_prompt_tokens: 100,
+        estimated_completion_tokens: 20,
+        estimated_total_tokens: 120,
+        estimated_cost_usd: 0.001,
+        usage_status: "complete",
+      },
+    })).not.toThrow();
+  });
+
+  it("rejects strict RAG-on evidence when examiner evidence or usage/cost is incomplete", () => {
+    const generatorEvent = {
+      service: "langgraph-agent",
+      event_name: "generator_completed",
+      tags: { source: "langgraph_stream_summary" },
+    };
+    const realExaminerEvent = {
+      service: "langgraph-agent",
+      event_name: "examiner_completed",
+      metrics: {
+        rag_top_3_evidence_labels: ["posts"],
+      },
+    };
+    const completeRetrieval = {
+      rag_retrieval_status: "evaluated",
+      retrieved_evidence_count: 1,
+      precision_at_3: 0.3333,
+      recall_at_3: 1,
+      mrr_at_3: 1,
+    };
+    const completeUsage = {
+      estimated_prompt_tokens: 100,
+      estimated_completion_tokens: 20,
+      estimated_total_tokens: 120,
+      estimated_cost_usd: 0.001,
+      usage_status: "complete",
+    };
+
+    expect(() => assertStrictMaprEvidence({
+      ragEnabled: true,
+      events: [
+        generatorEvent,
+        {
+          service: "chatbot-backend",
+          event_name: "examiner_completed",
+          tags: { source: "backend_langgraph_fallback" },
+          metrics: { rag_top_3_evidence_labels: ["posts"] },
+        },
+      ],
+      ragRetrieval: completeRetrieval,
+      estimatedUsage: completeUsage,
+    })).toThrow(/missing real langgraph-agent examiner_completed/);
+
+    expect(() => assertStrictMaprEvidence({
+      ragEnabled: true,
+      events: [generatorEvent, realExaminerEvent],
+      ragRetrieval: completeRetrieval,
+      estimatedUsage: {
+        estimated_prompt_tokens: 100,
+        estimated_completion_tokens: null,
+        estimated_total_tokens: null,
+        estimated_cost_usd: null,
+        usage_status: "unavailable_missing_usage",
+      },
+    })).toThrow(/numeric usage evidence unavailable/);
   });
 });

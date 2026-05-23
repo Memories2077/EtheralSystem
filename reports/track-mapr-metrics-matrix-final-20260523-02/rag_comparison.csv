@@ -1,0 +1,3 @@
+rag_key,count,success_rate,runtime_success_rate,p50_ms,p95_ms,median_tool_count
+no_rag,18,1,1,116587,144539,8
+rag,18,1,1,123818,150218,8

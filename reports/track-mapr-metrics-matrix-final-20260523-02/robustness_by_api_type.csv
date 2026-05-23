@@ -1,0 +1,4 @@
+apiType,count,success_rate,runtime_success_rate,p50_ms,p95_ms,median_tool_count
+public_crud_input_doc,12,1,1,113665,125312,8
+public_fake_crud_input_doc,12,1,1,121403,144539,8
+public_readonly_input_doc,12,1,1,126323,150218,8
