@@ -1,0 +1,2 @@
+variantId,count,applicable_count,evaluated_count,missing_real_examiner_count,no_evidence_count,retrieval_statuses,retrieved_evidence_count,relevant_evidence_count,retrieval_hit_count,precision_at_3,recall_at_3,mrr_at_3
+dynamic-rag-on,1,1,1,0,0,evaluated,3,7,3,1,0.4286,1

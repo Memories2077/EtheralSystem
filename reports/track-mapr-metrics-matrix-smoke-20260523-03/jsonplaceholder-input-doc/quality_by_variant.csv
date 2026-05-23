@@ -1,0 +1,2 @@
+variantId,count,expected_operation_count,mapped_operation_count,generated_tool_count,hallucinated_tool_count,schema_valid_tool_count,endpoint_coverage,hallucinated_tool_rate,schema_validity_rate,build_success_rate,metadata_readiness_rate,tool_call_pass_rate
+dynamic-rag-on,1,8,8,8,0,1,1,0,0.125,1,1,1

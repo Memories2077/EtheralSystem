@@ -395,12 +395,19 @@ function hasRagEvidenceMetrics(metrics: JsonRecord = {}): boolean {
 }
 
 function isRealLangGraphExaminerEvent(event: { service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown; metrics?: JsonRecord }): boolean {
+  return isRealLangGraphEvidenceEvent(event, "examiner_completed");
+}
+
+function isRealLangGraphEvidenceEvent(
+  event: { service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown; metrics?: JsonRecord },
+  eventName: string,
+): boolean {
   const source = eventTagSource(event);
   if (source === "backend_langgraph_fallback") return false;
-  if (source === "langgraph_stream_summary" && !hasRagEvidenceMetrics(event.metrics || {})) return false;
+  if (eventName === "examiner_completed" && source === "langgraph_stream_summary" && !hasRagEvidenceMetrics(event.metrics || {})) return false;
   return (
     event.service === "langgraph-agent" &&
-    event.event_name === "examiner_completed"
+    event.event_name === eventName
   );
 }
 
@@ -408,6 +415,57 @@ export function realLangGraphExaminerEvents<T extends { service?: unknown; event
   events: T[],
 ): T[] {
   return events.filter(isRealLangGraphExaminerEvent);
+}
+
+function finiteEvidenceNumber(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string" && value.trim()) return Number.isFinite(Number(value));
+  return false;
+}
+
+export function assertStrictMaprEvidence({
+  events,
+  estimatedUsage,
+  ragRetrieval,
+  ragEnabled,
+}: {
+  events: Array<{ service?: unknown; event_name?: unknown; tags?: JsonRecord; source?: unknown; metrics?: JsonRecord }>;
+  estimatedUsage: JsonRecord;
+  ragRetrieval: JsonRecord;
+  ragEnabled: boolean | string;
+}): void {
+  const hasGeneratorEvent = events.some((event) => isRealLangGraphEvidenceEvent(event, "generator_completed"));
+  if (!hasGeneratorEvent) {
+    throw new Error("Strict evidence validation failed: missing real langgraph-agent generator_completed event.");
+  }
+
+  if (ragEnabled === true || ragEnabled === "true") {
+    const hasExaminerEvent = events.some((event) => isRealLangGraphEvidenceEvent(event, "examiner_completed"));
+    if (!hasExaminerEvent) {
+      throw new Error("Strict evidence validation failed: RAG-on run is missing real langgraph-agent examiner_completed event.");
+    }
+    const retrievalStatus = String(ragRetrieval.rag_retrieval_status || "unknown");
+    const retrievedEvidenceCount = Number(ragRetrieval.retrieved_evidence_count || 0);
+    const missingRetrievalMetrics = ["precision_at_3", "recall_at_3", "mrr_at_3"].filter((field) => !finiteEvidenceNumber(ragRetrieval[field]));
+    if (retrievalStatus !== "evaluated" || retrievedEvidenceCount <= 0 || missingRetrievalMetrics.length > 0) {
+      throw new Error(
+        `Strict evidence validation failed: RAG-on retrieval evidence unavailable (status=${retrievalStatus}, retrieved=${retrievedEvidenceCount}, missing=${missingRetrievalMetrics.join("|") || "none"}).`,
+      );
+    }
+  }
+
+  const requiredUsageFields = [
+    "estimated_prompt_tokens",
+    "estimated_completion_tokens",
+    "estimated_total_tokens",
+    "estimated_cost_usd",
+  ];
+  const missingUsageFields = requiredUsageFields.filter((field) => !finiteEvidenceNumber(estimatedUsage[field]));
+  if (estimatedUsage.usage_status !== "complete" || missingUsageFields.length > 0) {
+    throw new Error(
+      `Strict evidence validation failed: numeric usage evidence unavailable (usage_status=${String(estimatedUsage.usage_status || "unknown")}, missing=${missingUsageFields.join("|") || "none"}).`,
+    );
+  }
 }
 
 export function rankedRagEvidenceFromEvents(events: Array<{ metrics?: JsonRecord }>): string[] {

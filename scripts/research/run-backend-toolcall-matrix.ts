@@ -15,6 +15,7 @@ import {
 import { cleanupGeneratedContainer, type CleanupResult } from "./container-cleanup";
 import { buildResearchVariantEnv } from "./rag-env";
 import {
+  assertStrictMaprEvidence,
   evaluateGeneratedToolQuality,
   loadMaprLabelFile,
   normalizeEstimatedUsage,
@@ -501,78 +502,6 @@ async function readResearchEvents(buildRequestId: string, eventsPath: string): P
     // JSONL fallback keeps local runs useful when Mongo is not exposed on localhost.
   }
   return readJsonlEvents(localEventsPath(eventsPath), buildRequestId);
-}
-
-function eventSource(event: ResearchEvent): string {
-  return String(event.source || event.tags?.source || "");
-}
-
-function isRealLangGraphEvent(event: ResearchEvent, eventName: string): boolean {
-  const source = eventSource(event);
-  const hasEvidence =
-    stringArrayMetric(event.metrics, "rag_top_3_evidence_labels").length > 0 ||
-    stringArrayMetric(event.metrics, "rag_evidence_labels").length > 0 ||
-    stringArrayMetric(event.metrics, "rag_top3_evidence_labels").length > 0 ||
-    stringArrayMetric(event.metrics, "rag_top_3_evidence_hashes").length > 0 ||
-    stringArrayMetric(event.metrics, "rag_evidence_hashes").length > 0 ||
-    stringArrayMetric(event.metrics, "rag_top3_evidence_hashes").length > 0;
-  if (source === "backend_langgraph_fallback") return false;
-  if (source === "langgraph_stream_summary" && eventName === "examiner_completed" && !hasEvidence) return false;
-  return (
-    event.service === "langgraph-agent" &&
-    event.event_name === eventName
-  );
-}
-
-function finiteUsageNumber(value: unknown): boolean {
-  if (typeof value === "number") return Number.isFinite(value);
-  if (typeof value === "string" && value.trim()) return Number.isFinite(Number(value));
-  return false;
-}
-
-function assertStrictEvidence({
-  events,
-  estimatedUsage,
-  ragRetrieval,
-  variant,
-}: {
-  events: ResearchEvent[];
-  estimatedUsage: JsonRecord;
-  ragRetrieval: JsonRecord;
-  variant: Variant;
-}): void {
-  const hasGeneratorEvent = events.some((event) => isRealLangGraphEvent(event, "generator_completed"));
-  if (!hasGeneratorEvent) {
-    throw new Error("Strict evidence validation failed: missing real langgraph-agent generator_completed event.");
-  }
-
-  if (variant.ragEnabled === "true") {
-    const hasExaminerEvent = events.some((event) => isRealLangGraphEvent(event, "examiner_completed"));
-    if (!hasExaminerEvent) {
-      throw new Error("Strict evidence validation failed: RAG-on run is missing real langgraph-agent examiner_completed event.");
-    }
-    const retrievalStatus = String(ragRetrieval.rag_retrieval_status || "unknown");
-    const retrievedEvidenceCount = Number(ragRetrieval.retrieved_evidence_count || 0);
-    const missingRetrievalMetrics = ["precision_at_3", "recall_at_3", "mrr_at_3"].filter((field) => !finiteUsageNumber(ragRetrieval[field]));
-    if (retrievalStatus !== "evaluated" || retrievedEvidenceCount <= 0 || missingRetrievalMetrics.length > 0) {
-      throw new Error(
-        `Strict evidence validation failed: RAG-on retrieval evidence unavailable (status=${retrievalStatus}, retrieved=${retrievedEvidenceCount}, missing=${missingRetrievalMetrics.join("|") || "none"}).`,
-      );
-    }
-  }
-
-  const requiredUsageFields = [
-    "estimated_prompt_tokens",
-    "estimated_completion_tokens",
-    "estimated_total_tokens",
-    "estimated_cost_usd",
-  ];
-  const missingUsageFields = requiredUsageFields.filter((field) => !finiteUsageNumber(estimatedUsage[field]));
-  if (estimatedUsage.usage_status !== "complete" || missingUsageFields.length > 0) {
-    throw new Error(
-      `Strict evidence validation failed: numeric usage evidence unavailable (usage_status=${String(estimatedUsage.usage_status || "unknown")}, missing=${missingUsageFields.join("|") || "none"}).`,
-    );
-  }
 }
 
 async function waitForInvocationEvent(buildRequestId: string, sessionId: string, eventsPath: string): Promise<ResearchEvent> {
@@ -1306,7 +1235,7 @@ async function runOne(item: MatrixCase, variant: Variant, repeatIndex: number, o
       ragEnabled: variant.ragEnabled === "true",
     });
     if (options.strictEvidence) {
-      assertStrictEvidence({ events, estimatedUsage, ragRetrieval, variant });
+      assertStrictMaprEvidence({ events, estimatedUsage, ragRetrieval, ragEnabled: variant.ragEnabled });
     }
     result = {
       ...baseResult,

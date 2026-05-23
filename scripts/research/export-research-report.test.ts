@@ -316,7 +316,12 @@ describe("research report export dashboard run rows", () => {
         skillSelectionMode: "dynamic",
         ragEnabled: "false",
         ok: false,
+        serverId: "failed-server",
         runtimeMetadataOk: false,
+        cleanupStatus: "skipped",
+        cleanupAttempted: false,
+        errorCode: "benchmark_run_error",
+        diagnostic: "Strict evidence validation failed: numeric usage evidence unavailable.",
         durationMs: 80,
         expected_operation_count: 8,
         mapped_operation_count: 3,
@@ -391,6 +396,10 @@ describe("research report export dashboard run rows", () => {
     expect(matrixRuns).toContain("usage_status");
     expect(matrixRuns).toContain("usage_source");
     expect(matrixRuns).toContain("endpoint_coverage");
+    expect(matrixRuns).toContain("diagnostic");
+    expect(matrixRuns).toContain("benchmark_run_error");
+    expect(matrixRuns).toContain("numeric usage evidence unavailable");
+    expect(matrixRuns).toContain("skipped");
 
     const summary = readFileSync(path.join(outputDir, "summary.md"), "utf8");
     expect(summary).toContain("## 2x2 Variant Matrix");
