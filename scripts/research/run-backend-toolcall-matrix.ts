@@ -375,6 +375,7 @@ async function postChat({
   const response = await fetch(`${baseUrl(backendUrl)}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(Number(env("BACKEND_TOOLCALL_CHAT_TIMEOUT_MS", "600000"))),
     body: JSON.stringify({
       messages,
       provider,
