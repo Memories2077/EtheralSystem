@@ -18,6 +18,10 @@ __pycache__/
 
 *.log
 
+.codegraph*
+
+.agents*
+
 # IDE
 .vscode
 .idea
