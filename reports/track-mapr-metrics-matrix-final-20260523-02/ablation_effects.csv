@@ -1,0 +1,9 @@
+effect,metric,rag_on_average,rag_off_average,rag_uplift,delta,dynamic_average,static_average,static_vs_dynamic_success_delta,static_vs_dynamic_delta,rag_on_count,rag_off_count,dynamic_count,static_count
+fixed_variant_ablation,build_success_rate,1,1,0,0,1,1,0,0,2,2,2,2
+fixed_variant_ablation,metadata_readiness_rate,1,1,0,0,1,1,0,0,2,2,2,2
+fixed_variant_ablation,mcp_handshake_pass_rate,1,1,0,0,1,1,0,0,2,2,2,2
+fixed_variant_ablation,tool_call_pass_rate,0.8333,0.8333,0,0,0.8333,0.8333,0,0,2,2,2,2
+fixed_variant_ablation,compile_pass_rate,1,1,0,0,1,1,0,0,2,2,2,2
+fixed_variant_ablation,endpoint_coverage,0.9305,0.9445,-0.014,-0.014,0.9583,0.9167,0.0416,0.0416,2,2,2,2
+fixed_variant_ablation,hallucinated_tool_rate,0,0,0,0,0,0,0,0,2,2,2,2
+fixed_variant_ablation,schema_validity_rate,0.1805,0.1736,0.0069,0.0069,0.1667,0.1875,-0.0208,-0.0208,2,2,2,2

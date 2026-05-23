@@ -24,13 +24,13 @@
 ## 4. Full MAPR Matrix Run
 
 - [x] 4.1 Start from a clean enough environment for the benchmark services and confirm Gemini embedding credentials, Chroma, backend, manager, and research event paths are configured.
-- [ ] 4.2 Run the final MAPR matrix for `jsonplaceholder-input-doc`, `dummyjson-input-doc`, and `pokeapi-input-doc` across all 4 variants with 3 repeats and strict evidence enabled.
+- [x] 4.2 Run the final MAPR matrix for `jsonplaceholder-input-doc`, `dummyjson-input-doc`, and `pokeapi-input-doc` across all 4 variants with 3 repeats and strict evidence enabled.
 - [x] 4.3 If a matrix subunit fails, preserve diagnostics, repair the smallest relevant boundary, rerun the affected dry-run or smoke check, and commit that completed subunit before continuing.
-- [ ] 4.4 Export final reports for the matrix experiment after the full run completes.
-- [ ] 4.5 Verify the final run has 36 attempted build records, 9 attempted runs per variant, 12 attempted runs per API doc, no missing or duplicate matrix coordinates, and complete report files.
+- [x] 4.4 Export final reports for the matrix experiment after the full run completes.
+- [x] 4.5 Verify the final run has 36 attempted build records, 9 attempted runs per variant, 12 attempted runs per API doc, no missing or duplicate matrix coordinates, and complete report files.
 
 ## 5. Final Verification
 
-- [ ] 5.1 Run focused Bun tests for MAPR metrics, exporter fixtures, and backend tool-call matrix planning.
-- [ ] 5.2 Run `openspec status --change track-mapr-metrics-matrix` and confirm the change remains apply-ready.
-- [ ] 5.3 Summarize final artifact paths, metric completeness counts, ablation deltas, and any excluded incomplete evidence for paper reporting.
+- [x] 5.1 Run focused Bun tests for MAPR metrics, exporter fixtures, and backend tool-call matrix planning.
+- [x] 5.2 Run `openspec status --change track-mapr-metrics-matrix` and confirm the change remains apply-ready.
+- [x] 5.3 Summarize final artifact paths, metric completeness counts, ablation deltas, and any excluded incomplete evidence for paper reporting.
