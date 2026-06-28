@@ -2,6 +2,8 @@
 
 Etheral System is a full-stack chatbot and MCP (Model Context Protocol) platform. It combines a Next.js chat interface, a FastAPI orchestration backend, a LangGraph agent, and a TypeScript service that can generate and proxy MCP servers from API definitions.
 
+![Chatbot Demo](apps/chatbot_mcp_client/img/demo.gif)
+
 The repository is organized as a Bun/Turborepo monorepo and can be run locally through Docker Compose or as individual development services.
 
 ## What It Includes
